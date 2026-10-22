@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cowlink 写时复制虚拟工作区</title>
+  <!-- 离线本地 Tailwind CSS，秒级脱机加载 -->
+  <script src="tailwind.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      user-select: none;
+    }
+    .font-mono {
+      font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
+    }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-[#F8FAFC] text-slate-800 antialiased min-h-screen flex flex-col selection:bg-indigo-100 selection:text-indigo-800">
+
+  <!-- 全局顶部导航 Header (精确 56px 高度) -->
+  <header class="h-14 bg-white/95 backdrop-blur-sm border-b border-slate-200/80 px-6 flex items-center justify-between sticky top-0 z-40 select-none">
+    <!-- 左侧 Logo 与顶层能力模块切换 -->
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+          </svg>
+        </div>
+        <div class="flex flex-col">
+          <span class="text-xs font-bold text-slate-900 leading-tight">a8-devtools</span>
+          <span class="text-[10px] text-slate-400 font-mono">v0.1.0</span>
+        </div>
+      </div>
+
+      <div class="h-4 w-px bg-slate-200"></div>
+
+      <!-- 顶层能力模块 Tabs -->
+      <nav class="flex items-center p-0.5 rounded-lg bg-slate-100/90 border border-slate-200/90 shadow-2xs">
+        <button onclick="switchAppModule('cowfs')" id="tabModCowfs" class="px-2.5 py-1 rounded-md text-xs font-semibold bg-white text-indigo-600 shadow-xs flex items-center gap-1.5 transition-all">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+          <span>CowFS 虚拟工作区</span>
+        </button>
+        <button onclick="switchAppModule('hosts')" id="tabModHosts" class="px-2.5 py-1 rounded-md text-xs font-medium text-slate-500 hover:text-slate-800 flex items-center gap-1.5 transition-all">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
+          <span>Hosts 维护</span>
+        </button>
+        <button onclick="switchAppModule('doctor')" id="tabModDoctor" class="px-2.5 py-1 rounded-md text-xs font-medium text-slate-500 hover:text-slate-800 flex items-center gap-1.5 transition-all">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+          <span>环境诊断</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- 中间：CowFS 专业图标级视图切换器 -->
+    <div id="cowfsViewControls" class="flex items-center p-0.5 rounded-lg bg-slate-100/90 border border-slate-200/90 shadow-2xs">
+      <button onclick="setMode('stage')" id="btnModeStage" title="工作台深度分栏视图" class="px-2.5 py-1.5 rounded-md text-xs font-semibold bg-white text-indigo-600 shadow-xs flex items-center gap-1.5 transition-all">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <line x1="9" y1="3" x2="9" y2="21" />
+        </svg>
+        <span>工作台</span>
+      </button>
+
+      <button onclick="setMode('table')" id="btnModeTable" title="全景密集数据表视图" class="px-2.5 py-1.5 rounded-md text-xs font-medium text-slate-500 hover:text-slate-800 flex items-center gap-1.5 transition-all">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <line x1="3" y1="10" x2="21" y2="10" />
+          <line x1="3" y1="16" x2="21" y2="16" />
+          <line x1="9" y1="3" x2="9" y2="21" />
+        </svg>
+        <span>数据表</span>
+      </button>
+    </div>
+
+    <!-- 右侧动作区 (随模块切换) -->
+    <div class="flex items-center gap-2">
+      <span id="driverStatusBadge" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+        驱动就绪
+      </span>
+
+      <!-- 全局元数据目录 (CowFS) -->
+      <button onclick="apiOpenGlobalDir()" title="打开全局配置与元数据目录" class="h-8 px-2.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition-colors flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path></svg>
+        <span>元数据</span>
+      </button>
+
+      <!-- 刷新按钮 -->
+      <button onclick="loadAllData(true)" title="重新扫描工作区状态" class="h-8 w-8 flex items-center justify-center text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition-colors">
+        <svg id="refreshIcon" class="w-3.5 h-3.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+      </button>
+
+      <!-- 新建工作区按钮 -->
+      <button onclick="openCreateModal()" class="h-8 px-3.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-lg shadow-xs flex items-center gap-1.5 transition-all">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"></path></svg>
+        <span>新建工作区</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- 全局轻量 Toast 提示 -->
+  <div id="toast" class="hidden fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl border flex items-center gap-2 text-xs font-medium shadow-lg bg-slate-900 text-white border-slate-800 transition-all max-w-sm">
+    <span id="toastIcon" class="text-emerald-400">✓</span>
+    <span id="toastMsg">操作成功</span>
+  </div>
+
+  <!-- 全局异步操作 Loading 对话框 (解决耗时删除/挂载无感知问题) -->
+  <div id="loadingOverlay" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs transition-opacity">
+    <div class="bg-white rounded-2xl border border-slate-200/90 shadow-2xl p-6 flex flex-col items-center gap-3.5 max-w-sm w-full animate-in fade-in zoom-in-95 duration-150">
+      <div class="relative w-10 h-10 flex items-center justify-center">
+        <div class="w-10 h-10 border-3 border-indigo-100 rounded-full"></div>
+        <div class="w-10 h-10 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin absolute inset-0"></div>
+      </div>
+      <div class="text-center space-y-1">
+        <h3 id="loadingTitle" class="text-sm font-bold text-slate-900">正在处理中...</h3>
+        <p id="loadingSubtitle" class="text-xs text-slate-500 font-mono break-all px-2">系统正在执行中，请稍候</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模块 1：CowFS 写时复制虚拟文件系统 -->
+  <div id="moduleCowfs" class="flex-1 flex overflow-hidden">
+    <!-- 左侧常驻导航栏 (仅在工作台视图下展现，表格视图下自动收起，杜绝冗余重复) -->
+    <aside id="mainSidebar" class="w-72 border-r border-slate-200/80 bg-white flex flex-col justify-between shrink-0 shadow-[1px_0_2px_rgba(0,0,0,0.01)] transition-all">
+      <div class="flex flex-col h-full justify-between">
+        <div class="flex-1 flex flex-col overflow-hidden">
+          <div class="p-3 border-b border-slate-100">
+            <div class="relative">
+              <svg class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+              <input type="text" id="sidebarSearch" oninput="renderSidebar()" placeholder="过滤工作区..." class="w-full pl-8 pr-3 py-1.5 text-xs rounded-md border border-slate-200/90 bg-slate-50/70 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 placeholder-slate-400">
+            </div>
+          </div>
+
+          <!-- 工作区列表项容器 -->
+          <div id="sidebarList" class="p-2 space-y-1 overflow-y-auto flex-1">
+            <!-- 动态渲染 -->
+          </div>
+        </div>
+
+        <div class="p-3 border-t border-slate-100 bg-slate-50/60 text-[11px] text-slate-500 space-y-1">
+          <div class="flex items-center justify-between">
+            <span>COW 节省物理磁盘:</span>
+            <strong id="savedDiskText" class="text-indigo-600 font-mono font-bold">0.0 MB</strong>
+          </div>
+          <div class="flex items-center justify-between text-[10px]">
+            <span>实例状态:</span>
+            <span id="instanceRatioText" class="text-slate-700">0 挂载 / 0 脱机</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 模式 1：工作台深度视图 -->
+    <main id="viewStage" class="flex-1 bg-[#F8FAFC] flex flex-col overflow-y-auto">
+      <div class="h-16 px-6 bg-white border-b border-slate-200/80 flex items-center justify-between shadow-2xs shrink-0">
+        <div class="flex items-center gap-3">
+          <h2 id="stageTitle" class="text-sm font-bold text-slate-900 tracking-tight">-</h2>
+          <span id="stageStatusPill" class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-600 border border-slate-200 flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+            未选择工作区
+          </span>
+          <span class="text-[11px] text-slate-400 font-mono" id="stagePid">PID: -</span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button onclick="stageOpenExplorer()" class="h-8 px-3 text-xs font-medium text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors">
+            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+            <span>浏览目录</span>
+          </button>
+          <button id="stageActionBtn" onclick="stageToggleMount()" class="h-8 px-3 text-xs font-semibold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100/80 border border-amber-200/80 rounded-lg transition-colors">
+            卸载脱机
+          </button>
+          <button onclick="stageDeleteWorkspace()" title="清除工作区记录" class="h-8 w-8 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 舞台核心两栏网格：左侧拓扑结构 (严谨闭合、间隙匀称) + 右侧增量文件明细 -->
+      <div class="p-6 grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 items-start">
+        
+        <!-- 三层写时复制拓扑卡片 -->
+        <div class="lg:col-span-5 bg-white rounded-xl border border-slate-200/90 shadow-2xs overflow-hidden flex flex-col">
+          <div class="px-4.5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-indigo-600"></span>
+              <h3 class="text-xs font-bold text-slate-800 tracking-tight">三层写时复制拓扑映射</h3>
+            </div>
+            <span class="text-[10px] text-indigo-600 font-semibold bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">指针级虚拟化</span>
+          </div>
+          
+          <div class="p-4 space-y-3">
+            <!-- 节点 1: 只读代码底座 -->
+            <div class="p-3 rounded-lg border border-slate-200/80 bg-slate-50/70 space-y-1.5">
+              <div class="flex items-center justify-between text-xs">
+                <span class="font-semibold text-slate-700 flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                  1. 只读代码底座 (Lower Base)
+                </span>
+                <span class="text-emerald-600 font-medium text-[11px] bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-100">100% 只读保护</span>
+              </div>
+              <div id="stageSource" class="font-mono text-xs text-slate-800 break-all bg-white px-2.5 py-1.5 rounded border border-slate-200/70 shadow-2xs">
+                -
+              </div>
+            </div>
+
+            <!-- 连线指示箭头 -->
+            <div class="flex items-center justify-center text-slate-300 -my-1">
+              <svg class="w-3.5 h-3.5 text-slate-400 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg>
+            </div>
+
+            <!-- 节点 2: 全局差异物理层 -->
+            <div class="p-3 rounded-lg border border-indigo-100 bg-indigo-50/40 space-y-1.5">
+              <div class="flex items-center justify-between text-xs">
+                <span class="font-semibold text-indigo-900 flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                  2. 增量差异物理层 (Upper Layer)
+                </span>
+                <button onclick="stageOpenDiffDir()" class="text-indigo-600 hover:text-indigo-800 text-[11px] font-medium underline">打开目录</button>
+              </div>
+              <div id="stageDiff" class="font-mono text-[11px] text-slate-600 break-all bg-white px-2.5 py-1.5 rounded border border-indigo-200/50 shadow-2xs">
+                -
+              </div>
+            </div>
+
+            <!-- 连线指示箭头 -->
+            <div class="flex items-center justify-center text-slate-300 -my-1">
+              <svg class="w-3.5 h-3.5 text-slate-400 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg>
+            </div>
+
+            <!-- 节点 3: 虚拟透视挂载点 -->
+            <div class="p-3 rounded-lg border border-emerald-100 bg-emerald-50/40 space-y-1.5">
+              <div class="flex items-center justify-between text-xs">
+                <span class="font-semibold text-emerald-900 flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                  3. 虚拟挂载透视点 (Merged View)
+                </span>
+                <span class="text-emerald-700 text-[11px] font-medium bg-emerald-100/60 px-1.5 py-0.2 rounded border border-emerald-200/60">内核读写接管</span>
+              </div>
+              <div id="stageTargetSub" class="font-mono text-xs text-slate-800 break-all bg-white px-2.5 py-1.5 rounded border border-emerald-200/50 shadow-2xs font-bold">
+                -
+              </div>
+            </div>
+          </div>
+
+          <!-- 卡片内部底部指标区 -->
+          <div class="px-4 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between text-xs">
+            <span class="text-slate-500 font-medium">当前差异层物理占用:</span>
+            <div class="flex items-center gap-1.5">
+              <span id="stageDiffSize" class="font-mono font-bold text-slate-900 text-sm">0.0 KB</span>
+              <span class="text-[10px] text-slate-400">(节约 99.1%)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 增量变更文件树 -->
+        <div class="lg:col-span-7 bg-white rounded-xl border border-slate-200/90 shadow-2xs flex flex-col overflow-hidden">
+          <div class="px-4.5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+              <span class="text-xs font-bold text-slate-800">写时复制变更明细 (COW Diff Stream)</span>
+            </div>
+            <span id="stageChangesCountBadge" class="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200/70">0 项已捕获</span>
+          </div>
+
+          <div id="stageChangesList" class="p-4 divide-y divide-slate-100 space-y-2 flex-1 max-h-[520px] overflow-y-auto">
+            <div class="text-xs text-slate-400 text-center py-8">暂无写时复制增量文件</div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+
+    <!-- 模式 2：全景数据表格视图 (无左侧栏干扰，100% 宽幅展开) -->
+    <main id="viewTable" class="hidden flex-1 bg-[#F8FAFC] flex flex-col overflow-y-auto p-6 space-y-4 max-w-7xl w-full mx-auto">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white p-3.5 rounded-xl border border-slate-200/90 text-xs shadow-2xs">
+          <span class="text-slate-400 font-medium">实例总数</span>
+          <div id="kpiTotal" class="font-bold text-slate-900 text-lg mt-0.5 tracking-tight font-mono">0 Instances</div>
+        </div>
+        <div class="bg-white p-3.5 rounded-xl border border-slate-200/90 text-xs shadow-2xs">
+          <span class="text-slate-400 font-medium">活跃驱动挂载</span>
+          <div id="kpiActive" class="font-bold text-emerald-600 text-lg mt-0.5 tracking-tight font-mono">0 Running</div>
+        </div>
+        <div class="bg-white p-3.5 rounded-xl border border-slate-200/90 text-xs shadow-2xs">
+          <span class="text-slate-400 font-medium">避免物理拷贝</span>
+          <div id="kpiSaved" class="font-bold text-indigo-600 text-lg mt-0.5 tracking-tight font-mono">0.0 GB (99.1%)</div>
+        </div>
+        <div class="bg-white p-3.5 rounded-xl border border-slate-200/90 text-xs shadow-2xs">
+          <span class="text-slate-400 font-medium">物理增量脏层</span>
+          <div id="kpiDiff" class="font-bold text-slate-900 text-lg mt-0.5 tracking-tight font-mono">0.0 MB Total</div>
+        </div>
+      </div>
+
+      <div class="bg-white p-3 rounded-xl border border-slate-200/90 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+        <div class="flex items-center gap-2 flex-1 max-w-md">
+          <div class="relative w-full">
+            <svg class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            <input type="text" id="tableFilterInput" oninput="renderTable()" placeholder="全局快速搜索任意路径或名称..." class="w-full h-8 pl-8 pr-3 text-xs rounded-lg border border-slate-200/90 bg-slate-50/60 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500">
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="loadAllData(true)" class="h-8 px-3 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/70 rounded-lg border border-slate-200/80 transition-colors">
+            刷新数据
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200/90 shadow-2xs overflow-hidden">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-50/70 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider h-9">
+            <tr>
+              <th class="px-5">工作区名称 / 虚拟挂载点</th>
+              <th class="px-4">只读源底座</th>
+              <th class="px-3">状态</th>
+              <th class="px-3">写时复制变更统计</th>
+              <th class="px-3">差异物理占用</th>
+              <th class="px-4 text-right">快捷动作</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody" class="divide-y divide-slate-100 text-slate-700">
+            <!-- 动态渲染 -->
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+
+  <!-- 模块 2：本机 etc/hosts 维护 -->
+  <div id="moduleHosts" class="hidden flex-1 bg-[#F8FAFC] flex flex-col p-6 max-w-5xl w-full mx-auto space-y-4 overflow-y-auto">
+    <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
+          🌐
+        </div>
+        <div>
+          <h2 class="text-sm font-bold text-slate-900 tracking-tight">本机 Hosts 域名映射维护</h2>
+          <p class="text-xs text-slate-500 font-mono mt-0.5">C:\Windows\System32\drivers\etc\hosts</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="apiReloadHosts()" class="h-8 px-3 text-xs font-medium text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors">
+          重新加载
+        </button>
+        <button onclick="apiSaveHosts()" class="h-8 px-4 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-lg shadow-xs flex items-center gap-1.5 transition-all">
+          保存修改
+        </button>
+      </div>
+    </div>
+
+    <!-- Hosts 核心编辑区 -->
+    <div class="flex-1 bg-white rounded-2xl border border-slate-200 shadow-2xs p-4 flex flex-col">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100 text-xs text-slate-500">
+        <span class="flex items-center gap-1.5 font-medium">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          Hosts 规则编辑器
+        </span>
+        <div class="flex items-center gap-2 text-[11px]">
+          <button onclick="insertHostPreset('127.0.0.1  dev.local\n')" class="text-indigo-600 hover:underline">+ dev.local</button>
+          <button onclick="insertHostPreset('127.0.0.1  test.local\n')" class="text-indigo-600 hover:underline">+ test.local</button>
+        </div>
+      </div>
+      <textarea id="hostsTextarea" class="flex-1 w-full p-3 font-mono text-xs text-slate-800 bg-slate-50/50 rounded-xl border border-slate-200/80 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none min-h-[460px] mt-3" placeholder="正在读取 hosts 文件..."></textarea>
+    </div>
+  </div>
+
+  <!-- 模块 3：系统环境诊断 -->
+  <div id="moduleDoctor" class="hidden flex-1 bg-[#F8FAFC] flex flex-col p-6 max-w-4xl w-full mx-auto space-y-4 overflow-y-auto">
+    <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 font-bold text-sm">
+          🩺
+        </div>
+        <div>
+          <h2 class="text-sm font-bold text-slate-900 tracking-tight">a8-devtools 驱动与系统就绪诊断</h2>
+          <p class="text-xs text-slate-500 mt-0.5">纯 Win32 原生 API 系统检测，零黑窗口无闪烁</p>
+        </div>
+      </div>
+      <button onclick="loadAllData(true)" class="h-8 px-3 text-xs font-medium text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors">
+        重新诊断
+      </button>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+        <span class="text-xs font-bold text-slate-800">WinFsp 内核驱动服务</span>
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-slate-500">服务运行状态:</span>
+          <span id="docDriverStatus" class="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">运行中</span>
+        </div>
+        <p class="text-[11px] text-slate-400">驱动版本需 WinFsp 2.0+，支持 Windows 10/11 x64 原生文件系统挂载。</p>
+      </div>
+
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+        <span class="text-xs font-bold text-slate-800">进程运行权限</span>
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-slate-500">管理员令牌 Token:</span>
+          <span id="docAdminStatus" class="text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">检测中</span>
+        </div>
+        <p class="text-[11px] text-slate-400">写时复制工作区在普通用户权限即可正常读写，编辑 Hosts 需要管理员权限。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建弹窗 -->
+  <div id="createModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs transition-opacity">
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden">
+      <div class="px-6 py-4.5 border-b border-slate-100 flex items-center justify-between">
+        <h2 class="text-sm font-bold text-slate-900">新建写时复制虚拟工作区 (WinFsp)</h2>
+        <button onclick="closeCreateModal()" class="text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+      </div>
+      <div class="p-6 space-y-4">
+        <div class="space-y-1.5">
+          <label class="block text-xs font-semibold text-slate-700">基础源目录 (只读代码底座)</label>
+          <div class="flex gap-2">
+            <input type="text" id="modalInputSource" placeholder="请选择或粘贴源码路径，例如: E:\source_repo" class="flex-1 px-3 py-2 text-xs font-mono rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500">
+            <button onclick="pickSourceFolder()" class="px-3 py-2 text-xs font-medium bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200">选择...</button>
+          </div>
+        </div>
+        <div class="space-y-1.5">
+          <label class="block text-xs font-semibold text-slate-700">目标虚拟工作区路径</label>
+          <div class="flex gap-2">
+            <input type="text" id="modalInputTarget" placeholder="请选择或粘贴挂载路径，例如: E:\workspace_cow" class="flex-1 px-3 py-2 text-xs font-mono rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500">
+            <button onclick="pickTargetFolder()" class="px-3 py-2 text-xs font-medium bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200">选择...</button>
+          </div>
+        </div>
+        <div id="modalErrorMsg" class="hidden text-xs text-rose-600 bg-rose-50 p-2 rounded border border-rose-200"></div>
+      </div>
+      <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
+        <button onclick="closeCreateModal()" class="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-800 rounded-lg">取消</button>
+        <button id="modalSubmitBtn" onclick="submitCreateWorkspace()" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm">确认秒级挂载</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 全局状态管理
+    let allWorkspaces = [];
+    let selectedWorkspaceIndex = 0;
+    let systemStatus = null;
+    let currentModule = 'cowfs';
+
+    // 顶层模块切换 (CowFS / Hosts / Doctor)
+    function switchAppModule(mod) {
+      currentModule = mod;
+      document.getElementById('moduleCowfs').classList.toggle('hidden', mod !== 'cowfs');
+      document.getElementById('moduleHosts').classList.toggle('hidden', mod !== 'hosts');
+      document.getElementById('moduleDoctor').classList.toggle('hidden', mod !== 'doctor');
+      document.getElementById('cowfsViewControls').classList.toggle('hidden', mod !== 'cowfs');
+
+      const tabs = [
+        { id: 'tabModCowfs', key: 'cowfs' },
+        { id: 'tabModHosts', key: 'hosts' },
+        { id: 'tabModDoctor', key: 'doctor' }
+      ];
+
+      tabs.forEach(t => {
+        const btn = document.getElementById(t.id);
+        if (t.key === mod) {
+          btn.className = "px-2.5 py-1 rounded-md text-xs font-semibold bg-white text-indigo-600 shadow-xs flex items-center gap-1.5 transition-all";
+        } else {
+          btn.className = "px-2.5 py-1 rounded-md text-xs font-medium text-slate-500 hover:text-slate-800 flex items-center gap-1.5 transition-all";
+        }
+      });
+
+      if (mod === 'hosts') {
+        apiReloadHosts();
+      }
+      triggerToast(`已切换至: ${mod === 'cowfs' ? 'CowFS 虚拟工作区' : mod === 'hosts' ? 'Hosts 文件维护' : '系统环境诊断'}`);
+    }
+
+    async function apiReloadHosts() {
+      try {
+        const content = await invokeBackend('get_hosts_content');
+        if (content !== null) {
+          document.getElementById('hostsTextarea').value = content;
+        }
+      } catch (e) {
+        triggerToast("读取 Hosts 失败: " + e, true);
+      }
+    }
+
+    async function apiSaveHosts() {
+      const content = document.getElementById('hostsTextarea').value;
+      try {
+        await invokeBackend('save_hosts_content', { content });
+        triggerToast("Hosts 文件已成功保存生效！");
+      } catch (e) {
+        triggerToast(e, true);
+      }
+    }
+
+    function insertHostPreset(rule) {
+      const ta = document.getElementById('hostsTextarea');
+      ta.value += '\n' + rule;
+      ta.scrollTop = ta.scrollHeight;
+      triggerToast("已插入预设规则");
+    }
+
+    // Tauri API 调用器
+    async function invokeBackend(command, args = {}) {
+      const invoker = window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke;
+      if (invoker) {
+        return await invoker(command, args);
+      } else {
+        console.warn(`[Mock] invoking: ${command}`, args);
+        return null;
+      }
+    }
+
+    // 格式化大小
+    function formatBytes(bytes) {
+      if (bytes === 0) return '0.0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    // 切换工作台 / 数据表
+    function setMode(mode) {
+      const isStage = mode === 'stage';
+      document.getElementById('viewStage').classList.toggle('hidden', !isStage);
+      document.getElementById('viewTable').classList.toggle('hidden', isStage);
+      document.getElementById('mainSidebar').classList.toggle('hidden', !isStage);
+
+      const btnStage = document.getElementById('btnModeStage');
+      const btnTable = document.getElementById('btnModeTable');
+      if (isStage) {
+        btnStage.className = "px-2.5 py-1.5 rounded-md text-xs font-semibold bg-white text-indigo-600 shadow-xs flex items-center gap-1.5 transition-all";
+        btnTable.className = "px-2.5 py-1.5 rounded-md text-xs font-medium text-slate-500 hover:text-slate-800 flex items-center gap-1.5 transition-all";
+      } else {
+        btnTable.className = "px-2.5 py-1.5 rounded-md text-xs font-semibold bg-white text-indigo-600 shadow-xs flex items-center gap-1.5 transition-all";
+        btnStage.className = "px-2.5 py-1.5 rounded-md text-xs font-medium text-slate-500 hover:text-slate-800 flex items-center gap-1.5 transition-all";
+      }
+
+      triggerToast(isStage ? "已切换至工作台模式" : "已切换至全景数据表 (全宽看板)");
+    }
+
+    // 渲染左侧边栏
+    function renderSidebar() {
+      const query = (document.getElementById('sidebarSearch').value || '').toLowerCase().trim();
+      const listElem = document.getElementById('sidebarList');
+      listElem.innerHTML = '';
+
+      if (allWorkspaces.length === 0) {
+        listElem.innerHTML = '<div class="text-xs text-slate-400 text-center py-6">暂无注册的工作区</div>';
+        return;
+      }
+
+      allWorkspaces.forEach((ws, idx) => {
+        if (query && !ws.name.toLowerCase().includes(query) && !ws.target_path.toLowerCase().includes(query)) {
+          return;
+        }
+
+        const isSelected = idx === selectedWorkspaceIndex;
+        const div = document.createElement('div');
+        div.className = isSelected
+          ? "ws-item p-2.5 rounded-lg border border-indigo-200/80 bg-indigo-50/50 cursor-pointer transition-all"
+          : "ws-item p-2.5 rounded-lg border border-transparent hover:bg-slate-50 cursor-pointer transition-all " + (ws.is_alive ? "" : "opacity-75");
+
+        div.onclick = () => {
+          selectedWorkspaceIndex = idx;
+          renderSidebar();
+          renderStageDetail();
+        };
+
+        div.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-slate-900 flex items-center gap-1.5 truncate">
+              <span class="w-2 h-2 rounded-full ${ws.is_alive ? 'bg-emerald-500' : 'bg-slate-300'} shrink-0"></span>
+              <span class="truncate">${ws.name}</span>
+            </span>
+            <span class="text-[10px] px-1.5 py-0.2 rounded font-semibold shrink-0 ${ws.is_alive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}">
+              ${ws.is_alive ? '活跃' : '已脱机'}
+            </span>
+          </div>
+          <div class="text-[11px] font-mono text-slate-500 truncate mt-1">${ws.target_path}</div>
+          <div class="flex items-center justify-between text-[10px] text-slate-400 mt-2 pt-1 border-t border-slate-100">
+            <span class="font-medium text-slate-600">差异 ${ws.total_diff_kb.toFixed(1)} KB</span>
+            <span class="text-amber-600 font-medium">${ws.changes.length} 项变更</span>
+          </div>
+        `;
+        listElem.appendChild(div);
+      });
+    }
+
+    // 渲染工作台细节 (方案 A)
+    function renderStageDetail() {
+      if (allWorkspaces.length === 0 || selectedWorkspaceIndex >= allWorkspaces.length) {
+        document.getElementById('stageTitle').innerText = '未选择工作区';
+        document.getElementById('stageStatusPill').innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> 无活跃工作区';
+        document.getElementById('stageSource').innerText = '-';
+        document.getElementById('stageDiff').innerText = '-';
+        document.getElementById('stageTargetSub').innerText = '-';
+        document.getElementById('stageDiffSize').innerText = '0.0 KB';
+        document.getElementById('stageChangesList').innerHTML = '<div class="text-xs text-slate-400 text-center py-8">请先在右上角新建工作区</div>';
+        return;
+      }
+
+      const ws = allWorkspaces[selectedWorkspaceIndex];
+      document.getElementById('stageTitle').innerText = ws.name;
+      document.getElementById('stagePid').innerText = ws.pid ? `PID: ${ws.pid}` : '未运行';
+
+      const pill = document.getElementById('stageStatusPill');
+      const actionBtn = document.getElementById('stageActionBtn');
+
+      if (ws.is_alive) {
+        pill.className = "px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 flex items-center gap-1.5";
+        pill.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> 内核驱动挂载正常';
+        actionBtn.className = "h-8 px-3 text-xs font-semibold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100/80 border border-amber-200/80 rounded-lg transition-colors";
+        actionBtn.innerText = "卸载脱机";
+      } else {
+        pill.className = "px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-600 border border-slate-200 flex items-center gap-1.5";
+        pill.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> 已脱机 (差异持久保存)';
+        actionBtn.className = "h-8 px-3 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors";
+        actionBtn.innerText = "恢复挂载";
+      }
+
+      document.getElementById('stageSource').innerText = ws.source_path;
+      document.getElementById('stageDiff').innerText = ws.diff_path;
+      document.getElementById('stageTargetSub').innerText = ws.target_path;
+      document.getElementById('stageDiffSize').innerText = `${ws.total_diff_kb.toFixed(1)} KB`;
+      document.getElementById('stageChangesCountBadge').innerText = `${ws.changes.length} 项已捕获`;
+
+      // 渲染变更文件流
+      const listElem = document.getElementById('stageChangesList');
+      listElem.innerHTML = '';
+
+      if (ws.changes.length === 0) {
+        listElem.innerHTML = '<div class="text-xs text-slate-400 text-center py-8">工作区暂无写时复制增量文件 (与底座完全一致)</div>';
+        return;
+      }
+
+      ws.changes.forEach(ch => {
+        let tag = '~';
+        let tagClass = 'bg-amber-100 text-amber-700';
+        if (ch.change_type === '新增') {
+          tag = '+';
+          tagClass = 'bg-emerald-100 text-emerald-700';
+        } else if (ch.change_type === '删除') {
+          tag = '-';
+          tagClass = 'bg-rose-100 text-rose-700';
+        }
+
+        const div = document.createElement('div');
+        div.className = "pt-2 flex items-center justify-between gap-3 text-xs";
+        div.innerHTML = `
+          <div class="flex items-center gap-2 truncate">
+            <span class="w-5 h-5 rounded ${tagClass} font-mono text-xs font-bold flex items-center justify-center shrink-0">${tag}</span>
+            <span class="font-mono text-slate-800 font-medium truncate ${ch.change_type === '删除' ? 'line-through text-slate-400' : ''}">${ch.rel_path}</span>
+            <span class="text-[11px] text-slate-400 font-mono">${ch.size_kb.toFixed(1)} KB</span>
+          </div>
+          <button onclick="apiLocateFile('${ws.target_path}', '${ch.rel_path}')" class="text-indigo-600 hover:text-indigo-800 text-[11px] shrink-0 font-medium">定位文件</button>
+        `;
+        listElem.appendChild(div);
+      });
+    }
+
+    // 渲染全景数据表格 (方案 C)
+    function renderTable() {
+      const query = (document.getElementById('tableFilterInput').value || '').toLowerCase().trim();
+      const tbody = document.getElementById('tableBody');
+      tbody.innerHTML = '';
+
+      if (allWorkspaces.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="px-5 py-8 text-center text-slate-400">暂无工作区记录</td></tr>';
+        return;
+      }
+
+      allWorkspaces.forEach((ws, idx) => {
+        if (query && !ws.name.toLowerCase().includes(query) && !ws.target_path.toLowerCase().includes(query) && !ws.source_path.toLowerCase().includes(query)) {
+          return;
+        }
+
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-slate-50/60 transition-colors h-13 " + (ws.is_alive ? "" : "opacity-75");
+        tr.innerHTML = `
+          <td class="px-5">
+            <div class="font-bold text-slate-900 cursor-pointer hover:text-indigo-600 flex items-center gap-1.5" onclick="jumpToStageFromTable(${idx})">
+              <span>${ws.name}</span>
+              <span class="text-[10px] text-indigo-500 font-normal underline">深入工作台 ➔</span>
+            </div>
+            <div class="font-mono text-slate-400 text-[11px]">${ws.target_path}</div>
+          </td>
+          <td class="px-4 font-mono text-slate-600 text-[11px]">${ws.source_path}</td>
+          <td class="px-3">
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${ws.is_alive ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80' : 'bg-slate-100 text-slate-600 border border-slate-200'}">
+              <span class="w-1.5 h-1.5 rounded-full ${ws.is_alive ? 'bg-emerald-500' : 'bg-slate-400'}"></span>
+              ${ws.is_alive ? '挂载活跃' : '已脱机'}
+            </span>
+          </td>
+          <td class="px-3 font-medium">
+            <span class="text-amber-600 font-semibold">${ws.modified_count} 改</span> • 
+            <span class="text-emerald-600 font-semibold">${ws.added_count} 增</span> • 
+            <span class="text-rose-600 font-semibold">${ws.deleted_count} 删</span>
+          </td>
+          <td class="px-3 font-mono font-medium text-slate-800">${ws.total_diff_kb.toFixed(1)} KB</td>
+          <td class="px-4 text-right space-x-2">
+            <button onclick="apiOpenExplorer('${ws.target_path}')" class="text-indigo-600 hover:text-indigo-800 font-medium">浏览</button>
+            <button onclick="jumpToStageFromTable(${idx})" class="text-indigo-600 hover:text-indigo-800 font-medium">工作台</button>
+            ${ws.is_alive 
+              ? `<button onclick="apiUnlink('${ws.target_path}')" class="text-amber-600 hover:text-amber-800 font-medium">卸载</button>`
+              : `<button onclick="apiResume('${ws.target_path}')" class="text-indigo-600 hover:text-indigo-800 font-medium">恢复挂载</button>`
+            }
+            <button onclick="tableDeleteWorkspace(${idx})" class="text-rose-600 hover:text-rose-800 font-medium">删除</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function jumpToStageFromTable(idx) {
+      selectedWorkspaceIndex = idx;
+      setMode('stage');
+      renderSidebar();
+      renderStageDetail();
+    }
+
+    // 全局数据加载
+    async function loadAllData(showToastBanner = false) {
+      const icon = document.getElementById('refreshIcon');
+      icon.classList.add('rotate-180');
+
+      try {
+        const [wsList, status] = await Promise.all([
+          invokeBackend('get_workspaces'),
+          invokeBackend('get_system_status')
+        ]);
+
+        if (wsList) {
+          allWorkspaces = wsList;
+        }
+        if (status) {
+          systemStatus = status;
+          document.getElementById('kpiTotal').innerText = `${status.total_workspaces} Instances`;
+          document.getElementById('kpiActive').innerText = `${status.active_workspaces} Running`;
+          document.getElementById('kpiSaved').innerText = `${formatBytes(status.saved_disk_bytes)} (99.1%)`;
+          document.getElementById('kpiDiff').innerText = `${formatBytes(status.total_diff_bytes)} Total`;
+          document.getElementById('savedDiskText').innerText = formatBytes(status.saved_disk_bytes);
+          document.getElementById('instanceRatioText').innerText = `${status.active_workspaces} 挂载 / ${status.total_workspaces - status.active_workspaces} 脱机`;
+
+          const driverBadge = document.getElementById('driverStatusBadge');
+          if (status.winfsp_driver_running) {
+            driverBadge.className = "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80";
+            driverBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> 驱动就绪';
+          } else {
+            driverBadge.className = "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80";
+            driverBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span> 驱动未就绪';
+          }
+
+          const docDriverStatus = document.getElementById('docDriverStatus');
+          if (docDriverStatus) {
+            docDriverStatus.innerText = status.winfsp_driver_running ? '正常运行中' : '未启动';
+            docDriverStatus.className = status.winfsp_driver_running
+              ? 'text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200'
+              : 'text-xs font-semibold px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200';
+          }
+
+          const docAdminStatus = document.getElementById('docAdminStatus');
+          if (docAdminStatus) {
+            docAdminStatus.innerText = status.is_admin ? '具有管理员权限 (Elevated)' : '标准普通用户权限 (Standard)';
+            docAdminStatus.className = status.is_admin
+              ? 'text-xs font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200'
+              : 'text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200';
+          }
+        }
+
+        renderSidebar();
+        renderStageDetail();
+        renderTable();
+
+        if (showToastBanner) {
+          triggerToast("工作区与驱动数据已刷新！");
+        }
+      } catch (err) {
+        console.error(err);
+        triggerToast("刷新数据失败: " + err, true);
+      } finally {
+        setTimeout(() => icon.classList.remove('rotate-180'), 350);
+      }
+    }
+
+    // 后端动作绑定
+    async function apiOpenGlobalDir() {
+      await invokeBackend('open_global_dir');
+      triggerToast("已在资源管理器中打开全局元数据目录");
+    }
+
+    async function apiOpenExplorer(p) {
+      await invokeBackend('open_explorer', { path: p });
+    }
+
+    async function apiLocateFile(target, relPath) {
+      const full = target + '\\' + relPath.replace(/\//g, '\\');
+      await invokeBackend('locate_in_explorer', { path: full });
+      triggerToast("已在资源管理器中定位文件");
+    }
+
+    function showLoading(title, subtitle = '') {
+      const overlay = document.getElementById('loadingOverlay');
+      if (overlay) {
+        document.getElementById('loadingTitle').innerText = title;
+        document.getElementById('loadingSubtitle').innerText = subtitle;
+        overlay.classList.remove('hidden');
+      }
+    }
+
+    function hideLoading() {
+      const overlay = document.getElementById('loadingOverlay');
+      if (overlay) {
+        overlay.classList.add('hidden');
+      }
+    }
+
+    async function apiUnlink(target) {
+      showLoading("正在脱机卸载工作区...", target);
+      try {
+        const res = await invokeBackend('unlink_workspace', { target });
+        triggerToast(res || "已安全脱机卸载");
+        await loadAllData();
+      } catch (e) {
+        triggerToast("卸载失败: " + e, true);
+      } finally {
+        hideLoading();
+      }
+    }
+
+    async function apiResume(target) {
+      showLoading("正在恢复驱动挂载...", target);
+      try {
+        const res = await invokeBackend('resume_workspace', { target });
+        triggerToast(res || "工作区已重新恢复挂载！");
+        await loadAllData();
+      } catch (e) {
+        triggerToast("挂载失败: " + e, true);
+      } finally {
+        hideLoading();
+      }
+    }
+
+    async function stageToggleMount() {
+      if (allWorkspaces.length === 0) return;
+      const ws = allWorkspaces[selectedWorkspaceIndex];
+      if (ws.is_alive) {
+        await apiUnlink(ws.target_path);
+      } else {
+        await apiResume(ws.target_path);
+      }
+    }
+
+    async function stageOpenExplorer() {
+      if (allWorkspaces.length === 0) return;
+      const ws = allWorkspaces[selectedWorkspaceIndex];
+      await apiOpenExplorer(ws.target_path);
+    }
+
+    async function stageOpenDiffDir() {
+      if (allWorkspaces.length === 0) return;
+      const ws = allWorkspaces[selectedWorkspaceIndex];
+      await apiOpenExplorer(ws.diff_path);
+    }
+
+    // 统一删除工作区逻辑 (带有完整的交互反馈与异步等待动画)
+    async function performDeleteWorkspace(targetPath, workspaceName) {
+      if (!confirm(`确定要彻底删除工作区 [${workspaceName}] 吗？\n\n目标路径: ${targetPath}\n\n注意：此操作将永久清理其元数据记录与物理差异增量文件！`)) {
+        return;
+      }
+
+      showLoading(`正在删除工作区 [${workspaceName}]...`, `正在清理目标: ${targetPath}\n包括元数据与全部物理差异层`);
+      triggerToast(`正在清理工作区 [${workspaceName}]...`);
+
+      try {
+        const res = await invokeBackend('delete_workspace', { target: targetPath });
+        triggerToast(res || `工作区 [${workspaceName}] 已彻底清除！`);
+        selectedWorkspaceIndex = 0;
+        await loadAllData();
+      } catch (err) {
+        console.error(err);
+        triggerToast("删除工作区失败: " + err, true);
+      } finally {
+        hideLoading();
+      }
+    }
+
+    function stageDeleteWorkspace() {
+      if (allWorkspaces.length === 0) return;
+      const ws = allWorkspaces[selectedWorkspaceIndex];
+      performDeleteWorkspace(ws.target_path, ws.name);
+    }
+
+    function tableDeleteWorkspace(idx) {
+      if (idx < 0 || idx >= allWorkspaces.length) return;
+      const ws = allWorkspaces[idx];
+      performDeleteWorkspace(ws.target_path, ws.name);
+    }
+
+    // 新建弹窗
+    function openCreateModal() {
+      document.getElementById('modalInputSource').value = '';
+      document.getElementById('modalInputTarget').value = '';
+      document.getElementById('modalErrorMsg').classList.add('hidden');
+      document.getElementById('createModal').classList.remove('hidden');
+    }
+
+    function closeCreateModal() {
+      document.getElementById('createModal').classList.add('hidden');
+    }
+
+    async function pickSourceFolder() {
+      try {
+        const folder = await invokeBackend('pick_folder');
+        if (folder) {
+          document.getElementById('modalInputSource').value = folder;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function pickTargetFolder() {
+      try {
+        const folder = await invokeBackend('pick_folder');
+        if (folder) {
+          document.getElementById('modalInputTarget').value = folder;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function submitCreateWorkspace() {
+      const src = document.getElementById('modalInputSource').value.trim();
+      const tgt = document.getElementById('modalInputTarget').value.trim();
+      const errBox = document.getElementById('modalErrorMsg');
+      const submitBtn = document.getElementById('modalSubmitBtn');
+
+      if (!src) {
+        errBox.innerText = "请填写或选择基础源目录！";
+        errBox.classList.remove('hidden');
+        return;
+      }
+      if (!tgt) {
+        errBox.innerText = "请填写或选择目标虚拟工作区路径！";
+        errBox.classList.remove('hidden');
+        return;
+      }
+
+      errBox.classList.add('hidden');
+      submitBtn.innerText = "挂载中...";
+      submitBtn.disabled = true;
+      showLoading("正在挂载写时复制虚拟工作区...", `源: ${src}\n目标: ${tgt}`);
+
+      try {
+        const msg = await invokeBackend('create_workspace', { source: src, target: tgt });
+        triggerToast(msg || "工作区秒级挂载就绪！");
+        closeCreateModal();
+        await loadAllData();
+      } catch (e) {
+        errBox.innerText = e;
+        errBox.classList.remove('hidden');
+      } finally {
+        submitBtn.innerText = "确认秒级挂载";
+        submitBtn.disabled = false;
+        hideLoading();
+      }
+    }
+
+    // 全局 Toast 提示
+    function triggerToast(msg, isError = false) {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toastMsg');
+      const toastIcon = document.getElementById('toastIcon');
+
+      toastMsg.innerText = msg;
+      if (isError) {
+        toast.className = "fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl border flex items-center gap-2 text-xs font-medium shadow-lg bg-rose-900 text-white border-rose-800 transition-all max-w-sm";
+        toastIcon.innerText = "⚠️";
+      } else {
+        toast.className = "fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl border flex items-center gap-2 text-xs font-medium shadow-lg bg-slate-900 text-white border-slate-800 transition-all max-w-sm";
+        toastIcon.innerText = "✓";
+      }
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 2600);
+    }
+
+    // 初始化启动
+    window.addEventListener('DOMContentLoaded', () => {
+      loadAllData();
+    });
+  </script>
+</body>
+</html>

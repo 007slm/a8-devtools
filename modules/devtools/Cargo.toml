@@ -1,0 +1,24 @@
+[package]
+name = "devtools"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "a8-devtools"
+path = "src/main.rs"
+
+[dependencies]
+cowfs = { path = "../cowfs" }
+rfd = "0.17.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tauri = { version = "2", features = [] }
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

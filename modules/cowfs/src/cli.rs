@@ -1,0 +1,40 @@
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+#[derive(Parser, Debug)]
+#[command(name = "cowlink")]
+#[command(version = "0.1.0")]
+#[command(about = "面向 Windows 的写时复制 (Copy-on-Write) 虚拟工作区与快照工具", long_about = None)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// 将基础源目录以写时复制模式链接挂载至目标工作区 (基于 WinFsp 驱动)
+    Link {
+        /// 基础源目录路径 (只读模板)
+        source: PathBuf,
+        /// 目标挂载点或工作区目录路径
+        target: PathBuf,
+        /// 可选：私有差异与修改文件的持久化目录 (默认自动在全局隐藏存储中分配)
+        #[arg(long, value_name = "PATH")]
+        diff_dir: Option<PathBuf>,
+    },
+
+    /// 卸载解除工作区挂载 (自动结束驱动服务，持久化差异层)
+    Unlink {
+        /// 目标挂载点或工作区目录路径
+        target: PathBuf,
+    },
+
+    /// 查看指定工作区的差异状态 (已修改、新增、已删除文件列表)
+    Status {
+        /// 目标工作区目录路径
+        target: PathBuf,
+    },
+
+    /// 运行系统环境与 WinFsp 驱动就绪诊断
+    Doctor,
+}

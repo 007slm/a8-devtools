@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "modules/cowfs",
+    "modules/devtools",
+]
+resolver = "2"
