@@ -81,6 +81,19 @@
 
     <!-- 右侧动作区 (随模块切换) -->
     <div class="flex items-center gap-2">
+      <!-- 实时网速胶囊组件 (Windows 任务栏托盘同步) -->
+      <div id="netSpeedBadge" title="实时网络吞吐 (任务栏托盘动态同步渲染)" class="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-900/90 text-white font-mono text-[11px] shadow-2xs border border-slate-700/60 select-none">
+        <span class="flex items-center gap-1 text-amber-400 font-semibold">
+          <span class="text-[9px]">▲</span>
+          <span id="headerNetUp">0 B/s</span>
+        </span>
+        <span class="text-slate-600">|</span>
+        <span class="flex items-center gap-1 text-sky-400 font-semibold">
+          <span class="text-[9px]">▼</span>
+          <span id="headerNetDown">0 B/s</span>
+        </span>
+      </div>
+
       <span id="driverStatusBadge" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80">
         <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
         驱动就绪
@@ -991,9 +1004,34 @@
       setTimeout(() => toast.classList.add('hidden'), 2600);
     }
 
+    // 实时网速监听与同步
+    function updateNetSpeedUI(data) {
+      if (!data) return;
+      const upEl = document.getElementById('headerNetUp');
+      const downEl = document.getElementById('headerNetDown');
+      if (upEl && data.upload_formatted) upEl.innerText = data.upload_formatted;
+      if (downEl && data.download_formatted) downEl.innerText = data.download_formatted;
+    }
+
+    async function initNetSpeed() {
+      try {
+        const data = await invokeBackend('get_net_speed');
+        updateNetSpeedUI(data);
+      } catch (e) {
+        console.warn("initNetSpeed error:", e);
+      }
+
+      if (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.listen) {
+        window.__TAURI__.event.listen('net-speed-update', (event) => {
+          updateNetSpeedUI(event.payload);
+        });
+      }
+    }
+
     // 初始化启动
     window.addEventListener('DOMContentLoaded', () => {
       loadAllData();
+      initNetSpeed();
     });
   </script>
 </body>

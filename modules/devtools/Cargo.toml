@@ -9,12 +9,15 @@ path = "src/main.rs"
 
 [dependencies]
 cowfs = { path = "../cowfs" }
+parking_lot = "0.12"
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
     "Win32_System_Threading",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",

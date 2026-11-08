@@ -54,7 +54,7 @@ graph TD
 
 | 模块名称 | 职责定位 | 源码目录 | 核心产物 | 依赖与特性 |
 | :--- | :--- | :--- | :--- | :--- |
-| **工作台主程序** (`modules/devtools`) | Tauri 2.0 桌面端百宝箱门户、IPC 命令调度、Hosts 编辑与 Doctor 检测 | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/) | `a8-devtools.exe` (~8.4MB) | `tauri = "2"`, `rfd`, `cowfs` |
+| **工作台主程序** (`modules/devtools`) | Tauri 2.0 桌面端百宝箱门户、系统托盘动态网速渲染、Win32 网速采集、Hosts 编辑与 Doctor 检测 | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/) | `a8-devtools.exe` (~9.2MB) | `tauri = "2"`, `rfd`, `cowfs`, `windows` |
 | **写时复制文件系统** (`modules/cowfs`) | WinFsp 虚拟驱动集成、COW 状态机、原子 Copy-Up、源内 `.cowdiff` 自完整存储 | [`modules/cowfs/`](file:///e:/a8-devtools/modules/cowfs/) | `cowfs.exe` (~0.9MB) & `libcowfs` | `winfsp`, `dashmap`, `parking_lot` |
 | **统一脚本与引导** (`scripts/` & 根目录) | WinFsp 驱动静默安装与多模式启动脚本 | [`scripts/`](file:///e:/a8-devtools/scripts/), [`start.bat`](file:///e:/a8-devtools/start.bat) | 启动批处理与自动化脚本 | 纯 Win32 / PowerShell 原生调用 |
 
@@ -68,6 +68,7 @@ graph TD
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | [`docs/20261022-ADR-架构演进-a8-devtools多模块工作台与cowfs集成.md`](file:///e:/a8-devtools/docs/20261022-ADR-架构演进-a8-devtools多模块工作台与cowfs集成.md) | ADR | 平台底座 | 实施已生效 | 记录从单一 cowlink 演进为 a8-devtools 多模块工作区（对标 a8-turbo 结构）的战略决策 | [`Cargo.toml`](file:///e:/a8-devtools/Cargo.toml), [`modules/`](file:///e:/a8-devtools/modules/) |
 | [`docs/20261022-SPEC-存储引擎-自完整差异存储与虚拟化架构.md`](file:///e:/a8-devtools/docs/20261022-SPEC-存储引擎-自完整差异存储与虚拟化架构.md) | SPEC | 存储引擎 | 实施已生效 | 规约源内 `.cowdiff/{pathHash}/` 自完整布局、C盘零占用、驱动重入死锁防御与根级遮蔽机制 | [`modules/cowfs/`](file:///e:/a8-devtools/modules/cowfs/) |
+| [`docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md`](file:///e:/a8-devtools/docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md) | SPEC | 工作台模块 | 实施已生效 | 规约 Win32 IP Helper 无锁网速采集、32x32 纯位图点阵字模无锯齿渲染、窗口防误杀托盘常驻与事件总线同步 | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/) |
 
 ---
 

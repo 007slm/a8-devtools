@@ -738,6 +738,7 @@ name = "devtools"
 version = "0.1.0"
 dependencies = [
  "cowfs",
+ "parking_lot",
  "rfd",
  "serde",
  "serde_json",

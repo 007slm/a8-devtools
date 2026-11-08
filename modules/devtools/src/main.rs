@@ -1,10 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod net_speed;
+
 use cowfs::config::WorkspaceMeta;
 use cowfs::doctor::SystemDoctor;
+use net_speed::{render_speed_icon_rgba, NetSpeedDto, NetSpeedMonitor};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -412,8 +419,137 @@ fn save_hosts_content(content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| format!("写入 hosts 文件失败（需要管理员权限）: {}", e))
 }
 
+#[tauri::command]
+fn get_net_speed(state: tauri::State<'_, Arc<NetSpeedMonitor>>) -> Result<NetSpeedDto, String> {
+    Ok(state.get_current())
+}
+
 fn main() {
+    let monitor = NetSpeedMonitor::new();
+    let monitor_setup = monitor.clone();
+
     tauri::Builder::default()
+        .manage(monitor)
+        .setup(move |app| {
+            // 1. Initial 32x32 tray icon
+            let initial_dto = monitor_setup.get_current();
+            let initial_rgba = render_speed_icon_rgba(&initial_dto.upload_short, &initial_dto.download_short);
+            let initial_icon = tauri::image::Image::new(&initial_rgba, 32, 32);
+
+            // 2. Tray menu items
+            let speed_item = MenuItem::with_id(
+                app,
+                "speed_display",
+                "↑ 0 B/s   ↓ 0 B/s",
+                false,
+                None::<&str>,
+            )?;
+            let sep1 = PredefinedMenuItem::separator(app)?;
+            let toggle_item = MenuItem::with_id(
+                app,
+                "toggle_window",
+                "显示 / 隐藏工作台",
+                true,
+                None::<&str>,
+            )?;
+            let sep2 = PredefinedMenuItem::separator(app)?;
+            let quit_item = MenuItem::with_id(
+                app,
+                "quit_app",
+                "退出 a8-devtools",
+                true,
+                None::<&str>,
+            )?;
+
+            let menu = Menu::with_items(app, &[&speed_item, &sep1, &toggle_item, &sep2, &quit_item])?;
+
+            // 3. Build Tray Icon
+            let tray = TrayIconBuilder::new()
+                .icon(initial_icon)
+                .tooltip("a8-devtools 开发者工作台\n实时网速监控就绪")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "toggle_window" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            if window.is_visible().unwrap_or(false) {
+                                let _ = window.hide();
+                            } else {
+                                let _ = window.show();
+                                let _ = window.unminimize();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    }
+                    "quit_app" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            if window.is_visible().unwrap_or(false) {
+                                let _ = window.hide();
+                            } else {
+                                let _ = window.show();
+                                let _ = window.unminimize();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    }
+                })
+                .build(app)?;
+
+            // 4. Intercept window close request -> minimize to tray
+            if let Some(window) = app.get_webview_window("main") {
+                let win_clone = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = win_clone.hide();
+                    }
+                });
+            }
+
+            // 5. Background thread: periodic 1s network speed ticker
+            let tray_handle = tray.clone();
+            let app_handle = app.handle().clone();
+            let monitor_thread = monitor_setup.clone();
+
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(Duration::from_millis(1000));
+                    let speed = monitor_thread.tick();
+
+                    let rgba = render_speed_icon_rgba(&speed.upload_short, &speed.download_short);
+                    let icon = tauri::image::Image::new(&rgba, 32, 32);
+                    let _ = tray_handle.set_icon(Some(icon));
+
+                    let tooltip = format!(
+                        "a8-devtools 开发者工作台\n↑ 上传: {}\n↓ 下载: {}\n总发送: {} | 总接收: {}",
+                        speed.upload_formatted,
+                        speed.download_formatted,
+                        net_speed::format_speed(speed.total_sent_bytes),
+                        net_speed::format_speed(speed.total_recv_bytes),
+                    );
+                    let _ = tray_handle.set_tooltip(Some(tooltip));
+
+                    let menu_text = format!("↑ {}   ↓ {}", speed.upload_formatted, speed.download_formatted);
+                    let _ = speed_item.set_text(menu_text);
+
+                    let _ = app_handle.emit("net-speed-update", &speed);
+                }
+            });
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_workspaces,
             get_system_status,
@@ -428,6 +564,7 @@ fn main() {
             pick_folder,
             get_hosts_content,
             save_hosts_content,
+            get_net_speed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running a8-devtools application");
