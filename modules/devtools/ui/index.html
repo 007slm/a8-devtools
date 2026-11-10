@@ -105,6 +105,12 @@
         <span>元数据</span>
       </button>
 
+      <!-- 全局系统设置按钮 -->
+      <button onclick="openSettingsModal()" title="系统设置与自启动" class="h-8 px-2.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition-colors flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+        <span>设置</span>
+      </button>
+
       <!-- 刷新按钮 -->
       <button onclick="loadAllData(true)" title="重新扫描工作区状态" class="h-8 w-8 flex items-center justify-center text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition-colors">
         <svg id="refreshIcon" class="w-3.5 h-3.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
@@ -449,6 +455,86 @@
       <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
         <button onclick="closeCreateModal()" class="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-800 rounded-lg">取消</button>
         <button id="modalSubmitBtn" onclick="submitCreateWorkspace()" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm">确认秒级挂载</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 全局系统与能力设置对话框 -->
+  <div id="settingsModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs transition-opacity">
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div class="px-6 py-4.5 border-b border-slate-100 flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+            <svg class="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+          </div>
+          <div>
+            <h2 class="text-sm font-bold text-slate-900">系统与自动化设置</h2>
+            <p class="text-[11px] text-slate-400">管理 a8-devtools 的开机自启、任务栏网速条与后台策略</p>
+          </div>
+        </div>
+        <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+      </div>
+
+      <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+        <!-- 核心能力 1：开机自启动能力 -->
+        <div class="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/50 flex items-center justify-between hover:bg-slate-50 transition-colors">
+          <div class="space-y-0.5 max-w-[320px]">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-semibold text-slate-900">开机自动启动</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-50 text-indigo-600 border border-indigo-100">Windows Run</span>
+            </div>
+            <p class="text-[11px] text-slate-500">Windows 开机登录后自动在后台运行，保持常驻服务就绪</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer select-none">
+            <input type="checkbox" id="settingAutostart" class="sr-only peer">
+            <div class="w-10 h-5.5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600"></div>
+          </label>
+        </div>
+
+        <!-- 核心能力 2：任务栏网速条开关 -->
+        <div class="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/50 flex items-center justify-between hover:bg-slate-50 transition-colors">
+          <div class="space-y-0.5 max-w-[320px]">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-semibold text-slate-900">任务栏实时网速条</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-sky-50 text-sky-600 border border-sky-100">透明悬浮</span>
+            </div>
+            <p class="text-[11px] text-slate-500">在任务栏右侧透明显示实时网络上行与下行速率（可随时关闭）</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer select-none">
+            <input type="checkbox" id="settingTaskbarSpeed" class="sr-only peer" checked>
+            <div class="w-10 h-5.5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600"></div>
+          </label>
+        </div>
+
+        <!-- 核心能力 3：网速采样刷新周期 -->
+        <div class="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/50 flex items-center justify-between hover:bg-slate-50 transition-colors">
+          <div class="space-y-0.5 max-w-[280px]">
+            <span class="text-xs font-semibold text-slate-900">网速采样频率</span>
+            <p class="text-[11px] text-slate-500">向网卡驱动查询硬件吞吐的周期（推荐 5 秒超低能耗）</p>
+          </div>
+          <select id="settingSampleInterval" class="px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs">
+            <option value="5">5 秒 (极低负载，推荐)</option>
+            <option value="3">3 秒 (均衡模式)</option>
+            <option value="1">1 秒 (极速高频实时)</option>
+          </select>
+        </div>
+
+        <!-- 核心能力 4：全屏智能避让 -->
+        <div class="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/50 flex items-center justify-between hover:bg-slate-50 transition-colors">
+          <div class="space-y-0.5 max-w-[320px]">
+            <span class="text-xs font-semibold text-slate-900">全屏视频与游戏避让</span>
+            <p class="text-[11px] text-slate-500">检测到前台全屏视频或游戏时自动隐藏，退出全屏无感恢复</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer select-none">
+            <input type="checkbox" id="settingFullscreenHide" class="sr-only peer" checked>
+            <div class="w-10 h-5.5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600"></div>
+          </label>
+        </div>
+      </div>
+
+      <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
+        <button onclick="closeSettingsModal()" class="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-800 rounded-lg">取消</button>
+        <button id="modalSaveSettingsBtn" onclick="saveSettingsFromModal()" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm">保存并应用</button>
       </div>
     </div>
   </div>
@@ -1002,6 +1088,59 @@
       }
       toast.classList.remove('hidden');
       setTimeout(() => toast.classList.add('hidden'), 2600);
+    }
+
+    // 系统设置与自启动控制
+    let currentSettings = {
+      autostart: false,
+      taskbar_speed_enabled: true,
+      sample_interval_secs: 5,
+      fullscreen_hide: true,
+    };
+
+    async function openSettingsModal() {
+      try {
+        const s = await invokeBackend('get_app_settings');
+        if (s) {
+          currentSettings = s;
+          document.getElementById('settingAutostart').checked = !!s.autostart;
+          document.getElementById('settingTaskbarSpeed').checked = !!s.taskbar_speed_enabled;
+          document.getElementById('settingSampleInterval').value = String(s.sample_interval_secs || 5);
+          document.getElementById('settingFullscreenHide').checked = !!s.fullscreen_hide;
+        }
+      } catch (e) {
+        console.warn("加载设置失败:", e);
+      }
+      document.getElementById('settingsModal').classList.remove('hidden');
+    }
+
+    function closeSettingsModal() {
+      document.getElementById('settingsModal').classList.add('hidden');
+    }
+
+    async function saveSettingsFromModal() {
+      const btn = document.getElementById('modalSaveSettingsBtn');
+      btn.disabled = true;
+      btn.innerText = '正在保存...';
+
+      const newSettings = {
+        autostart: document.getElementById('settingAutostart').checked,
+        taskbar_speed_enabled: document.getElementById('settingTaskbarSpeed').checked,
+        sample_interval_secs: parseInt(document.getElementById('settingSampleInterval').value, 10) || 5,
+        fullscreen_hide: document.getElementById('settingFullscreenHide').checked,
+      };
+
+      try {
+        await invokeBackend('save_app_settings', { newSettings: newSettings });
+        currentSettings = newSettings;
+        showToast('设置已保存并实时生效', false);
+        closeSettingsModal();
+      } catch (e) {
+        showToast('保存设置失败: ' + e, true);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '保存并应用';
+      }
     }
 
     // 实时网速监听与同步

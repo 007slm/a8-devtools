@@ -44,11 +44,11 @@ def get_git_diff(working_dir: str = ".") -> str:
         return ""
 
 def load_rules(plugin_root: Path):
-    """Loads all universal rules and project-specific rules if present."""
+    """Loads all rules from the rules directory."""
     rules = []
-    universal_dir = plugin_root / "rules" / "universal"
-    if universal_dir.exists():
-        for r_file in universal_dir.glob("*.md"):
+    rules_dir = plugin_root / "rules"
+    if rules_dir.exists():
+        for r_file in rules_dir.glob("*.md"):
             rules.append(parse_rule_file(r_file, category_override=None))
     return rules
 

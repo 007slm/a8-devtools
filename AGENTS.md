@@ -67,10 +67,10 @@ graph TD
 
 | 文档路径 | 文档类型 | 所属模块 | 当前状态 | 核心用途与摘要 | 关联源码/模块 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| [`docs/20261110-SPEC-插件与治理-基于Jev架构的通用语义红线裁判设计与演进规范.md`](file:///e:/a8-devtools/docs/20261110-SPEC-插件与治理-基于Jev架构的通用语义红线裁判设计与演进规范.md) | SPEC | 插件与治理 | 实施已生效 | 规约基于 Jev 架构的通用架构红线裁判插件设计：两阶段调查流水线、4 大正交维度语法元特征路由、Generative UI 紧凑型高颜值报表与跨项目即插即用演进契约 | [`plugins/arch-judge/`](file:///e:/a8-devtools/plugins/arch-judge/) |
+| [`docs/20261110-SPEC-插件与治理-基于Jev架构的通用语义红线裁判设计与演进规范.md`](file:///e:/a8-devtools/docs/20261110-SPEC-插件与治理-基于Jev架构的通用语义红线裁判设计与演进规范.md) | SPEC | 插件与治理 | 实施已生效 | 规约基于 Jev 架构的通用架构红线裁判插件设计：两阶段调查流水线、4 大正交维度语法元特征路由、Generative UI 紧凑型高颜值报表与跨项目即插即用演进契约 | [`plugins/agent-mind/`](file:///e:/a8-devtools/plugins/agent-mind/) |
 | [`docs/20261022-ADR-架构演进-a8-devtools多模块工作台与cowfs集成.md`](file:///e:/a8-devtools/docs/20261022-ADR-架构演进-a8-devtools多模块工作台与cowfs集成.md) | ADR | 平台底座 | 实施已生效 | 记录从单一 cowlink 演进为 a8-devtools 多模块工作区（对标 a8-turbo 结构）的战略决策 | [`Cargo.toml`](file:///e:/a8-devtools/Cargo.toml), [`modules/`](file:///e:/a8-devtools/modules/) |
 | [`docs/20261022-SPEC-存储引擎-自完整差异存储与虚拟化架构.md`](file:///e:/a8-devtools/docs/20261022-SPEC-存储引擎-自完整差异存储与虚拟化架构.md) | SPEC | 存储引擎 | 实施已生效 | 规约源内 `.cowdiff/{pathHash}/` 自完整布局、C盘零占用、驱动重入死锁防御与根级遮蔽机制 | [`modules/cowfs/`](file:///e:/a8-devtools/modules/cowfs/) |
-| [`docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md`](file:///e:/a8-devtools/docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md) | SPEC | 工作台模块 | 实施已生效 | 规约 Win32 IP Helper 无锁网速采集、任务栏原生实时网速悬浮条 (双缓冲 GDI 抗锯齿、全透明大字号、全屏智能隐藏避让)、托盘图标与事件总线同步 | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/) |
+| [`docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md`](file:///e:/a8-devtools/docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md) | SPEC | 工作台模块 | 实施已生效 | 规约 Win32 IP Helper 无锁网速采集、任务栏原生实时网速悬浮条 (双缓冲 GDI 抗锯齿、全透明大字号、全屏智能隐藏避让)、托盘图标同步与全局设置中心 (开机自启动/显隐控制) | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/) |
 
 ---
 

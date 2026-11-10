@@ -124,9 +124,38 @@ pub struct NetSpeedDto {
 
 ---
 
-## 4. 交付验证与性能指标
+## 4. 全局系统设置与开机自启引擎 (`modules/devtools/src/settings.rs`)
+
+工作台提供持久化设置中心，支持用户按需对开机自启动、网速条显隐、刷新频率及全屏避让策略进行灵活控制与随时开关：
+
+### 4.1 开机自启动注册表机制
+- **技术规范**：遵循 Windows 官方标准，基于 Win32 原生注册表 API（`RegOpenKeyExW` / `RegSetValueExW` / `RegDeleteValueW`）读写当前用户启动项：
+  - **注册表路径**：`HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`
+  - **键名**：`a8-devtools`
+  - **值**：`"{current_exe_path}"`（标准双引号安全包裹完整路径，防路径空格截断）
+- **动态状态探测**：每次读取设置时，以注册表实际物理存在与否为唯一真理源，确保与系统状态 100% 同步。
+
+### 4.2 独立设置持久化与全局联动
+- **存储路径**：`%LOCALAPPDATA%\cowlink\devtools_settings.json`（避免滥用 C 盘根目录与跨模块冲突）；
+- **配置数据模型**：
+  ```rust
+  #[derive(Debug, Clone, Serialize, Deserialize)]
+  pub struct AppSettings {
+      pub autostart: bool,              // 开机自启动能力
+      pub taskbar_speed_enabled: bool,  // 任务栏网速条是否显示
+      pub sample_interval_secs: u64,   // 刷新周期 (1s / 3s / 5s)
+      pub fullscreen_hide: bool,        // 全屏程序自动避让
+  }
+  ```
+- **多端闭环响应**：
+  1. **前端工作台设置面板**：顶部导航栏专属齿轮设置入口，弹出纯白质感模态框，提供开机自启动开关、网速条开启/关闭开关、采样频率下拉框、全屏避让开关；
+  2. **任务栏网速条右键菜单**：支持快捷选择“关闭任务栏网速条”，操作后自动同步保存至 `devtools_settings.json`，在主面板中可一键重新开启。
+
+---
+
+## 5. 交付验证与性能指标
 
 - **单执行文件体积**：`target/release/a8-devtools.exe` 仅 **9.2 MB**；
 - **空闲内存驻留**：~**36 MB**；
-- **CPU 周期占用**：每秒仅执行一次 `GetIfTable2`，双缓冲局部绘制，CPU 占用率低于 **0.01%**；
+- **CPU 周期占用**：每 5 秒仅执行一次 `GetIfTable2`，双缓冲局部绘制，CPU 占用率低于 **0.01%**；
 - **回归测试覆盖**：`cargo test --workspace` 100% 通过（9 项全绿），`cargo check --workspace` 0 警告。

@@ -23,9 +23,7 @@
     }
   ],
   "universal_rules": [
-    "rules/universal/NO_UNAPPROVED_BACKWARD_COMPAT.md",
-    "rules/universal/PURE_CLIENT_ISOLATION.md",
-    "rules/universal/HOT_PATH_NO_BLOCKING_LOCKS.md",
-    "rules/universal/ERROR_TRANSPARENCY_NO_SWALLOW.md"
+    "rules/redline.md",
+    "rules/doc.md"
   ]
 }

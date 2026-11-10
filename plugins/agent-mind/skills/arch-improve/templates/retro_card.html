@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+</head>
+<body class="bg-transparent text-[var(--foreground)] antialiased p-2">
+  <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 max-w-2xl mx-auto">
+    <!-- Header -->
+    <div class="flex items-center justify-between border-b border-[var(--border)] pb-2.5">
+      <div class="flex items-center space-x-2">
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-[var(--primary)] text-[var(--primary-foreground)]">
+          ⚡ 经验复盘 & 沉淀
+        </span>
+        <span class="text-sm font-semibold truncate">{{TASK_TITLE}}</span>
+      </div>
+      <span class="text-xs text-[var(--muted-foreground)]">Session Wrap-up</span>
+    </div>
+
+    <!-- Core Takeaways Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
+      <div class="bg-[var(--background)] p-2.5 rounded-lg border border-[var(--border)]">
+        <div class="font-medium text-[var(--foreground)] mb-1 flex items-center gap-1">
+          <span>💡</span> <span>工作流与环境改进</span>
+        </div>
+        <p class="text-[var(--muted-foreground)] leading-relaxed">{{WORKFLOW_FRICTION}}</p>
+      </div>
+
+      <div class="bg-[var(--background)] p-2.5 rounded-lg border border-[var(--border)]">
+        <div class="font-medium text-[var(--foreground)] mb-1 flex items-center gap-1">
+          <span>🛡️</span> <span>规则建议目标</span>
+        </div>
+        <p class="text-[var(--muted-foreground)] leading-relaxed font-mono">{{TARGET_RULE_FILE}}</p>
+      </div>
+    </div>
+
+    <!-- Rule Patch Diff Box -->
+    <div class="space-y-1">
+      <div class="text-xs font-medium text-[var(--foreground)] flex justify-between items-center">
+        <span>建议合入的规则补丁 (Diff)</span>
+        <span class="text-xs text-[var(--muted-foreground)]">需人工确认后落盘</span>
+      </div>
+      <pre class="bg-[var(--background)] border border-[var(--border)] p-2.5 rounded-lg text-xs font-mono text-[var(--foreground)] overflow-x-auto leading-tight">{{DIFF_CONTENT}}</pre>
+    </div>
+
+    <!-- Footer Action Hint -->
+    <div class="pt-1 flex items-center justify-between text-xs text-[var(--muted-foreground)]">
+      <span>确认无误？回复 <strong class="text-[var(--foreground)]">“写入”</strong> 即可自动落盘</span>
+      <span class="text-xs opacity-75">arch-judge · improve</span>
+    </div>
+  </div>
+</body>
+</html>

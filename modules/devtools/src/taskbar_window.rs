@@ -36,6 +36,7 @@ const MENU_SPEED_INFO: usize = 1001;
 const MENU_RESET_POS: usize = 1002;
 const MENU_TOGGLE_WIN: usize = 1003;
 const MENU_QUIT_APP: usize = 1004;
+const MENU_HIDE_BAR: usize = 1005;
 
 #[derive(Clone, Copy, Default)]
 struct SendHwnd(isize);
@@ -117,6 +118,18 @@ impl TaskbarSpeedBar {
                     WPARAM(0),
                     LPARAM(0),
                 );
+            }
+        }
+    }
+
+    pub fn set_visible(&self, visible: bool) {
+        if let Some(send_hwnd) = *self.hwnd.lock() {
+            unsafe {
+                if visible {
+                    let _ = ShowWindow(send_hwnd.to_hwnd(), SW_SHOWNOACTIVATE);
+                } else {
+                    let _ = ShowWindow(send_hwnd.to_hwnd(), SW_HIDE);
+                }
             }
         }
     }
@@ -535,6 +548,12 @@ unsafe extern "system" fn taskbar_wnd_proc(
                         app.exit(0);
                     }
                 }
+                MENU_HIDE_BAR => unsafe {
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                    let mut s = crate::settings::load_settings();
+                    s.taskbar_speed_enabled = false;
+                    let _ = crate::settings::save_settings(s);
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -697,6 +716,12 @@ unsafe fn show_taskbar_context_menu(hwnd: HWND) {
                 MF_STRING,
                 MENU_TOGGLE_WIN,
                 w!("显示 / 隐藏 a8-devtools 工作台"),
+            );
+            let _ = AppendMenuW(
+                menu,
+                MF_STRING,
+                MENU_HIDE_BAR,
+                w!("关闭任务栏网速条 (可在设置中重新开启)"),
             );
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             let _ = AppendMenuW(menu, MF_STRING, MENU_QUIT_APP, w!("退出 a8-devtools"));

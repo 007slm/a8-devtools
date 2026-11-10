@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod net_speed;
+mod settings;
 mod taskbar_window;
 
 use cowfs::config::WorkspaceMeta;
@@ -426,12 +427,36 @@ fn get_net_speed(state: tauri::State<'_, Arc<NetSpeedMonitor>>) -> Result<NetSpe
     Ok(state.get_current())
 }
 
+#[tauri::command]
+fn get_app_settings(
+    state: tauri::State<'_, Arc<parking_lot::RwLock<settings::AppSettings>>>,
+) -> Result<settings::AppSettings, String> {
+    Ok(state.read().clone())
+}
+
+#[tauri::command]
+fn save_app_settings(
+    new_settings: settings::AppSettings,
+    state: tauri::State<'_, Arc<parking_lot::RwLock<settings::AppSettings>>>,
+    bar_state: tauri::State<'_, Arc<TaskbarSpeedBar>>,
+) -> Result<(), String> {
+    settings::save_settings(new_settings.clone())?;
+    bar_state.set_visible(new_settings.taskbar_speed_enabled);
+    *state.write() = new_settings;
+    Ok(())
+}
+
 fn main() {
+    let initial_settings = settings::load_settings();
+    let settings_state = Arc::new(parking_lot::RwLock::new(initial_settings));
+    let settings_setup = settings_state.clone();
+
     let monitor = NetSpeedMonitor::new();
     let monitor_setup = monitor.clone();
 
     tauri::Builder::default()
         .manage(monitor)
+        .manage(settings_state)
         .setup(move |app| {
             // 1. Initial 32x32 tray icon
             let initial_dto = monitor_setup.get_current();
@@ -522,20 +547,29 @@ fn main() {
 
             // 5. Native Win32 Taskbar Speed Bar (Directly on Windows Taskbar)
             let taskbar_bar = TaskbarSpeedBar::start(app.handle().clone());
+            if !settings_setup.read().taskbar_speed_enabled {
+                taskbar_bar.set_visible(false);
+            }
+            app.manage(taskbar_bar.clone());
 
-            // 6. Background thread: periodic 1s network speed ticker
+            // 6. Background thread: periodic network speed ticker
             let tray_handle = tray.clone();
             let app_handle = app.handle().clone();
             let monitor_thread = monitor_setup.clone();
             let taskbar_thread = taskbar_bar.clone();
+            let settings_loop = settings_setup.clone();
 
             std::thread::spawn(move || {
                 loop {
-                    std::thread::sleep(Duration::from_millis(5000));
+                    let interval = settings_loop.read().sample_interval_secs.clamp(1, 60);
+                    std::thread::sleep(Duration::from_secs(interval));
+
                     let speed = monitor_thread.tick();
 
-                    // 1. Update taskbar speed bar (pure memory GDI rendering, 0 disk IO)
-                    taskbar_thread.update_speed(&speed.upload_formatted, &speed.download_formatted);
+                    // 1. Update taskbar speed bar if enabled
+                    if settings_loop.read().taskbar_speed_enabled {
+                        taskbar_thread.update_speed(&speed.upload_formatted, &speed.download_formatted);
+                    }
 
                     // 2. Only emit IPC events to WebView when the main window is actually visible
                     if let Some(window) = app_handle.get_webview_window("main") {
@@ -544,7 +578,7 @@ fn main() {
                         }
                     }
 
-                    // 3. Update tray tooltip (every 5s)
+                    // 3. Update tray tooltip
                     let tooltip = format!(
                         "a8-devtools 开发者工作台\n↑ 上传: {}\n↓ 下载: {}\n总发送: {} | 总接收: {}",
                         speed.upload_formatted,
@@ -573,6 +607,8 @@ fn main() {
             get_hosts_content,
             save_hosts_content,
             get_net_speed,
+            get_app_settings,
+            save_app_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running a8-devtools application");
