@@ -1,0 +1,12 @@
+{
+  "name": "arch-judge",
+  "displayName": "Semantic Architecture Judge",
+  "description": "通用语义架构红线裁判插件。基于 Jev 架构与两阶段调查模式，提供正交分类自适应路由与严格 Schema 结构化裁决，告别死板枚举与高误判。",
+  "version": "1.0.0",
+  "author": "DevPlus Architecture Team",
+  "suggestedPrompts": [
+    "执行语义架构红线终审 (/judge)",
+    "审查当前未提交改动是否违背架构红线",
+    "针对向后兼容与生命周期闭环进行架构专项审计"
+  ]
+}

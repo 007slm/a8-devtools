@@ -1,10 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod net_speed;
+mod taskbar_window;
 
 use cowfs::config::WorkspaceMeta;
 use cowfs::doctor::SystemDoctor;
 use net_speed::{render_speed_icon_rgba, NetSpeedDto, NetSpeedMonitor};
+use taskbar_window::TaskbarSpeedBar;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -518,20 +520,31 @@ fn main() {
                 });
             }
 
-            // 5. Background thread: periodic 1s network speed ticker
+            // 5. Native Win32 Taskbar Speed Bar (Directly on Windows Taskbar)
+            let taskbar_bar = TaskbarSpeedBar::start(app.handle().clone());
+
+            // 6. Background thread: periodic 1s network speed ticker
             let tray_handle = tray.clone();
             let app_handle = app.handle().clone();
             let monitor_thread = monitor_setup.clone();
+            let taskbar_thread = taskbar_bar.clone();
 
             std::thread::spawn(move || {
                 loop {
-                    std::thread::sleep(Duration::from_millis(1000));
+                    std::thread::sleep(Duration::from_millis(5000));
                     let speed = monitor_thread.tick();
 
-                    let rgba = render_speed_icon_rgba(&speed.upload_short, &speed.download_short);
-                    let icon = tauri::image::Image::new(&rgba, 32, 32);
-                    let _ = tray_handle.set_icon(Some(icon));
+                    // 1. Update taskbar speed bar (pure memory GDI rendering, 0 disk IO)
+                    taskbar_thread.update_speed(&speed.upload_formatted, &speed.download_formatted);
 
+                    // 2. Only emit IPC events to WebView when the main window is actually visible
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        if window.is_visible().unwrap_or(false) {
+                            let _ = app_handle.emit("net-speed-update", &speed);
+                        }
+                    }
+
+                    // 3. Update tray tooltip (every 5s)
                     let tooltip = format!(
                         "a8-devtools 开发者工作台\n↑ 上传: {}\n↓ 下载: {}\n总发送: {} | 总接收: {}",
                         speed.upload_formatted,
@@ -540,11 +553,6 @@ fn main() {
                         net_speed::format_speed(speed.total_recv_bytes),
                     );
                     let _ = tray_handle.set_tooltip(Some(tooltip));
-
-                    let menu_text = format!("↑ {}   ↓ {}", speed.upload_formatted, speed.download_formatted);
-                    let _ = speed_item.set_text(menu_text);
-
-                    let _ = app_handle.emit("net-speed-update", &speed);
                 }
             });
 

@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ArchitectureVerdict",
+  "description": "Jev-Style Schema-Constrained Architecture Decision Output",
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["PASSED", "VIOLATED", "REQUIRES_APPROVAL"],
+      "description": "最终裁决结果：全部通过 PASSED，存在确凿违规 VIOLATED，存在未知推测边界需人工确认 REQUIRES_APPROVAL"
+    },
+    "confidence_score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "裁决置信度得分（0.0 ~ 1.0）"
+    },
+    "summary": {
+      "type": "string",
+      "description": "一句话客观决断总结"
+    },
+    "evaluated_categories": {
+      "type": "object",
+      "properties": {
+        "lifecycle_and_evolution": {
+          "type": "object",
+          "properties": {
+            "evaluated": { "type": "boolean" },
+            "passed": { "type": "boolean" },
+            "violations": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/ViolationItem" }
+            }
+          },
+          "required": ["evaluated", "passed", "violations"]
+        },
+        "topology_and_boundaries": {
+          "type": "object",
+          "properties": {
+            "evaluated": { "type": "boolean" },
+            "passed": { "type": "boolean" },
+            "violations": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/ViolationItem" }
+            }
+          },
+          "required": ["evaluated", "passed", "violations"]
+        },
+        "concurrency_and_performance": {
+          "type": "object",
+          "properties": {
+            "evaluated": { "type": "boolean" },
+            "passed": { "type": "boolean" },
+            "violations": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/ViolationItem" }
+            }
+          },
+          "required": ["evaluated", "passed", "violations"]
+        },
+        "implementation_hygiene": {
+          "type": "object",
+          "properties": {
+            "evaluated": { "type": "boolean" },
+            "passed": { "type": "boolean" },
+            "violations": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/ViolationItem" }
+            }
+          },
+          "required": ["evaluated", "passed", "violations"]
+        }
+      },
+      "required": [
+        "lifecycle_and_evolution",
+        "topology_and_boundaries",
+        "concurrency_and_performance",
+        "implementation_hygiene"
+      ]
+    }
+  },
+  "required": ["verdict", "confidence_score", "summary", "evaluated_categories"],
+  "definitions": {
+    "ViolationItem": {
+      "type": "object",
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "description": "违规红线唯一标识符"
+        },
+        "file_path": {
+          "type": "string",
+          "description": "命中违规的目标文件路径"
+        },
+        "line_hint": {
+          "type": "string",
+          "description": "行号提示或代码符号"
+        },
+        "violation_reason": {
+          "type": "string",
+          "description": "具体违规事实与物理因果依据，禁止捕风捉影或推测"
+        },
+        "actionable_fix": {
+          "type": "string",
+          "description": "可直接执行的物理重构或删除指引"
+        }
+      },
+      "required": ["rule_id", "file_path", "violation_reason", "actionable_fix"]
+    }
+  }
+}

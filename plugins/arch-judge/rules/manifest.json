@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "categories": [
+    {
+      "id": "lifecycle_and_evolution",
+      "name": "演化与生命周期契约",
+      "description": "守卫系统生命周期单一事实源、零未经批准的向后兼容死代码、旧模型彻底退役与破坏权剥离。"
+    },
+    {
+      "id": "topology_and_boundaries",
+      "name": "系统边界与拓扑隔离",
+      "description": "守卫模块间严格单向分层依赖、纯净客户端 SDK 零服务端重型容器依赖、核心中枢完整性。"
+    },
+    {
+      "id": "concurrency_and_performance",
+      "name": "并发安全与热路径性能",
+      "description": "守卫数据面高并发热路径无大粒度排他锁、杜绝幽灵轮询与探测反查、资源全生命周期闭环。"
+    },
+    {
+      "id": "implementation_hygiene",
+      "name": "实现规范与单一路径",
+      "description": "守卫核心能力单一实现路径（禁止双轨解析器）、错误物理第一现场保留、日志门面规范与零字段注入。"
+    }
+  ],
+  "universal_rules": [
+    "rules/universal/NO_UNAPPROVED_BACKWARD_COMPAT.md",
+    "rules/universal/PURE_CLIENT_ISOLATION.md",
+    "rules/universal/HOT_PATH_NO_BLOCKING_LOCKS.md",
+    "rules/universal/ERROR_TRANSPARENCY_NO_SWALLOW.md"
+  ]
+}
