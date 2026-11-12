@@ -17,8 +17,17 @@ logs/*
 *.log
 *.tmp
 temp_*/
+**/__pycache__/
+.cowdiff/
 
 # OS generated files
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Node & Frontend
+node_modules/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

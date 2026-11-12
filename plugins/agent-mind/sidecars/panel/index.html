@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Mind Dashboard</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --fg: #f8fafc;
+      --muted: #94a3b8;
+      --primary: #6366f1;
+      --accent: #38bdf8;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f8fafc;
+        --card: #ffffff;
+        --border: #e2e8f0;
+        --fg: #0f172a;
+        --muted: #64748b;
+        --primary: #4f46e5;
+        --accent: #0284c7;
+      }
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .custom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+    .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  </style>
+</head>
+<body class="antialiased min-h-screen flex flex-col custom-scroll text-[13px] selection:bg-indigo-500/20">
+
+  <!-- 顶部导航栏 -->
+  <header class="sticky top-0 z-20 backdrop-blur-md bg-opacity-80 border-b border-[var(--border)] px-4 py-3 flex items-center justify-between" style="background-color: var(--bg);">
+    <div class="flex items-center gap-2.5">
+      <div class="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold shadow-sm shadow-indigo-500/20 text-sm">
+        🧠
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="font-bold text-[14px] tracking-tight">Agent Mind</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">Rust 原生内核</span>
+        </div>
+        <p class="text-[11px] text-[var(--muted)]">宿主机跨项目生态沙盘与架构红线中枢</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-1.5">
+      <button onclick="refreshData()" class="p-1.5 rounded-md hover:bg-slate-500/10 transition-colors text-[var(--muted)] hover:text-[var(--fg)]" title="刷新数据">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- 选项卡切换 -->
+  <div class="border-b border-[var(--border)] px-4 flex gap-6 bg-slate-500/5 text-xs font-medium">
+    <button onclick="switchTab('tabProjects')" id="btnTabProjects" class="py-2.5 border-b-2 border-indigo-500 text-indigo-500 font-semibold transition-all flex items-center gap-1.5">
+      <span>🗺️ 宿主机生态大地图</span>
+      <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-500/10 text-indigo-500 font-bold" id="badgeProjectCount">3</span>
+    </button>
+    <button onclick="switchTab('tabRedlines')" id="btnTabRedlines" class="py-2.5 border-b-2 border-transparent text-[var(--muted)] hover:text-[var(--fg)] transition-all flex items-center gap-1.5">
+      <span>🛡️ 架构根本红线</span>
+    </button>
+    <button onclick="switchTab('tabDocs')" id="btnTabDocs" class="py-2.5 border-b-2 border-transparent text-[var(--muted)] hover:text-[var(--fg)] transition-all flex items-center gap-1.5">
+      <span>📑 文档大地图规范</span>
+    </button>
+  </div>
+
+  <!-- 主体内容 -->
+  <main class="flex-1 p-4 max-w-5xl mx-auto w-full space-y-4">
+
+    <!-- TAB 1: 宿主机生态大地图 -->
+    <section id="tabProjects" class="space-y-4">
+      <div class="p-3 rounded-xl border border-blue-500/20 bg-blue-500/5 flex items-start gap-3">
+        <span class="text-base">🧭</span>
+        <div class="text-xs space-y-0.5">
+          <p class="font-semibold text-blue-500">跨项目渐进式披露原则</p>
+          <p class="text-[var(--muted)]">日常单工程开发仅需知晓自身生态位，严禁过度读取其他仓库源码；跨项目联调前请严格核对下方的依赖契约与靶场只读红线。</p>
+        </div>
+      </div>
+
+      <!-- 项目卡片列表 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5" id="projectsContainer">
+        <!-- a8-turbo -->
+        <div class="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3 hover:border-indigo-500/50 transition-all shadow-xs">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-[14px]">a8-turbo</span>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/20">CORE 生产核心</span>
+            </div>
+            <button onclick="copyPath('E:\\a8-turbo')" class="text-[11px] text-[var(--muted)] hover:text-indigo-400 font-mono flex items-center gap-1">
+              <span>E:\a8-turbo</span>
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+            </button>
+          </div>
+          <p class="text-[12px] text-[var(--muted)] leading-relaxed">
+            生产级智能数据库加速代理系统与 Web 前端加速网关。三进程独立交付：数据面核心 (<code class="text-indigo-400">:8010/:8330</code>)、Web 网关 intake (<code class="text-indigo-400">:8443/:8090</code>)、控制台 ui (<code class="text-indigo-400">:8011</code>)。
+          </p>
+          <div class="pt-2 border-t border-[var(--border)] flex items-center justify-between text-[11px]">
+            <span class="text-emerald-500 font-medium">● 门禁: mvn compile 100% · DuckDB 强类型</span>
+            <span class="text-[var(--muted)]">输出驱动至 BeX5 对拍</span>
+          </div>
+        </div>
+
+        <!-- a8-devtools -->
+        <div class="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3 hover:border-indigo-500/50 transition-all shadow-xs">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-[14px]">a8-devtools</span>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">TOOLING 辅助底座</span>
+            </div>
+            <button onclick="copyPath('E:\\a8-devtools')" class="text-[11px] text-[var(--muted)] hover:text-indigo-400 font-mono flex items-center gap-1">
+              <span>E:\a8-devtools</span>
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+            </button>
+          </div>
+          <p class="text-[12px] text-[var(--muted)] leading-relaxed">
+            面向 Windows 的高性能开发者效率底座平台。包含 WinFsp 写时复制虚拟文件系统 (<code class="text-indigo-400">cowfs</code>，C盘零占用)、任务栏实时网速悬浮条、系统设置中心及全局架构治理插件。
+          </p>
+          <div class="pt-2 border-t border-[var(--border)] flex items-center justify-between text-[11px]">
+            <span class="text-emerald-500 font-medium">● 门禁: cargo check 0 错误 · 零黑窗</span>
+            <span class="text-[var(--muted)]">为 Turbo 提供差异隔离</span>
+          </div>
+        </div>
+
+        <!-- BeX5-V38-turbo -->
+        <div class="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3 hover:border-amber-500/50 transition-all shadow-xs">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-[14px]">BeX5-V38-turbo</span>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20">TEST-BED 验证靶场</span>
+            </div>
+            <button onclick="copyPath('E:\\BeX5-V38-turbo')" class="text-[11px] text-[var(--muted)] hover:text-indigo-400 font-mono flex items-center gap-1">
+              <span>E:\BeX5-V38-turbo</span>
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+            </button>
+          </div>
+          <p class="text-[12px] text-[var(--muted)] leading-relaxed">
+            本地全量业务运行时测试宿主环境（Tomcat、MySQL、Runtime）。用于部署 A8 驱动与网关，进行真实压测与本地缓存字段类型物理对拍。
+          </p>
+          <div class="pt-2 border-t border-[var(--border)] flex items-center justify-between text-[11px]">
+            <span class="text-amber-500 font-bold">⚠️ 绝对只读红线：禁止改动其业务源码</span>
+            <span class="text-[var(--muted)]">仅支持驱动无侵入挂载</span>
+          </div>
+        </div>
+
+        <!-- a8-whisper -->
+        <div class="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3 hover:border-slate-500/50 transition-all shadow-xs">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-[14px]">a8-whisper</span>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/10 text-[var(--muted)] border border-slate-500/20">TOOLING 辅助语音</span>
+            </div>
+            <button onclick="copyPath('E:\\a8-whisper')" class="text-[11px] text-[var(--muted)] hover:text-indigo-400 font-mono flex items-center gap-1">
+              <span>E:\a8-whisper</span>
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+            </button>
+          </div>
+          <p class="text-[12px] text-[var(--muted)] leading-relaxed">
+            本地语音识别与实时转录服务底座，为开发者语音指令提供离线低延迟转录支持。
+          </p>
+          <div class="pt-2 border-t border-[var(--border)] flex items-center justify-between text-[11px]">
+            <span class="text-[var(--muted)]">● 运行状态: 独立就绪</span>
+            <span class="text-[var(--muted)]">开发者工作台组件</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: 架构根本红线 -->
+    <section id="tabRedlines" class="space-y-4 hidden">
+      <!-- 主理人心智金句 -->
+      <div class="p-4 rounded-xl border border-indigo-500/30 bg-gradient-to-r from-indigo-500/10 via-purple-500/5 to-transparent space-y-2">
+        <div class="flex items-center gap-2 text-indigo-400 font-bold text-xs">
+          <span>⚡ 代码库主人翁心智 (Code Ownership)</span>
+        </div>
+        <p class="text-[13px] font-medium leading-relaxed">
+          “这是你的代码库，架构设计和构建方式由你说了算，并且你将持续在上面开发构建。”
+        </p>
+        <p class="text-[11px] text-[var(--muted)]">
+          主动消除同类重复代码，就地根治显见坏味道；坚决杜绝“套娃打补丁”与“报丧不修复”的过客心态。
+        </p>
+      </div>
+
+      <!-- 4 大正交维度看板 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+        <div class="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--card)] space-y-1.5">
+          <div class="flex items-center gap-2 font-semibold text-xs text-indigo-400">
+            <span>1. 演化契约与零擅自兼容</span>
+          </div>
+          <p class="text-[12px] text-[var(--muted)] leading-relaxed">
+            任何过渡层、废弃接口或双轨逻辑必须用户明确批准方可保留，未经批准彻底删除。重构时严禁“只建新房不拆旧房”，必须执行逆向清缴。
+          </p>
+        </div>
+
+        <div class="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--card)] space-y-1.5">
+          <div class="flex items-center gap-2 font-semibold text-xs text-sky-400">
+            <span>2. 系统边界与纯净隔离</span>
+          </div>
+          <p class="text-[12px] text-[var(--muted)] leading-relaxed">
+            无侵入客户端 SDK 严禁依赖 Spring Boot、Netty 等重型服务端容器；模块遵循严格单向依赖，底层库严禁反向污染宿主应用。
+          </p>
+        </div>
+
+        <div class="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--card)] space-y-1.5">
+          <div class="flex items-center gap-2 font-semibold text-xs text-amber-400">
+            <span>3. 并发安全与热路径性能</span>
+          </div>
+          <p class="text-[12px] text-[var(--muted)] leading-relaxed">
+            高并发数据面读取热路径严禁在方法签名声明 synchronized；严禁心跳/批处理流水线中增加跨线程、跨数据源的反查探测与隐式防抖。
+          </p>
+        </div>
+
+        <div class="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--card)] space-y-1.5">
+          <div class="flex items-center gap-2 font-semibold text-xs text-emerald-400">
+            <span>4. 实现规范与错误物理第一现场</span>
+          </div>
+          <p class="text-[12px] text-[var(--muted)] leading-relaxed">
+            同一核心领域能力全工程唯一定义路径；严禁吞掉异常用默认空值继续，失败必须保留物理错误第一现场，保留人工可接管状态。
+          </p>
+        </div>
+      </div>
+
+      <!-- YAGNI 缺陷风险动态测算器 -->
+      <div class="p-4 rounded-xl border border-[var(--border)] bg-[var(--card)] space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="font-bold text-xs text-[var(--fg)]">🧮 YAGNI 缺陷风险量化评估器</span>
+          <span id="yagniResultBadge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">乘积: 4 · 严禁修改代码</span>
+        </div>
+        <p class="text-[11px] text-[var(--muted)]">发生频率 F (1~10) × 严重程度 S (1~10)。若风险乘积 &lt; 10，一律作为已知边界记录归档，严禁修改代码。</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px] text-[var(--muted)]">
+              <span>发生频率 (Frequency: 1~10)</span>
+              <span id="valFreq" class="font-bold text-indigo-400">2</span>
+            </div>
+            <input type="range" id="sliderFreq" min="1" max="10" value="2" oninput="calcYagni()" class="w-full accent-indigo-500 cursor-pointer">
+          </div>
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px] text-[var(--muted)]">
+              <span>严重程度 (Severity: 1~10)</span>
+              <span id="valSev" class="font-bold text-indigo-400">2</span>
+            </div>
+            <input type="range" id="sliderSev" min="1" max="10" value="2" oninput="calcYagni()" class="w-full accent-indigo-500 cursor-pointer">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: 文档大地图规范 -->
+    <section id="tabDocs" class="space-y-4 hidden">
+      <div class="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--card)] space-y-2">
+        <div class="flex items-center gap-2 font-bold text-xs text-indigo-400">
+          <span>📑 长期文档命名与分类体系 (docs/ 目录下)</span>
+        </div>
+        <div class="p-2.5 rounded-lg bg-slate-500/10 font-mono text-[11px] text-slate-300">
+          YYYYMMDD-&lt;TYPE&gt;-&lt;MODULE&gt;-&lt;SUBJECT&gt;.md
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1 text-[11px]">
+          <div class="p-2 rounded bg-slate-500/5 border border-[var(--border)]"><b class="text-indigo-400">SPEC</b>: 核心组件协议/接口</div>
+          <div class="p-2 rounded bg-slate-500/5 border border-[var(--border)]"><b class="text-sky-400">PLAN</b>: 重大架构演进方案</div>
+          <div class="p-2 rounded bg-slate-500/5 border border-[var(--border)]"><b class="text-amber-400">ADR</b>: 架构决策记录</div>
+          <div class="p-2 rounded bg-slate-500/5 border border-[var(--border)]"><b class="text-emerald-400">BUG</b>: 重大故障根因分析</div>
+        </div>
+      </div>
+
+      <!-- 建档门槛红线 -->
+      <div class="p-3.5 rounded-xl border border-rose-500/20 bg-rose-500/5 space-y-1.5 text-xs">
+        <span class="font-bold text-rose-500">⛔ 建档门槛与防泛滥红线</span>
+        <p class="text-[var(--muted)] leading-relaxed">
+          微小的依赖升级、拼写修正、单行工具补丁等改动，<b>严禁在 docs/ 下滥建垃圾文件</b>。仅当涉及重大架构决策、核心交互协议或自愈机制变更时，方可在 docs/ 建档并同步更新 AGENTS.md 索引表格。
+        </p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 提示弹窗 (Toast) -->
+  <div id="toast" class="fixed bottom-4 right-4 px-3.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs shadow-xl transition-opacity duration-200 opacity-0 pointer-events-none z-50 flex items-center gap-2">
+    <span>✓</span>
+    <span id="toastMsg">已复制</span>
+  </div>
+
+  <script>
+    function switchTab(tabId) {
+      document.getElementById('tabProjects').classList.add('hidden');
+      document.getElementById('tabRedlines').classList.add('hidden');
+      document.getElementById('tabDocs').classList.add('hidden');
+      document.getElementById(tabId).classList.remove('hidden');
+
+      const tabs = [
+        { id: 'btnTabProjects', active: tabId === 'tabProjects' },
+        { id: 'btnTabRedlines', active: tabId === 'tabRedlines' },
+        { id: 'btnTabDocs', active: tabId === 'tabDocs' },
+      ];
+      tabs.forEach(t => {
+        const el = document.getElementById(t.id);
+        if (t.active) {
+          el.className = "py-2.5 border-b-2 border-indigo-500 text-indigo-500 font-semibold transition-all flex items-center gap-1.5";
+        } else {
+          el.className = "py-2.5 border-b-2 border-transparent text-[var(--muted)] hover:text-[var(--fg)] transition-all flex items-center gap-1.5";
+        }
+      });
+    }
+
+    function calcYagni() {
+      const f = parseInt(document.getElementById('sliderFreq').value, 10);
+      const s = parseInt(document.getElementById('sliderSev').value, 10);
+      document.getElementById('valFreq').innerText = f;
+      document.getElementById('valSev').innerText = s;
+      const score = f * s;
+      const badge = document.getElementById('yagniResultBadge');
+      if (score < 10) {
+        badge.className = "text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20";
+        badge.innerText = `乘积: ${score} · 严禁修改代码 (已知边界记录)`;
+      } else {
+        badge.className = "text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20";
+        badge.innerText = `乘积: ${score} · 允许进入重构流程`;
+      }
+    }
+
+    function copyPath(text) {
+      navigator.clipboard.writeText(text);
+      showToast(`已复制路径: ${text}`);
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      document.getElementById('toastMsg').innerText = msg;
+      t.classList.remove('opacity-0');
+      setTimeout(() => t.classList.add('opacity-0'), 2000);
+    }
+
+    function refreshData() {
+      showToast('大地图与红线数据已对齐物理真源');
+    }
+  </script>
+</body>
+</html>

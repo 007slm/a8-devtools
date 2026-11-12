@@ -1,4 +1,7 @@
-use crate::cow::{CopyUpEngine, DirectoryMerger, LayerState, PathResolution};
+use crate::cow::{
+    resolve_icon_resource, synthesize_desktop_ini, CopyUpEngine, DirectoryMerger, LayerState,
+    PathResolution,
+};
 use std::ffi::c_void;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -10,8 +13,9 @@ use parking_lot::Mutex;
 
 use widestring::U16CStr;
 use windows::Win32::Storage::FileSystem::{
-    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
+    FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE,
 };
 use winfsp::{FspError, Result};
 use winfsp::filesystem::{
@@ -26,6 +30,7 @@ pub struct CowFileHandle {
     pub file: Option<Mutex<File>>,
     pub dir_buffer: DirBuffer,
     pub delete_on_close: AtomicBool,
+    pub virtual_content: Option<Vec<u8>>,
 }
 
 pub struct CowFsContext {
@@ -39,9 +44,36 @@ impl CowFsContext {
         Self { engine }
     }
 
+    pub fn new_direct(source_dir: PathBuf) -> Self {
+        let state = LayerState::new_direct(source_dir);
+        let engine = Arc::new(CopyUpEngine::new(state));
+        Self { engine }
+    }
+
     #[allow(dead_code)]
     pub fn engine(&self) -> &Arc<CopyUpEngine> {
         &self.engine
+    }
+
+    fn is_desktop_ini(path: &Path) -> bool {
+        path.to_string_lossy().eq_ignore_ascii_case("desktop.ini")
+    }
+
+    fn get_synthesized_desktop_ini(&self) -> Vec<u8> {
+        let physical = self.engine.state().resolve(&PathBuf::from("desktop.ini"));
+        let existing = match physical {
+            PathResolution::Upper(ref p) | PathResolution::Lower(ref p) => {
+                if p.is_file() {
+                    fs::read_to_string(p).ok()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        let icon_res = resolve_icon_resource();
+        synthesize_desktop_ini(existing.as_deref(), &icon_res).into_bytes()
     }
 
     fn u16cstr_to_rel_path(raw: &U16CStr) -> PathBuf {
@@ -123,6 +155,25 @@ impl FileSystemContext for CowFsContext {
         _reparse_point_resolver: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
     ) -> Result<FileSecurity> {
         let rel_path = Self::u16cstr_to_rel_path(file_name);
+
+        if rel_path.as_os_str().is_empty() {
+            // Root directory: MUST have FILE_ATTRIBUTE_READONLY so Windows checks desktop.ini
+            return Ok(FileSecurity {
+                reparse: false,
+                sz_security_descriptor: 0,
+                attributes: FILE_ATTRIBUTE_DIRECTORY.0 | FILE_ATTRIBUTE_READONLY.0,
+            });
+        }
+
+        if Self::is_desktop_ini(&rel_path) {
+            // Virtual desktop.ini: hidden + system
+            return Ok(FileSecurity {
+                reparse: false,
+                sz_security_descriptor: 0,
+                attributes: FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0,
+            });
+        }
+
         let res = self.engine.state().resolve(&rel_path);
 
         match res {
@@ -156,6 +207,25 @@ impl FileSystemContext for CowFsContext {
         file_info: &mut OpenFileInfo,
     ) -> Result<Self::FileContext> {
         let rel_path = Self::u16cstr_to_rel_path(file_name);
+
+        // Virtual desktop.ini interception
+        if Self::is_desktop_ini(&rel_path) {
+            let content = self.get_synthesized_desktop_ini();
+            let size = content.len() as u64;
+            file_info.as_mut().file_size = size;
+            file_info.as_mut().allocation_size = (size + 4095) & !4095;
+            file_info.as_mut().file_attributes = FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0;
+
+            return Ok(Arc::new(CowFileHandle {
+                rel_path,
+                is_dir: false,
+                file: None,
+                dir_buffer: DirBuffer::new(),
+                delete_on_close: AtomicBool::new(false),
+                virtual_content: Some(content),
+            }));
+        }
+
         let wants_write = (granted_access & (0x0002 | 0x0004 | 0x0010000 | 0x10000000 | 0x40000000)) != 0;
 
         let physical_path = if wants_write {
@@ -179,6 +249,11 @@ impl FileSystemContext for CowFsContext {
         let is_dir = physical_path.is_dir();
         Self::fill_file_info(&physical_path, is_dir, file_info.as_mut());
 
+        // Root directory: ensure READONLY attribute is present for Explorer desktop.ini customization
+        if is_dir && rel_path.as_os_str().is_empty() {
+            file_info.as_mut().file_attributes |= FILE_ATTRIBUTE_READONLY.0;
+        }
+
         let file = if is_dir {
             None
         } else {
@@ -198,6 +273,7 @@ impl FileSystemContext for CowFsContext {
             file,
             dir_buffer: DirBuffer::new(),
             delete_on_close: AtomicBool::new(false),
+            virtual_content: None,
         }))
     }
 
@@ -242,6 +318,7 @@ impl FileSystemContext for CowFsContext {
             file,
             dir_buffer: DirBuffer::new(),
             delete_on_close: AtomicBool::new(false),
+            virtual_content: None,
         }))
     }
 
@@ -293,6 +370,17 @@ impl FileSystemContext for CowFsContext {
     }
 
     fn read(&self, context: &Self::FileContext, buffer: &mut [u8], offset: u64) -> Result<u32> {
+        if let Some(ref content) = context.virtual_content {
+            let offset = offset as usize;
+            if offset >= content.len() {
+                return Ok(0);
+            }
+            let avail = content.len() - offset;
+            let to_read = std::cmp::min(buffer.len(), avail);
+            buffer[..to_read].copy_from_slice(&content[offset..offset + to_read]);
+            return Ok(to_read as u32);
+        }
+
         if let Some(ref file_mutex) = context.file {
             let mut file = file_mutex.lock();
             file.seek(SeekFrom::Start(offset)).map_err(|_| Self::access_denied())?;
@@ -312,6 +400,10 @@ impl FileSystemContext for CowFsContext {
         _constrained_io: bool,
         file_info: &mut FileInfo,
     ) -> Result<u32> {
+        if context.virtual_content.is_some() {
+            return Ok(buffer.len() as u32);
+        }
+
         if let Some(ref file_mutex) = context.file {
             let mut file = file_mutex.lock();
             if write_to_eof {
@@ -331,10 +423,21 @@ impl FileSystemContext for CowFsContext {
     }
 
     fn get_file_info(&self, context: &Self::FileContext, file_info: &mut FileInfo) -> Result<()> {
+        if let Some(ref content) = context.virtual_content {
+            let size = content.len() as u64;
+            file_info.file_size = size;
+            file_info.allocation_size = (size + 4095) & !4095;
+            file_info.file_attributes = FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0;
+            return Ok(());
+        }
+
         let res = self.engine.state().resolve(&context.rel_path);
         match res {
             PathResolution::Upper(p) | PathResolution::Lower(p) => {
                 Self::fill_file_info(&p, context.is_dir, file_info);
+                if context.is_dir && context.rel_path.as_os_str().is_empty() {
+                    file_info.file_attributes |= FILE_ATTRIBUTE_READONLY.0;
+                }
                 Ok(())
             }
             PathResolution::Whiteout | PathResolution::NotFound => Err(Self::not_found()),
@@ -378,11 +481,30 @@ impl FileSystemContext for CowFsContext {
 
             // Enumerate merged entries
             if let Ok(entries) = DirectoryMerger::read_directory(self.engine.state(), &context.rel_path) {
+                let is_root = context.rel_path.as_os_str().is_empty();
+                let mut found_desktop_ini = false;
+
                 for entry in entries {
+                    if is_root && entry.name.eq_ignore_ascii_case("desktop.ini") {
+                        found_desktop_ini = true;
+                    }
                     let mut item_info: DirInfo<255> = DirInfo::new();
                     let _ = item_info.set_name(&entry.name);
                     Self::fill_file_info(&entry.physical_path, entry.is_dir, item_info.file_info_mut());
+                    if is_root && entry.name.eq_ignore_ascii_case("desktop.ini") {
+                        item_info.file_info_mut().file_attributes = FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0;
+                    }
                     let _ = dir_buf.write(&mut item_info);
+                }
+
+                if is_root && !found_desktop_ini {
+                    let mut ini_info: DirInfo<255> = DirInfo::new();
+                    let _ = ini_info.set_name("desktop.ini");
+                    let synthesized = self.get_synthesized_desktop_ini();
+                    ini_info.file_info_mut().file_size = synthesized.len() as u64;
+                    ini_info.file_info_mut().allocation_size = (synthesized.len() as u64 + 4095) & !4095;
+                    ini_info.file_info_mut().file_attributes = FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0;
+                    let _ = dir_buf.write(&mut ini_info);
                 }
             }
         }

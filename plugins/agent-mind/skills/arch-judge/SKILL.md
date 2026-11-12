@@ -38,8 +38,13 @@ python <plugin_dir>/skills/arch-judge/scripts/judge_router.py <workspace_dir>
 - 驱动或 SDK 是否悄悄引入了服务端的重型类库？
 
 ### 步骤 3：第二阶段——Jev 结构化定音 (Thinking OFF / Strict Schema)
-将调查事实对照标准 Schema 进行判定。严格按照 `schemas/verdict.json` 输出 JSON 报告：
-- 若所有激活维度均合规，返回 `PASSED`；
+在第二阶段裁决时，插件直接调用官方 **Google Gemini Decisions API (`gemini-decision-1`)** 执行闭环定音。
+该 API 采用非自回归零文本生成架构，直接根据 4 大正交维度矩阵计算先验概率与置信度：
+```bash
+py -3 <plugin_dir>/skills/arch-judge/scripts/decisions_client.py <workspace_dir> <activated_categories>
+```
+脚本自动读取插件配置 `config.json`（或环境变量 `GEMINI_API_KEY`），对照标准 Schema 输出 JSON 裁决报告：
+- 若所有激活维度均合规，返回 `PASSED`，输出 calibrated probabilities；
 - 若存在确凿红线破坏，返回 `VIOLATED`，并在 `violations` 中明确指出：
   - `rule_id`: 违规红线标识符
   - `file_path`: 物理文件路径与行号

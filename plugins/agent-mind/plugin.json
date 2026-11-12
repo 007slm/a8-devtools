@@ -1,12 +1,14 @@
 {
   "name": "agent-mind",
-  "displayName": "Agent Mind",
-  "description": "面向自主智能体的工程良知与持续演进心智中枢。提供架构红线裁决 (/judge)、工程复盘与经验反哺 (/improve) 及全局文档与架构大地图治理规范，实现工程规范自主闭环。",
+  "display_name": "Agent Mind Dashboard",
+  "displayName": "Agent Mind Dashboard",
+  "description": "面向自主智能体的工程良知与持续演进心智中枢。提供宿主机跨项目生态大地图、架构红线裁决与文档治理仪表盘。",
   "version": "1.2.0",
   "author": "DevPlus Architecture Team",
+  "logo": "assets/logo.svg",
   "suggestedPrompts": [
     "执行语义架构红线终审 (/judge)",
-    "任务收尾复盘并生成规则补丁 (/improve)",
+    "任务收尾复盘并生成大地图补丁 (/improve)",
     "检查文档规范与架构地图一致性"
   ]
 }

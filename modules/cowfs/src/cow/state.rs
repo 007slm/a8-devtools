@@ -17,6 +17,7 @@ pub enum PathResolution {
 pub struct LayerState {
     pub lower_dir: PathBuf,
     pub upper_dir: PathBuf,
+    pub direct_mode: bool,
 }
 
 impl LayerState {
@@ -24,6 +25,16 @@ impl LayerState {
         Self {
             lower_dir: lower_dir.into(),
             upper_dir: upper_dir.into(),
+            direct_mode: false,
+        }
+    }
+
+    pub fn new_direct(source_dir: impl Into<PathBuf>) -> Self {
+        let p = source_dir.into();
+        Self {
+            lower_dir: p.clone(),
+            upper_dir: p,
+            direct_mode: true,
         }
     }
 
@@ -63,6 +74,16 @@ impl LayerState {
 
     /// Resolves the current status and location of a relative path.
     pub fn resolve(&self, rel_path: &Path) -> PathResolution {
+        // Direct mode: pure passthrough to the source directory, no whiteout or copy-up
+        if self.direct_mode {
+            let direct_target = self.upper_dir.join(rel_path);
+            if direct_target.exists() {
+                return PathResolution::Upper(direct_target);
+            } else {
+                return PathResolution::NotFound;
+            }
+        }
+
         // Root path is always valid
         if rel_path.as_os_str().is_empty() {
             return PathResolution::Upper(self.upper_dir.clone());

@@ -138,17 +138,19 @@ impl WorkspaceMeta {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        // 1. Local self-contained save inside source_dir/.cowdiff/{pathHash}/
-        let local_ws_dir = Self::workspace_root_in_source(&self.source_dir, &self.target_dir);
-        if !local_ws_dir.exists() {
-            fs::create_dir_all(&local_ws_dir)?;
+        // 1. Local self-contained save inside source_dir/.cowdiff/{pathHash}/ (only for copy-on-write with diffs)
+        if self.mode != "direct_mirror" {
+            let local_ws_dir = Self::workspace_root_in_source(&self.source_dir, &self.target_dir);
+            if !local_ws_dir.exists() {
+                fs::create_dir_all(&local_ws_dir)?;
+            }
+            let local_diff_dir = local_ws_dir.join("diff");
+            if !local_diff_dir.exists() {
+                fs::create_dir_all(&local_diff_dir)?;
+            }
+            let local_meta = local_ws_dir.join("meta.json");
+            fs::write(local_meta, &content)?;
         }
-        let local_diff_dir = local_ws_dir.join("diff");
-        if !local_diff_dir.exists() {
-            fs::create_dir_all(&local_diff_dir)?;
-        }
-        let local_meta = local_ws_dir.join("meta.json");
-        fs::write(local_meta, &content)?;
 
         // 2. Global registry save in %LOCALAPPDATA%\cowlink\workspaces/{pathHash}/
         let global_dir = Self::global_meta_dir(&self.target_dir);
@@ -235,6 +237,16 @@ impl WorkspaceMeta {
                     continue;
                 }
 
+                // Direct mirror mode: does not require .cowdiff, source directory itself is truth
+                if global_meta.mode == "direct_mirror" {
+                    if global_meta.source_dir.is_dir() {
+                        results.push(global_meta);
+                    } else {
+                        let _ = fs::remove_dir_all(entry.path());
+                    }
+                    continue;
+                }
+
                 // Physical truth verification: source directory and its .cowdiff meta must exist
                 let local_meta = Self::local_meta_path(&global_meta.source_dir, &global_meta.target_dir);
                 if !local_meta.exists() {
@@ -291,7 +303,7 @@ impl WorkspaceMeta {
     #[allow(dead_code)]
     pub fn compute_diff_stats(&self) -> DiffStats {
         let mut stats = DiffStats::default();
-        if !self.diff_dir.exists() {
+        if self.mode == "direct_mirror" || !self.diff_dir.exists() {
             return stats;
         }
 
@@ -403,3 +415,18 @@ impl WorkspaceMeta {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_all_workspaces() {
+        let list = WorkspaceMeta::list_all();
+        println!(">>> Found {} workspaces in list_all", list.len());
+        for ws in &list {
+            println!("  WS: target={:?}, src={:?}, mode={}", ws.target_dir, ws.source_dir, ws.mode);
+        }
+    }
+}
+

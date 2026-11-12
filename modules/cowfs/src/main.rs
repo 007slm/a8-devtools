@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             source,
             target,
             diff_dir,
+            direct,
         } => {
             let canonical_source = fs::canonicalize(&source).map_err(|e| {
                 format!(
@@ -44,36 +45,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("WinFsp 驱动未运行！请先以管理员权限运行: net start WinFsp".into());
             }
 
-            // 分配源目录内 .cowdiff 差异存储目录
-            let actual_diff_dir = match diff_dir {
-                Some(p) => {
-                    if !p.exists() {
-                        fs::create_dir_all(&p)?;
+            // 分配源目录内 .cowdiff 差异存储目录 (直通模式不占用差异目录)
+            let actual_diff_dir = if direct {
+                canonical_source.clone()
+            } else {
+                match diff_dir {
+                    Some(p) => {
+                        if !p.exists() {
+                            fs::create_dir_all(&p)?;
+                        }
+                        fs::canonicalize(&p)?
                     }
-                    fs::canonicalize(&p)?
-                }
-                None => {
-                    let default_diff = WorkspaceMeta::diff_dir_for(&canonical_source, &target);
-                    if !default_diff.exists() {
-                        fs::create_dir_all(&default_diff)?;
+                    None => {
+                        let default_diff = WorkspaceMeta::diff_dir_for(&canonical_source, &target);
+                        if !default_diff.exists() {
+                            fs::create_dir_all(&default_diff)?;
+                        }
+                        default_diff
                     }
-                    default_diff
                 }
             };
 
+            let mode_str = if direct { "direct_mirror" } else { "driver" };
+
             println!("============================================================");
-            println!("       启动 cowlink 写时复制虚拟工作区 (WinFsp 内核驱动)    ");
+            if direct {
+                println!("    启动 cowlink 直通镜像虚拟目录 (WinFsp 原生物理目录伪装)   ");
+            } else {
+                println!("       启动 cowlink 写时复制虚拟工作区 (WinFsp 内核驱动)    ");
+            }
             println!("============================================================");
-            println!("基础源目录 (只读基底): {}", canonical_source.display());
-            println!("目标工作区 (虚拟挂载): {}", target.display());
-            println!("增量差异目录:          {}", actual_diff_dir.display());
+            println!("基础源目录 (物理代码库): {}", canonical_source.display());
+            println!("目标工作区 (虚拟挂载点): {}", target.display());
+            if direct {
+                println!("运行模式:              直通镜像 (双向实时同步, 0 差异层)");
+            } else {
+                println!("增量差异目录:          {}", actual_diff_dir.display());
+            }
             println!("------------------------------------------------------------");
 
             let mut meta = WorkspaceMeta::new(
                 &canonical_source,
                 &actual_diff_dir,
                 &target,
-                "driver",
+                mode_str,
             );
             meta.pid = Some(std::process::id());
             meta.active = true;
@@ -92,14 +107,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             println!("正在通过 WinFsp 驱动加载虚拟文件系统...");
-            let _host = winfsp_fs::CowFsHost::mount(
-                canonical_source,
-                actual_diff_dir,
-                &target,
-            )?;
+            let _host = if direct {
+                winfsp_fs::CowFsHost::mount_direct(canonical_source, &target)?
+            } else {
+                winfsp_fs::CowFsHost::mount(
+                    canonical_source,
+                    actual_diff_dir,
+                    &target,
+                )?
+            };
 
             println!("√ 挂载成功！工作区已就绪: {}", target.display());
-            println!("提示: 工作区为纯净代码视图，所有写操作将自动触发写时复制，按 Ctrl+C 可停止挂载服务。");
+            if direct {
+                println!("提示: 直通模式已生效。任何读写均直接穿透源目录，系统将视其为原生标准 NTFS 物理目录。");
+            } else {
+                println!("提示: 工作区为纯净代码视图，所有写操作将自动触发写时复制，按 Ctrl+C 可停止挂载服务。");
+            }
             std::thread::park();
         }
 

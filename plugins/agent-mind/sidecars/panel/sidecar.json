@@ -1,0 +1,20 @@
+{
+  "command": "node",
+  "args": [
+    "main.mjs"
+  ],
+  "restart_policy": "always",
+  "display_name": "Agent Mind Dashboard",
+  "description": "宿主机跨项目生态大地图、架构根本红线与文档治理仪表盘",
+  "has_web_ui": true,
+  "ui_config": {
+    "display_name": "Agent Mind Dashboard",
+    "views": [
+      {
+        "path": "/",
+        "entrypoint": "SIDECAR_UI_ENTRYPOINT_AUX_PANE",
+        "title": "Agent Mind Dashboard"
+      }
+    ]
+  }
+}

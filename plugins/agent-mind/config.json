@@ -1,0 +1,7 @@
+{
+  "api_key": "${GEMINI_API_KEY}",
+  "model": "gemini-decision-1",
+  "endpoint": "https://generativelanguage.googleapis.com/v1beta/decisions",
+  "timeout_seconds": 15,
+  "confidence_threshold": 0.85
+}

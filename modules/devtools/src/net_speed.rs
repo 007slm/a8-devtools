@@ -162,6 +162,7 @@ pub fn format_speed_short(bytes_per_sec: u64) -> String {
 
 /// 3x5 点阵字体定义 (支持 0-9, A-Z, ., 空格, ↑, ↓)
 /// 每行 3 位（占 byte 低 3 位），共 5 行
+#[allow(dead_code)]
 fn get_glyph_3x5(c: char) -> [u8; 5] {
     match c {
         '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
@@ -188,6 +189,7 @@ fn get_glyph_3x5(c: char) -> [u8; 5] {
 
 /// Renders a crisp 32x32 RGBA icon displaying upload (top) and download (bottom) rates.
 /// Uses high-contrast pixels with subtle border backing for crystal clarity on both light/dark taskbars.
+#[allow(dead_code)]
 pub fn render_speed_icon_rgba(up_str: &str, down_str: &str) -> Vec<u8> {
     const W: usize = 32;
     const H: usize = 32;
@@ -239,6 +241,7 @@ pub fn render_speed_icon_rgba(up_str: &str, down_str: &str) -> Vec<u8> {
     buf
 }
 
+#[allow(dead_code)]
 fn draw_line_text(
     buf: &mut [u8],
     w: usize,
@@ -314,6 +317,7 @@ fn draw_line_text(
     }
 }
 
+#[allow(dead_code)]
 #[inline]
 fn set_pixel(buf: &mut [u8], w: usize, h: usize, x: usize, y: usize, color: [u8; 4]) {
     if x < w && y < h {

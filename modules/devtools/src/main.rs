@@ -2,11 +2,12 @@
 
 mod net_speed;
 mod settings;
+mod sidecar;
 mod taskbar_window;
 
 use cowfs::config::WorkspaceMeta;
 use cowfs::doctor::SystemDoctor;
-use net_speed::{render_speed_icon_rgba, NetSpeedDto, NetSpeedMonitor};
+use net_speed::{NetSpeedDto, NetSpeedMonitor};
 use taskbar_window::TaskbarSpeedBar;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -35,6 +36,7 @@ pub struct WorkspaceCardDto {
     pub target_path: String,
     pub source_path: String,
     pub diff_path: String,
+    pub mode: String,
     pub is_alive: bool,
     pub pid: Option<u32>,
     pub modified_count: usize,
@@ -80,59 +82,68 @@ fn find_cowfs_binary() -> PathBuf {
     PathBuf::from("cowfs.exe")
 }
 
+fn clean_path_for_explorer(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    let stripped = if s.starts_with(r"\\?\") {
+        &s[4..]
+    } else {
+        &s
+    };
+    PathBuf::from(stripped)
+}
+
 #[cfg(windows)]
 fn open_in_explorer_native(path: &Path) {
-    use windows::core::HSTRING;
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let clean = clean_path_for_explorer(path);
+    let target = if clean.exists() {
+        clean
+    } else if let Some(parent) = clean.parent() {
+        if parent.exists() {
+            parent.to_path_buf()
+        } else {
+            clean
+        }
+    } else {
+        clean
+    };
 
-    let path_str = path.to_string_lossy();
-    let wide_path = HSTRING::from(path_str.as_ref());
-    let wide_operation = HSTRING::from("open");
-
-    unsafe {
-        ShellExecuteW(
-            None,
-            &wide_operation,
-            &wide_path,
-            None,
-            None,
-            SW_SHOWNORMAL,
-        );
-    }
+    let _ = std::process::Command::new("explorer")
+        .arg(&target)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
 }
 
 #[cfg(not(windows))]
 fn open_in_explorer_native(path: &Path) {
-    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    let clean = clean_path_for_explorer(path);
+    let _ = std::process::Command::new("xdg-open").arg(&clean).spawn();
 }
 
 #[cfg(windows)]
 fn locate_in_explorer_native(path: &Path) {
-    use windows::core::HSTRING;
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let clean = clean_path_for_explorer(path);
+    let arg = if clean.exists() {
+        format!("/select,\"{}\"", clean.display())
+    } else if let Some(parent) = clean.parent() {
+        if parent.exists() {
+            format!("/select,\"{}\"", parent.display())
+        } else {
+            clean.display().to_string()
+        }
+    } else {
+        clean.display().to_string()
+    };
 
-    let args = format!("/select,\"{}\"", path.display());
-    let wide_exe = HSTRING::from("explorer.exe");
-    let wide_args = HSTRING::from(args.as_str());
-    let wide_operation = HSTRING::from("open");
-
-    unsafe {
-        ShellExecuteW(
-            None,
-            &wide_operation,
-            &wide_exe,
-            &wide_args,
-            None,
-            SW_SHOWNORMAL,
-        );
-    }
+    let _ = std::process::Command::new("explorer")
+        .arg(&arg)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
 }
 
 #[cfg(not(windows))]
 fn locate_in_explorer_native(path: &Path) {
-    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    let clean = clean_path_for_explorer(path);
+    let _ = std::process::Command::new("xdg-open").arg(&clean).spawn();
 }
 
 #[cfg(windows)]
@@ -156,10 +167,16 @@ fn spawn_cowfs_mount(
     bin: &Path,
     source: &Path,
     target: &Path,
+    direct: bool,
 ) -> std::io::Result<std::process::Child> {
     let mut cmd = std::process::Command::new(bin);
-    cmd.args(["link", &source.to_string_lossy(), &target.to_string_lossy()])
-        .stdin(std::process::Stdio::null())
+    cmd.arg("link")
+        .arg(source)
+        .arg(target);
+    if direct {
+        cmd.arg("--direct");
+    }
+    cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
@@ -210,6 +227,7 @@ fn get_workspaces() -> Vec<WorkspaceCardDto> {
             target_path: target_str,
             source_path: source_str,
             diff_path: diff_str,
+            mode: meta.mode,
             is_alive,
             pid: meta.pid,
             modified_count: stats.modified_count,
@@ -256,9 +274,10 @@ fn get_system_status() -> SystemStatusDto {
 }
 
 #[tauri::command]
-fn create_workspace(source: String, target: String) -> Result<String, String> {
+fn create_workspace(source: String, target: String, direct: Option<bool>) -> Result<String, String> {
     let src = PathBuf::from(source.trim());
     let tgt = PathBuf::from(target.trim());
+    let is_direct = direct.unwrap_or(false);
 
     if !src.exists() || !src.is_dir() {
         return Err("基础源目录不存在或不是一个有效目录！".to_string());
@@ -277,7 +296,7 @@ fn create_workspace(source: String, target: String) -> Result<String, String> {
         return Err("WinFsp 内核驱动未启动，请先以管理员权限启动 WinFsp 服务！".to_string());
     }
 
-    match spawn_cowfs_mount(&cowfs_bin, &src, &tgt) {
+    match spawn_cowfs_mount(&cowfs_bin, &src, &tgt, is_direct) {
         Ok(child) => {
             let pid = child.id();
             std::thread::sleep(Duration::from_millis(400));
@@ -321,8 +340,9 @@ fn resume_workspace(target: String) -> Result<String, String> {
     let meta = WorkspaceMeta::load_global(&tgt)
         .map_err(|e| format!("加载工作区元数据失败: {}", e))?;
 
+    let is_direct = meta.mode == "direct_mirror";
     let cowfs_bin = find_cowfs_binary();
-    let child = spawn_cowfs_mount(&cowfs_bin, &meta.source_dir, &tgt)
+    let child = spawn_cowfs_mount(&cowfs_bin, &meta.source_dir, &tgt, is_direct)
         .map_err(|e| format!("启动挂载服务失败: {}", e))?;
 
     let pid = child.id();
@@ -446,7 +466,37 @@ fn save_app_settings(
     Ok(())
 }
 
+#[tauri::command]
+fn app_minimize(window: tauri::WebviewWindow) {
+    let _ = window.minimize();
+}
+
+#[tauri::command]
+fn app_maximize(window: tauri::WebviewWindow) {
+    if window.is_maximized().unwrap_or(false) {
+        let _ = window.unmaximize();
+    } else {
+        let _ = window.maximize();
+    }
+}
+
+#[tauri::command]
+fn app_close(window: tauri::WebviewWindow) {
+    let _ = window.hide();
+}
+
+#[tauri::command]
+fn app_start_drag(window: tauri::WebviewWindow) {
+    let _ = window.start_dragging();
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && args[1] == "sidecar-board" {
+        sidecar::run();
+        return;
+    }
+
     let initial_settings = settings::load_settings();
     let settings_state = Arc::new(parking_lot::RwLock::new(initial_settings));
     let settings_setup = settings_state.clone();
@@ -454,14 +504,16 @@ fn main() {
     let monitor = NetSpeedMonitor::new();
     let monitor_setup = monitor.clone();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(monitor)
         .manage(settings_state)
         .setup(move |app| {
-            // 1. Initial 32x32 tray icon
-            let initial_dto = monitor_setup.get_current();
-            let initial_rgba = render_speed_icon_rgba(&initial_dto.upload_short, &initial_dto.download_short);
-            let initial_icon = tauri::image::Image::new(&initial_rgba, 32, 32);
+            // 1. Premium App Tray Icon (sharp, branded, fluent)
+            let tray_icon = app
+                .default_window_icon()
+                .cloned()
+                .or_else(|| tauri::image::Image::from_app_icon_resource(32).ok())
+                .expect("valid app icon");
 
             // 2. Tray menu items
             let speed_item = MenuItem::with_id(
@@ -492,7 +544,7 @@ fn main() {
 
             // 3. Build Tray Icon
             let tray = TrayIconBuilder::new()
-                .icon(initial_icon)
+                .icon(tray_icon)
                 .tooltip("a8-devtools 开发者工作台\n实时网速监控就绪")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -558,6 +610,7 @@ fn main() {
             let monitor_thread = monitor_setup.clone();
             let taskbar_thread = taskbar_bar.clone();
             let settings_loop = settings_setup.clone();
+            let speed_item_thread = speed_item.clone();
 
             std::thread::spawn(move || {
                 loop {
@@ -578,7 +631,11 @@ fn main() {
                         }
                     }
 
-                    // 3. Update tray tooltip
+                    // 3. Update tray menu item text & tooltip
+                    let _ = speed_item_thread.set_text(format!(
+                        "↑ {}   ↓ {}",
+                        speed.upload_formatted, speed.download_formatted
+                    ));
                     let tooltip = format!(
                         "a8-devtools 开发者工作台\n↑ 上传: {}\n↓ 下载: {}\n总发送: {} | 总接收: {}",
                         speed.upload_formatted,
@@ -609,7 +666,19 @@ fn main() {
             get_net_speed,
             get_app_settings,
             save_app_settings,
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running a8-devtools application");
+            app_minimize,
+            app_maximize,
+            app_close,
+            app_start_drag,
+        ]);
+
+    let app_built = app
+        .build(tauri::generate_context!())
+        .expect("error while building a8-devtools application");
+
+    app_built.run(|_app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            api.prevent_exit();
+        }
+    });
 }
