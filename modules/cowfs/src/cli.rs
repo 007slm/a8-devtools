@@ -38,6 +38,12 @@ pub enum Commands {
         target: PathBuf,
     },
 
-    /// 运行系统环境与 WinFsp 驱动就绪诊断
+    /// 运行系统环境与 WinFsp / BindFlt 内核驱动就绪诊断
     Doctor,
+
+    /// 安装并启动 CowFsBindService 内核桥接服务（需管理员权限）
+    ServiceSetup,
+
+    /// 运行 CowFsBindService Windows 后台服务（由 SCM 调度）
+    ServiceRun,
 }

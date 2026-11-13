@@ -19,28 +19,6 @@ pub struct DirectoryMerger;
 impl DirectoryMerger {
     /// Reads and merges directory entries from both Upper and Lower layers for `rel_path`.
     pub fn read_directory(state: &LayerState, rel_path: &Path) -> io::Result<Vec<UnifiedDirEntry>> {
-        // Direct mode: directly read from the source directory, zero merger overhead
-        if state.direct_mode {
-            let target_dir = state.upper_dir.join(rel_path);
-            let mut list = Vec::new();
-            if target_dir.is_dir() {
-                if let Ok(read_dir) = fs::read_dir(&target_dir) {
-                    for entry in read_dir.flatten() {
-                        let file_name = entry.file_name().to_string_lossy().to_string();
-                        let file_type = entry.file_type().ok();
-                        let is_dir = file_type.map_or(false, |ft| ft.is_dir());
-                        list.push(UnifiedDirEntry {
-                            name: file_name,
-                            is_dir,
-                            physical_path: entry.path(),
-                            from_upper: true,
-                        });
-                    }
-                }
-            }
-            return Ok(list);
-        }
-
         let upper_dir = state.upper_dir.join(rel_path);
         let lower_dir = state.lower_dir.join(rel_path);
 

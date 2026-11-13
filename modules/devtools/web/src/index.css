@@ -9,15 +9,27 @@
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
   user-select: none;
-  background-color: var(--background);
+  background-color: #ffffff;
   color: var(--foreground);
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   overflow: hidden;
 }
 
+.dark body {
+  background-color: var(--background);
+}
+
 ::selection {
   background-color: rgba(37, 99, 235, 0.16);
   color: #1d4ed8;
+}
+
+/* 确保 HeroUI 横向 Tabs 标签始终单行自适应内容宽度、绝不折行 */
+.tabs__list[data-orientation="horizontal"] .tabs__tab,
+[role="tablist"] [role="tab"] {
+  width: auto !important;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* 建筑感微点阵纹理背景 */

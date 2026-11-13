@@ -2,7 +2,7 @@
   "name": "agent-mind",
   "display_name": "Agent Mind Dashboard",
   "displayName": "Agent Mind Dashboard",
-  "description": "面向自主智能体的工程良知与持续演进心智中枢。提供宿主机跨项目生态大地图、架构红线裁决与文档治理仪表盘。",
+  "description": "面向自主智能体的工程良知与持续演进心智中枢。提供宿主机跨项目生态大地图、架构红线裁决、经验复盘沉淀与企业级 UI 设计审美原则。",
   "version": "1.2.0",
   "author": "DevPlus Architecture Team",
   "logo": "assets/logo.svg",

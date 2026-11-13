@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agent_mind;
 mod net_speed;
 mod settings;
 mod sidecar;
@@ -49,6 +50,7 @@ pub struct WorkspaceCardDto {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SystemStatusDto {
     pub winfsp_driver_running: bool,
+    pub bindflt_service_running: bool,
     pub is_admin: bool,
     pub total_workspaces: usize,
     pub active_workspaces: usize,
@@ -93,7 +95,7 @@ fn clean_path_for_explorer(path: &Path) -> PathBuf {
 }
 
 #[cfg(windows)]
-fn open_in_explorer_native(path: &Path) {
+pub(crate) fn open_in_explorer_native(path: &Path) {
     let clean = clean_path_for_explorer(path);
     let target = if clean.exists() {
         clean
@@ -114,7 +116,7 @@ fn open_in_explorer_native(path: &Path) {
 }
 
 #[cfg(not(windows))]
-fn open_in_explorer_native(path: &Path) {
+pub(crate) fn open_in_explorer_native(path: &Path) {
     let clean = clean_path_for_explorer(path);
     let _ = std::process::Command::new("xdg-open").arg(&clean).spawn();
 }
@@ -241,6 +243,39 @@ fn get_workspaces() -> Vec<WorkspaceCardDto> {
     cards
 }
 
+fn compute_source_size_bounded(root: &Path) -> u64 {
+    fn walk(dir: &Path, total: &mut u64, count: &mut usize) {
+        if *count >= 25_000 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if *count >= 25_000 {
+                break;
+            }
+            let name = entry.file_name();
+            if name == ".cowdiff" {
+                continue;
+            }
+            *count += 1;
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if meta.is_dir() {
+                walk(&entry.path(), total, count);
+            } else {
+                *total += meta.len();
+            }
+        }
+    }
+    let mut total = 0u64;
+    let mut count = 0usize;
+    walk(root, &mut total, &mut count);
+    total
+}
+
 #[tauri::command]
 fn get_system_status() -> SystemStatusDto {
     let doctor = SystemDoctor::diagnose();
@@ -248,23 +283,22 @@ fn get_system_status() -> SystemStatusDto {
     let total_workspaces = metas.len();
     let mut active_workspaces = 0;
     let mut total_diff_bytes = 0;
+    let mut saved_disk_bytes = 0;
 
     for m in &metas {
-        if m.is_alive() {
-            active_workspaces += 1;
-        }
+        let alive = m.is_alive();
         let st = m.compute_diff_stats();
         total_diff_bytes += st.total_bytes;
+        if alive {
+            active_workspaces += 1;
+            let src_bytes = compute_source_size_bounded(&m.source_dir);
+            saved_disk_bytes += src_bytes.saturating_sub(st.total_bytes);
+        }
     }
-
-    let saved_disk_bytes = if active_workspaces > 0 {
-        active_workspaces as u64 * 2_400_000_000
-    } else {
-        0
-    };
 
     SystemStatusDto {
         winfsp_driver_running: doctor.winfsp_driver_running,
+        bindflt_service_running: doctor.bindflt_service_running,
         is_admin: doctor.is_admin,
         total_workspaces,
         active_workspaces,
@@ -274,9 +308,16 @@ fn get_system_status() -> SystemStatusDto {
 }
 
 #[tauri::command]
+fn setup_kernel_environment() -> Result<String, String> {
+    let cowfs_bin = find_cowfs_binary();
+    cowfs::bindflt::ensure_service_installed_and_running(&cowfs_bin)?;
+    Ok("内核服务 (CowFsBindService & WinFsp) 已安装并启动就绪！".to_string())
+}
+
+#[tauri::command]
 fn create_workspace(source: String, target: String, direct: Option<bool>) -> Result<String, String> {
     let src = PathBuf::from(source.trim());
-    let tgt = PathBuf::from(target.trim());
+    let tgt = cowfs::bindflt::strip_unc_prefix(Path::new(target.trim()));
     let is_direct = direct.unwrap_or(false);
 
     if !src.exists() || !src.is_dir() {
@@ -291,62 +332,84 @@ fn create_workspace(source: String, target: String, direct: Option<bool>) -> Res
         return Err(format!("未找到 cowfs 驱动可执行文件: {}", cowfs_bin.display()));
     }
 
-    let doctor = SystemDoctor::diagnose();
-    if !doctor.winfsp_driver_running {
-        return Err("WinFsp 内核驱动未启动，请先以管理员权限启动 WinFsp 服务！".to_string());
+    cowfs::bindflt::ensure_service_installed_and_running(&cowfs_bin)?;
+    if !is_direct {
+        let doctor = SystemDoctor::diagnose();
+        if !doctor.winfsp_driver_running {
+            return Err("WinFsp 内核驱动未启动，请确认 WinFsp 服务状态！".to_string());
+        }
     }
 
     match spawn_cowfs_mount(&cowfs_bin, &src, &tgt, is_direct) {
-        Ok(child) => {
+        Ok(mut child) => {
             let pid = child.id();
-            std::thread::sleep(Duration::from_millis(400));
+            std::thread::sleep(Duration::from_millis(500));
+            if let Ok(Some(status)) = child.try_wait() {
+                return Err(format!("内核挂载进程提前退出 (code: {:?})，请检查目标目录是否非空或内核服务状态。", status.code()));
+            }
             if let Ok(mut meta) = WorkspaceMeta::load_global(&tgt) {
                 meta.pid = Some(pid);
                 meta.active = true;
                 let _ = meta.save_both();
             }
-            Ok(format!("工作区已成功挂载 (PID: {})", pid))
+            Ok(format!("内核工作区已成功挂载 (PID: {})", pid))
         }
-        Err(e) => Err(format!("启动 WinFsp 驱动挂载失败: {}", e)),
+        Err(e) => Err(format!("启动内核挂载进程失败: {}", e)),
     }
 }
 
 #[tauri::command]
 fn unlink_workspace(target: String) -> Result<String, String> {
-    let tgt = PathBuf::from(target.trim());
-    if let Ok(meta) = WorkspaceMeta::load_global(&tgt) {
+    let tgt = cowfs::bindflt::strip_unc_prefix(Path::new(target.trim()));
+    let _ = cowfs::bindflt::client_unbind(&tgt);
+
+    if let Ok(mut meta) = WorkspaceMeta::load_global(&tgt) {
         if let Some(pid) = meta.pid {
             terminate_process_by_pid(pid);
         }
-    }
 
-    std::thread::sleep(Duration::from_millis(200));
+        std::thread::sleep(Duration::from_millis(150));
 
-    if tgt.exists() {
-        let _ = std::fs::remove_dir(&tgt);
-    }
-    if let Ok(mut meta) = WorkspaceMeta::load_global(&tgt) {
+        let internal_mount = WorkspaceMeta::internal_mount_dir(&tgt);
+        if internal_mount.exists() || cowfs::bindflt::has_reparse_point(&internal_mount) {
+            let _ = std::fs::remove_dir(&internal_mount);
+        }
+        if tgt.exists() {
+            let _ = std::fs::remove_dir(&tgt);
+        }
+
         meta.active = false;
         meta.pid = None;
         let _ = meta.save_both();
+    } else if tgt.exists() {
+        let _ = std::fs::remove_dir(&tgt);
     }
 
-    Ok("工作区已安全脱机，驱动解除挂载，增量数据已持久化。".to_string())
+    Ok("工作区已断开内核绑定，驱动已卸载，增量数据已持久化。".to_string())
 }
 
 #[tauri::command]
 fn resume_workspace(target: String) -> Result<String, String> {
-    let tgt = PathBuf::from(target.trim());
+    let tgt = cowfs::bindflt::strip_unc_prefix(Path::new(target.trim()));
     let meta = WorkspaceMeta::load_global(&tgt)
         .map_err(|e| format!("加载工作区元数据失败: {}", e))?;
 
     let is_direct = meta.mode == "direct_mirror";
     let cowfs_bin = find_cowfs_binary();
-    let child = spawn_cowfs_mount(&cowfs_bin, &meta.source_dir, &tgt, is_direct)
+    cowfs::bindflt::ensure_service_installed_and_running(&cowfs_bin)?;
+    if !is_direct && !SystemDoctor::diagnose().winfsp_driver_running {
+        return Err("WinFsp 内核驱动未启动，无法恢复写时复制挂载！".to_string());
+    }
+
+    let mut child = spawn_cowfs_mount(&cowfs_bin, &meta.source_dir, &tgt, is_direct)
         .map_err(|e| format!("启动挂载服务失败: {}", e))?;
 
     let pid = child.id();
-    std::thread::sleep(Duration::from_millis(400));
+    std::thread::sleep(Duration::from_millis(500));
+
+    if let Ok(Some(status)) = child.try_wait() {
+        return Err(format!("恢复挂载失败，内核进程退出 (code: {:?})", status.code()));
+    }
 
     if let Ok(mut m) = WorkspaceMeta::load_global(&tgt) {
         m.pid = Some(pid);
@@ -354,28 +417,28 @@ fn resume_workspace(target: String) -> Result<String, String> {
         let _ = m.save_both();
     }
 
-    Ok("写时复制虚拟工作区已重新恢复挂载！".to_string())
+    Ok("虚拟工作区已通过内核驱动重新挂载！".to_string())
 }
 
 #[tauri::command]
 fn delete_workspace(target: String) -> Result<String, String> {
-    let tgt = PathBuf::from(target.trim());
+    let tgt = cowfs::bindflt::strip_unc_prefix(Path::new(target.trim()));
+    let _ = cowfs::bindflt::client_unbind(&tgt);
 
-    // 1. 如果工作区仍处于活跃或挂载状态，先终止进程
     if let Ok(meta) = WorkspaceMeta::load_global(&tgt) {
         if let Some(pid) = meta.pid {
             terminate_process_by_pid(pid);
         }
+        std::thread::sleep(Duration::from_millis(150));
+        let internal_mount = WorkspaceMeta::internal_mount_dir(&tgt);
+        if internal_mount.exists() || cowfs::bindflt::has_reparse_point(&internal_mount) {
+            let _ = std::fs::remove_dir(&internal_mount);
+        }
     }
-
-    std::thread::sleep(Duration::from_millis(150));
-
-    // 2. 如果目标挂载点存在且为空目录或脱机状态，尝试清理挂载点目录
     if tgt.exists() {
         let _ = std::fs::remove_dir(&tgt);
     }
 
-    // 3. 彻底清除工作区元数据与差异物理文件
     WorkspaceMeta::delete_global(&tgt, true)
         .map_err(|e| format!("清除工作区数据失败: {}", e))?;
 
@@ -647,11 +710,27 @@ fn main() {
                 }
             });
 
+            // 7. Auto-check/install CowFsBindService, Explorer icon overlay, and auto-resume active workspaces
+            std::thread::spawn(|| {
+                let cowfs_bin = find_cowfs_binary();
+                if !cowfs::bindflt::is_service_ready() {
+                    let _ = cowfs::bindflt::ensure_service_installed_and_running(&cowfs_bin);
+                }
+                cowfs::bindflt::ensure_overlay_registered(&cowfs_bin);
+                for meta in WorkspaceMeta::list_all() {
+                    if meta.active && !meta.is_alive() {
+                        let target = meta.target_dir.to_string_lossy().to_string();
+                        let _ = resume_workspace(target);
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_workspaces,
             get_system_status,
+            setup_kernel_environment,
             create_workspace,
             unlink_workspace,
             resume_workspace,
@@ -670,6 +749,13 @@ fn main() {
             app_maximize,
             app_close,
             app_start_drag,
+            agent_mind::get_agent_mind_overview,
+            agent_mind::read_agent_mind_file,
+            agent_mind::save_agent_mind_file,
+            agent_mind::create_agent_mind_rule,
+            agent_mind::delete_agent_mind_file,
+            agent_mind::open_agent_mind_dir,
+            agent_mind::launch_agent_mind_sidecar,
         ]);
 
     let app_built = app

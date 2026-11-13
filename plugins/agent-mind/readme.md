@@ -24,7 +24,8 @@ agent-mind/
 │   └── arch-judge.md           # 专职审查 Subagent（只读沙箱）
 ├── skills/
 │   ├── arch-judge/             # 【能力1：冷酷架构裁决】(/judge)
-│   └── arch-improve/           # 【能力2：任务收尾复盘与规则反哺】(/improve)
+│   ├── arch-improve/           # 【能力2：任务收尾复盘与规则反哺】(/improve)
+│   └── ui-polish/              # 【能力3：企业级秩序与极简美学的 UI 设计原则】
 └── rules/
     ├── manifest.json           # 4 大正交维度清单
     ├── redline.md              # 【全局核心】通用架构设计哲学与根本红线

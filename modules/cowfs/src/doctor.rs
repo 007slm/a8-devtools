@@ -5,6 +5,7 @@ pub struct DoctorReport {
     pub is_admin: bool,
     pub winfsp_dll_found: bool,
     pub winfsp_driver_running: bool,
+    pub bindflt_service_running: bool,
 }
 
 pub struct SystemDoctor;
@@ -15,17 +16,19 @@ impl SystemDoctor {
         let is_admin = Self::check_admin();
         let winfsp_dll_found = Self::check_winfsp_dll();
         let winfsp_driver_running = Self::check_winfsp_driver();
+        let bindflt_service_running = crate::bindflt::is_service_ready();
 
         DoctorReport {
             is_windows,
             is_admin,
             winfsp_dll_found,
             winfsp_driver_running,
+            bindflt_service_running,
         }
     }
 
     #[cfg(windows)]
-    fn check_admin() -> bool {
+    pub fn check_admin() -> bool {
         use std::mem::size_of;
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::Security::{
@@ -55,7 +58,7 @@ impl SystemDoctor {
     }
 
     #[cfg(not(windows))]
-    fn check_admin() -> bool {
+    pub fn check_admin() -> bool {
         false
     }
 
@@ -109,13 +112,14 @@ impl SystemDoctor {
         println!("============================================================");
         println!("1. 操作系统支持 (Windows):      {}", if report.is_windows { "√ 正常" } else { "× 不支持" });
         println!("2. WinFsp 运行时库 (DLL):        {}", if report.winfsp_dll_found { "√ 找到可用运行时" } else { "× 未检测到" });
-        println!("3. WinFsp 内核驱动 (winfsp.sys): {}", if report.winfsp_driver_running { "√ 驱动已启动 (可秒级挂载写时复制虚拟工作区)" } else { "× 未启动 (请先启动 WinFsp 服务)" });
-        println!("4. 当前管理员执行权限:          {}", if report.is_admin { "√ 是" } else { "○ 普通用户权限" });
+        println!("3. WinFsp 内核驱动 (winfsp.sys): {}", if report.winfsp_driver_running { "√ 驱动已启动" } else { "× 未启动 (请先启动 WinFsp 服务)" });
+        println!("4. BindFlt 内核桥接 (CowFsBind):  {}", if report.bindflt_service_running { "√ 服务在线 (零拷贝透明目录映射)" } else { "× 未就绪 (需运行 cowfs service-setup 安装)" });
+        println!("5. 当前管理员执行权限:          {}", if report.is_admin { "√ 是" } else { "○ 普通用户权限" });
         println!("------------------------------------------------------------");
-        if report.winfsp_driver_running {
-            println!("系统状态: 随时可执行 cowlink link 挂载写时复制工作区");
+        if report.winfsp_driver_running && report.bindflt_service_running {
+            println!("系统状态: 内核双引擎就绪，随时可执行 cowfs link 零拷贝挂载");
         } else {
-            println!("提示: 请先以管理员权限运行: net start WinFsp");
+            println!("提示: 请运行 a8-devtools 或执行 cowfs service-setup 完成内核服务初始化");
         }
         println!("============================================================");
     }

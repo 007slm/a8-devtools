@@ -1,3 +1,4 @@
+pub mod bindflt;
 pub mod cli;
 pub mod config;
 pub mod cow;

@@ -132,6 +132,13 @@ impl WorkspaceMeta {
         Self::global_meta_dir(target_dir).join("meta.json")
     }
 
+    /// Internal WinFsp backing mount directory: %LOCALAPPDATA%\cowlink\mounts\<pathHash>
+    #[allow(dead_code)]
+    pub fn internal_mount_dir(target_dir: &Path) -> PathBuf {
+        let id = Self::compute_path_hash(target_dir);
+        Self::global_root().join("mounts").join(id)
+    }
+
     /// Saves metadata both locally in `source_dir/.cowdiff/{pathHash}/meta.json` (self-contained)
     /// and globally in `%LOCALAPPDATA%\cowlink\workspaces\<pathHash>\meta.json` (central registry).
     pub fn save_both(&self) -> io::Result<()> {
@@ -396,14 +403,17 @@ impl WorkspaceMeta {
         if let Some(pid) = self.pid {
             #[cfg(windows)]
             {
-                use windows::Win32::Foundation::CloseHandle;
+                use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
                 use windows::Win32::System::Threading::{
-                    OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+                    GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
                 };
                 unsafe {
                     if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                        let mut exit_code: u32 = 0;
+                        let alive = GetExitCodeProcess(handle, &mut exit_code).is_ok()
+                            && exit_code == STILL_ACTIVE.0 as u32;
                         let _ = CloseHandle(handle);
-                        return true;
+                        return alive;
                     }
                 }
             }

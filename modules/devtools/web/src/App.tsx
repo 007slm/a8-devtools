@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { EChartsCoreOption } from 'echarts/core';
 import { EChartBox } from './components/EChartBox';
+import { AgentMindView } from './components/AgentMindView';
 import {
   Button,
   Chip,
@@ -22,6 +23,7 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUp,
+  BrainCircuit,
   CheckCircle2,
   Command,
   Copy,
@@ -72,6 +74,7 @@ interface WorkspaceCard {
 
 interface SystemStatus {
   winfsp_driver_running: boolean;
+  bindflt_service_running: boolean;
   is_admin: boolean;
   total_workspaces: number;
   active_workspaces: number;
@@ -92,6 +95,15 @@ interface ToastItem {
   tone: 'success' | 'info' | 'danger';
 }
 
+const SIDECAR_HTTP_ROUTES: Record<string, { path: string; method: 'GET' | 'POST' }> = {
+  get_agent_mind_overview: { path: '/api/agent-mind/overview', method: 'GET' },
+  read_agent_mind_file: { path: '/api/agent-mind/read', method: 'POST' },
+  save_agent_mind_file: { path: '/api/agent-mind/save', method: 'POST' },
+  create_agent_mind_rule: { path: '/api/agent-mind/create', method: 'POST' },
+  delete_agent_mind_file: { path: '/api/agent-mind/delete', method: 'POST' },
+  open_agent_mind_dir: { path: '/api/agent-mind/open-dir', method: 'POST' },
+};
+
 async function callTauri<T = any>(command: string, args: Record<string, any> = {}): Promise<T | null> {
   const invoker = (window as any).__TAURI__?.core?.invoke || (window as any).__TAURI__?.invoke;
   if (invoker) {
@@ -101,6 +113,26 @@ async function callTauri<T = any>(command: string, args: Record<string, any> = {
       console.error(`[Tauri] ${command} failed:`, e);
       throw e;
     }
+  }
+  const route = SIDECAR_HTTP_ROUTES[command];
+  if (route) {
+    const payload =
+      route.method === 'POST'
+        ? JSON.stringify({
+            rel_path: args.relPath ?? args.rel_path,
+            content: args.content,
+          })
+        : undefined;
+    const res = await fetch(route.path, {
+      method: route.method,
+      headers: route.method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+      body: payload,
+    });
+    const json = await res.json();
+    if (!res.ok || !json?.ok) {
+      throw new Error(json?.error || `HTTP ${res.status}`);
+    }
+    return (json.data ?? null) as T | null;
   }
   console.warn(`[Mock] ${command}:`, args);
   return null;
@@ -136,6 +168,7 @@ function PathSegment({ path }: { path: string }) {
 const NAV_ITEMS = [
   { id: 'mappings' as const, group: '核心特性', label: '虚拟镜像映射', icon: FolderGit2 },
   { id: 'hosts' as const, group: '核心特性', label: 'Hosts 维护', icon: Globe, badge: 'DNS' },
+  { id: 'agent-mind' as const, group: '核心特性', label: 'Agent Mind', icon: BrainCircuit, badge: 'RULES' },
   { id: 'doctor' as const, group: '系统运维', label: '内核与驱动', icon: Activity },
   { id: 'settings' as const, group: '系统运维', label: '偏好设置', icon: Settings },
 ];
@@ -148,7 +181,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('a8-devtools-sidebar-collapsed') === 'true';
   });
-  const [activeTab, setActiveTab] = useState<'mappings' | 'hosts' | 'doctor' | 'settings'>('mappings');
+  const [activeTab, setActiveTab] = useState<'mappings' | 'hosts' | 'agent-mind' | 'doctor' | 'settings'>('mappings');
   const [inspectorTab, setInspectorTab] = useState<'topology' | 'diff'>('topology');
   const [workspaces, setWorkspaces] = useState<WorkspaceCard[]>([]);
   const [selectedWsIdx, setSelectedWsIdx] = useState<number>(0);
@@ -241,7 +274,13 @@ export default function App() {
     }
   };
 
+  const hasTauriRuntime = Boolean((window as any).__TAURI__?.core?.invoke || (window as any).__TAURI__?.invoke);
+  const isStandaloneSidecar =
+    !hasTauriRuntime || new URLSearchParams(window.location.search).get('mode') === 'sidecar';
+
   useEffect(() => {
+    if (isStandaloneSidecar) return;
+
     loadData(true);
 
     const fetchSpeed = () => {
@@ -299,7 +338,7 @@ export default function App() {
     try {
       if (ws.is_alive) {
         await callTauri('unlink_workspace', { target: ws.target_path });
-        pushToast(`[${ws.name}] 已脱机卸载`, 'info');
+        pushToast(`[${ws.name}] 已断开映射`, 'info');
       } else {
         await callTauri('resume_workspace', { target: ws.target_path });
         pushToast(`[${ws.name}] 已恢复挂载`, 'success');
@@ -396,6 +435,7 @@ export default function App() {
       { id: 'theme', title: theme === 'light' ? '切换为 Obsidian 暗夜工作台' : '切换为 Porcelain 极光亮色', hint: '切换主题皮肤', action: () => setTheme((t) => (t === 'light' ? 'dark' : 'light')) },
       { id: 'tab-mappings', title: '前往：虚拟镜像映射', hint: '工作区总览', action: () => switchTab('mappings') },
       { id: 'tab-hosts', title: '前往：Hosts 维护', hint: '编辑系统 DNS', action: () => switchTab('hosts') },
+      { id: 'tab-agent-mind', title: '前往：Agent Mind 规则中心', hint: '直编 rules 与项目地图', action: () => switchTab('agent-mind') },
       { id: 'tab-doctor', title: '前往：内核与驱动诊断', hint: 'WinFsp 健康检查', action: () => switchTab('doctor') },
       { id: 'tab-settings', title: '前往：偏好设置', hint: '任务栏与自启', action: () => switchTab('settings') },
       { id: 'dir', title: '打开全局配置目录', hint: 'Explorer', action: () => callTauri('open_global_dir') },
@@ -410,7 +450,7 @@ export default function App() {
     const savedBytes = systemStatus?.saved_disk_bytes || 0;
     const diffBytes = systemStatus?.total_diff_bytes || 0;
     const totalBytes = savedBytes + diffBytes;
-    const ratio = totalBytes > 0 ? Number(((savedBytes / totalBytes) * 100).toFixed(1)) : 99.1;
+    const ratio = totalBytes > 0 ? Number(((savedBytes / totalBytes) * 100).toFixed(1)) : 0;
     const isDark = theme === 'dark';
 
     return {
@@ -543,33 +583,100 @@ export default function App() {
     };
   }, [mirrorSummary, workspaces, theme]);
 
+  const toastOverlay = (
+    <div className="fixed bottom-4 right-5 z-50 flex flex-col gap-2 pointer-events-none">
+      <AnimatePresence>
+        {toasts.map((t) => (
+          <motion.div
+            key={t.id}
+            initial={{ opacity: 0, y: 12, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.96 }}
+            className="pointer-events-auto flex items-center gap-2 px-3.5 py-2 rounded-xl bg-surface/95 backdrop-blur-xl border border-border shadow-overlay text-[11.5px] font-medium text-foreground"
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                t.tone === 'success' ? 'bg-emerald-500' : t.tone === 'danger' ? 'bg-rose-500' : 'bg-blue-500'
+              }`}
+            />
+            <span>{t.title}</span>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+
+  if (isStandaloneSidecar) {
+    return (
+      <div className="relative h-screen w-screen overflow-hidden flex flex-col bg-white dark:bg-[#09090B] text-foreground text-[12px] antialiased select-none">
+        <header className="h-11 px-4 border-b border-zinc-200/85 dark:border-border/70 flex items-center justify-between shrink-0 bg-white dark:bg-[#09090B]">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <img src="./app-icon.png" alt="DevTools" className="w-6 h-6 rounded-lg shrink-0 shadow-xs" />
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-[13px] font-bold tracking-tight text-foreground truncate">
+                Agent Mind Dashboard
+              </span>
+              <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[9.5px] font-semibold shrink-0">
+                Web 独立看板
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="hidden sm:inline-flex items-center gap-1 text-[10.5px] font-mono text-muted px-2 py-0.5 rounded-full border border-zinc-200/85 dark:border-border/70">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              {window.location.host || '127.0.0.1:18765'}
+            </span>
+            <Button
+              isIconOnly
+              size="sm"
+              variant="outline"
+              onPress={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+              className="w-7 h-7 min-w-0 p-0 rounded-lg border-zinc-200/85 dark:border-border/70 text-muted hover:text-foreground"
+            >
+              {theme === 'dark' ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5" />}
+            </Button>
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-y-auto px-4 py-3 bg-white dark:bg-[#09090B]">
+          <div className="max-w-7xl mx-auto">
+            <AgentMindView callTauri={callTauri} pushToast={pushToast} isStandalone />
+          </div>
+        </main>
+
+        {toastOverlay}
+      </div>
+    );
+  }
+
   return (
-    <div className="relative h-screen w-screen overflow-hidden flex flex-row bg-background text-foreground text-[12px] antialiased select-none">
+    <div className="relative h-screen w-screen overflow-hidden flex flex-row bg-white dark:bg-[#09090B] text-foreground text-[12px] antialiased select-none">
       {/* ========================================================================= */}
-      {/* 左侧栏：可收起磨砂玻璃工作台导航轨 (214px <-> 66px) */}
+      {/* 左侧栏：X 风格纯白极简边线导航轨 */}
       {/* ========================================================================= */}
       <aside
         className={`${
-          sidebarCollapsed ? 'w-[66px]' : 'w-[214px]'
-        } transition-[width] duration-200 ease-out bg-surface/85 backdrop-blur-2xl border-r border-border/70 flex flex-col shrink-0 justify-between h-full z-20 overflow-hidden`}
+          sidebarCollapsed ? 'w-[58px]' : 'w-[196px]'
+        } transition-[width] duration-200 ease-out bg-white dark:bg-[#09090B] border-r border-zinc-200/85 dark:border-border/70 flex flex-col shrink-0 justify-between h-full z-20 overflow-hidden`}
       >
         <div className="flex flex-col">
           {/* 顶部品牌区（与右侧工具栏等高对齐，可拖拽） */}
           <div
             data-tauri-drag-region
-            className={`h-11 ${
-              sidebarCollapsed ? 'px-0 justify-center' : 'px-4'
-            } flex items-center gap-2.5 border-b border-border/60 cursor-default`}
+            className={`h-10 ${
+              sidebarCollapsed ? 'px-0 justify-center' : 'px-3.5'
+            } flex items-center gap-2 border-b border-border/60 cursor-default`}
           >
             <img
               src="./app-icon.png"
               alt="A8 DevTools"
-              className="w-7 h-7 rounded-lg shadow-[0_2px_8px_rgba(37,99,235,0.22)] shrink-0 object-cover pointer-events-none"
+              className="w-6 h-6 rounded-lg shadow-[0_2px_8px_rgba(37,99,235,0.22)] shrink-0 object-cover pointer-events-none"
             />
             {!sidebarCollapsed && (
               <div className="flex flex-col leading-tight min-w-0 pointer-events-none">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[13px] font-semibold text-foreground tracking-tight">DevTools</span>
+                  <span className="text-[12.5px] font-semibold text-foreground tracking-tight">DevTools</span>
                   <Chip size="sm" variant="soft" color="accent" className="h-4 px-1.5 text-[8.5px] font-mono">
                     <Chip.Label>PRO</Chip.Label>
                   </Chip>
@@ -579,15 +686,15 @@ export default function App() {
           </div>
 
           {/* 分组导航 */}
-          <div className={`${sidebarCollapsed ? 'px-2 space-y-2 mt-3' : 'px-2.5 space-y-4 mt-3'}`}>
+          <div className={`${sidebarCollapsed ? 'px-1.5 space-y-1.5 mt-2' : 'px-2 space-y-2.5 mt-2'}`}>
             {(['核心特性', '系统运维'] as const).map((group) => (
               <div key={group}>
                 {!sidebarCollapsed ? (
-                  <div className="px-2.5 pb-1.5 text-[9px] font-mono font-semibold tracking-[0.12em] text-muted/70">
+                  <div className="px-2 pb-1 text-[9px] font-mono font-semibold tracking-[0.1em] text-muted/70">
                     {group}
                   </div>
                 ) : (
-                  <div className="h-[1px] bg-border/50 mx-2 mb-1.5" />
+                  <div className="h-[1px] bg-border/50 mx-1.5 mb-1" />
                 )}
                 <nav className="space-y-0.5">
                   {NAV_ITEMS.filter((n) => n.group === group).map((item) => {
@@ -598,8 +705,8 @@ export default function App() {
                         key={item.id}
                         onClick={() => switchTab(item.id)}
                         className={`relative w-full flex items-center ${
-                          sidebarCollapsed ? 'justify-center px-0 py-2.5' : 'justify-between px-2.5 py-2'
-                        } rounded-xl text-[11.5px] transition-colors duration-150 cursor-pointer ${
+                          sidebarCollapsed ? 'justify-center px-0 py-2' : 'justify-between px-2.5 py-1.5'
+                        } rounded-lg text-[11.5px] transition-colors duration-150 cursor-pointer ${
                           isActive ? 'text-foreground font-semibold' : 'text-muted hover:text-foreground'
                         }`}
                       >
@@ -607,7 +714,7 @@ export default function App() {
                           <motion.div
                             layoutId="sidebar-active-pill"
                             transition={{ type: 'spring', stiffness: 460, damping: 34 }}
-                            className="absolute inset-0 rounded-xl bg-surface-secondary border border-border/80 shadow-[0_1px_4px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.5)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.06)]"
+                            className="absolute inset-0 rounded-full bg-zinc-100/90 dark:bg-surface-secondary"
                           />
                         )}
                         <span className="relative z-10 flex items-center gap-2.5">
@@ -654,11 +761,11 @@ export default function App() {
         </div>
 
         {/* 底部实时波形微仪表 */}
-        <div className={`${sidebarCollapsed ? 'p-2' : 'p-3'} border-t border-border/60 flex flex-col gap-2.5 bg-surface-secondary/40`}>
+        <div className={`${sidebarCollapsed ? 'p-1.5' : 'p-2.5'} border-t border-zinc-200/85 dark:border-border/60 flex flex-col gap-2 bg-white dark:bg-surface-secondary/40`}>
           {!sidebarCollapsed ? (
             <>
-              <div className="rounded-xl bg-surface border border-border/80 p-2.5 shadow-xs">
-                <div className="flex items-center justify-between mb-1.5">
+              <div className="rounded-xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 p-2">
+                <div className="flex items-center justify-between mb-1">
                   <span className="text-[9.5px] font-medium text-muted flex items-center gap-1">
                     <Activity className="w-2.5 h-2.5 text-blue-500" />
                     实时网速遥测
@@ -715,20 +822,20 @@ export default function App() {
       </aside>
 
       {/* ========================================================================= */}
-      {/* 右侧主区：点阵光影画布 + Bento 驾驶舱 + HeroUI 交互面板 */}
+      {/* 右侧主区：纯净纯白工作台画布 + 分层卡片适配 */}
       {/* ========================================================================= */}
-      <main className="relative flex-1 flex flex-col h-full overflow-hidden bg-background">
-        {/* 微妙的建筑微点阵与顶角极光渐变 */}
+      <main className="relative flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-[#09090B]">
+        {/* 暗夜模式下保留极淡微点阵与顶角极光；亮色模式下保持纯净白底零噪点 */}
         <div
-          className="pointer-events-none absolute inset-0 studio-dot-grid opacity-45 dark:opacity-25"
+          className="pointer-events-none absolute inset-0 studio-dot-grid opacity-0 dark:opacity-20"
           style={{ maskImage: 'radial-gradient(ellipse at 70% 10%, black 20%, transparent 80%)' }}
         />
-        <div className="pointer-events-none absolute -top-32 right-0 w-[460px] h-[280px] rounded-full bg-blue-500/[0.07] dark:bg-blue-500/[0.12] blur-3xl" />
+        <div className="pointer-events-none absolute -top-32 right-0 w-[460px] h-[280px] rounded-full bg-transparent dark:bg-blue-500/[0.12] blur-3xl" />
 
         {/* 顶栏可拖拽区域（原生 data-tauri-drag-region 处理单击拖拽与双击最大化） */}
         <header
           data-tauri-drag-region
-          className="relative z-10 h-11 px-5 flex items-center justify-between border-b border-border/60 shrink-0 bg-surface/70 backdrop-blur-xl"
+          className="relative z-10 h-10 px-4 flex items-center justify-between border-b border-zinc-200/80 dark:border-border/60 shrink-0 bg-white/95 dark:bg-[#09090B]/90 backdrop-blur-xl"
         >
           <div className="flex items-center gap-2.5">
             <Tooltip delay={200}>
@@ -804,7 +911,7 @@ export default function App() {
         </header>
 
         {/* 内容滚动区域 */}
-        <div className="relative z-10 flex-1 overflow-y-auto px-6 py-5">
+        <div className="relative z-10 flex-1 overflow-y-auto px-4 py-3">
           <AnimatePresence mode="wait">
             {activeTab === 'mappings' && (
               <motion.div
@@ -812,53 +919,61 @@ export default function App() {
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.18 }}
-                className="flex flex-col gap-5 max-w-[1280px] mx-auto"
+                transition={{ duration: 0.16 }}
+                className="flex flex-col gap-3 max-w-[1440px] mx-auto"
               >
                 {/* ================================================================= */}
-                {/* 1. 一体化素雅纯白 Hero 区域 + ECharts 专业矢量图表 */}
+                {/* 1. 一体化纯白边线 Hero 摘要卡片 + ECharts 矢量图表 */}
                 {/* ================================================================= */}
-                <section className="rounded-2xl bg-surface border border-border/80 px-5 py-4 shadow-surface grid grid-cols-12 items-center gap-5">
+                <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 px-4 py-3 grid grid-cols-12 items-center gap-4">
                   {/* 左区：核心存储节省与内嵌关键指标 (5 cols) */}
                   <div className="col-span-12 lg:col-span-5 min-w-0 flex flex-col justify-between">
                     <div>
-                      <div className="flex items-center gap-2 mb-2.5">
-                        <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-muted bg-surface-secondary border border-border/70 rounded-full px-2.5 py-0.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-mono text-muted bg-white dark:bg-surface-secondary border border-zinc-200/80 dark:border-border/70 rounded-full px-2 py-0.5">
                           <Zap className="w-3 h-3 text-blue-500" />
                           <span>Zero-Copy NTFS</span>
                         </span>
-                        <Chip size="sm" variant="soft" color="default" className="h-5 text-[9.5px] font-mono">
-                          <Chip.Label>WinFsp 2.x</Chip.Label>
+                        <Chip size="sm" variant="soft" color="default" className="h-4.5 text-[9.5px] font-mono">
+                          <Chip.Label>BindFlt + WinFsp</Chip.Label>
                         </Chip>
                       </div>
-                      <div className="flex items-baseline gap-2.5">
-                        <span className="text-[28px] font-semibold tracking-tight font-mono tabular-nums text-foreground leading-none">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-[22px] font-semibold tracking-tight font-mono tabular-nums text-foreground leading-none">
                           {formatBytes(systemStatus?.saved_disk_bytes || 0)}
                         </span>
-                        <span className="text-[11px] text-muted">累计节省物理存储空间</span>
+                        <span className="text-[11px] text-muted">实时零拷贝物理空间节省</span>
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-border/60 grid grid-cols-3 gap-3 text-[10.5px]">
+                    <div className="mt-2.5 pt-2 border-t border-border/60 grid grid-cols-3 gap-2.5 text-[10.5px]">
                       <div>
-                        <span className="text-muted block">活动节点</span>
+                        <span className="text-muted block text-[10px]">活动节点</span>
                         <span className="font-mono font-semibold text-foreground tabular-nums mt-0.5 block">
                           {workspaces.filter((w) => w.is_alive).length} / {workspaces.length}
                         </span>
                       </div>
                       <div>
-                        <span className="text-muted block">内核引擎</span>
+                        <span className="text-muted block text-[10px]">内核引擎</span>
                         <span className={`font-semibold mt-0.5 flex items-center gap-1 ${
-                          systemStatus?.winfsp_driver_running ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'
+                          systemStatus?.winfsp_driver_running && systemStatus?.bindflt_service_running
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-rose-500'
                         }`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${
-                            systemStatus?.winfsp_driver_running ? 'bg-emerald-500' : 'bg-rose-500'
+                            systemStatus?.winfsp_driver_running && systemStatus?.bindflt_service_running
+                              ? 'bg-emerald-500'
+                              : 'bg-rose-500'
                           }`} />
-                          {systemStatus?.winfsp_driver_running ? '直通就绪' : '未启动'}
+                          {systemStatus?.winfsp_driver_running && systemStatus?.bindflt_service_running
+                            ? '双引擎在线'
+                            : !systemStatus?.bindflt_service_running
+                            ? '桥接未就绪'
+                            : 'WinFsp 未启动'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-muted block">差异开销</span>
+                        <span className="text-muted block text-[10px]">差异开销</span>
                         <span className="font-mono font-semibold text-foreground tabular-nums mt-0.5 block">
                           {formatBytes(systemStatus?.total_diff_bytes || 0)}
                         </span>
@@ -867,45 +982,45 @@ export default function App() {
                   </div>
 
                   {/* 中区：ECharts 空间节省率圆环图 (3 cols) */}
-                  <div className="col-span-12 sm:col-span-5 lg:col-span-3 flex items-center justify-center lg:border-l lg:border-border/60 lg:pl-4">
-                    <div className="w-[126px] h-[126px]">
+                  <div className="col-span-12 sm:col-span-5 lg:col-span-3 flex items-center justify-center lg:border-l lg:border-border/60 lg:pl-3">
+                    <div className="w-[100px] h-[100px]">
                       <EChartBox option={storageChartOption} className="w-full h-full" />
                     </div>
                   </div>
 
                   {/* 右区：ECharts 镜像架构与变更分布条形图 (4 cols) */}
-                  <div className="col-span-12 sm:col-span-7 lg:col-span-4 lg:border-l lg:border-border/60 lg:pl-5 flex flex-col justify-between h-full">
-                    <div className="flex items-center justify-between mb-1.5">
+                  <div className="col-span-12 sm:col-span-7 lg:col-span-4 lg:border-l lg:border-border/60 lg:pl-4 flex flex-col justify-between h-full">
+                    <div className="flex items-center justify-between mb-1">
                       <span className="text-[11px] font-medium text-foreground">架构与变更分布</span>
                       <span className="text-[9.5px] font-mono text-muted">
                         {systemStatus?.is_admin ? 'Admin' : '标准隔离'}
                       </span>
                     </div>
-                    <div className="w-full h-[104px]">
+                    <div className="w-full h-[86px]">
                       <EChartBox option={modeBarOption} className="w-full h-full" />
                     </div>
                   </div>
                 </section>
 
                 {/* ================================================================= */}
-                {/* 2. 工作区映射通道列表 (零横向滚动 + Conduit 路径流卡片) */}
+                {/* 2. 工作区映射通道列表 (纯白卡片 + 细线分隔) */}
                 {/* ================================================================= */}
-                <section className="rounded-2xl bg-surface/95 backdrop-blur-md border border-border/80 shadow-surface overflow-hidden">
-                  <div className="px-4 py-3 border-b border-border/60 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
-                      <h2 className="text-[13px] font-semibold text-foreground">虚拟镜像工作区</h2>
-                      <span className="text-[10px] font-mono text-muted bg-surface-secondary px-2 py-0.5 rounded-full border border-border/60">
+                <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
+                  <div className="px-3.5 py-2 border-b border-zinc-200/85 dark:border-border/60 bg-white dark:bg-surface flex flex-wrap items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-[12.5px] font-semibold text-foreground">虚拟镜像工作区</h2>
+                      <span className="text-[10px] font-mono text-muted bg-surface-secondary px-1.5 py-0.5 rounded-full border border-border/60">
                         {filteredWorkspaces.length} 映射
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                       <div className="relative group">
                         <Search className="w-3.5 h-3.5 text-muted group-focus-within:text-blue-500 transition-colors absolute left-2.5 top-1/2 -translate-y-1/2" />
                         <input
                           type="text"
                           placeholder="过滤工作区或路径..."
-                          className="w-52 h-8 pl-8 pr-3 bg-surface-secondary/70 hover:bg-surface-secondary focus:bg-surface border border-border/80 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/15 rounded-xl text-[11px] text-foreground placeholder-muted outline-none transition-all"
+                          className="w-48 h-7 pl-8 pr-2.5 bg-surface-secondary/70 hover:bg-surface-secondary focus:bg-surface border border-border/80 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/15 rounded-lg text-[11px] text-foreground placeholder-muted outline-none transition-all"
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
                         />
@@ -917,7 +1032,7 @@ export default function App() {
                             isIconOnly
                             size="sm"
                             variant="outline"
-                            className="h-8 w-8 rounded-xl"
+                            className="h-7 w-7 rounded-lg"
                             onPress={() => loadData(false)}
                           >
                             <RotateCw className="w-3.5 h-3.5" />
@@ -929,7 +1044,7 @@ export default function App() {
                       <Button
                         size="sm"
                         variant="primary"
-                        className="h-8 px-3.5 rounded-xl text-[11.5px] font-medium shadow-[0_4px_14px_-4px_rgba(37,99,235,0.55)]"
+                        className="h-7 px-3 rounded-lg text-[11px] font-medium shadow-[0_4px_14px_-4px_rgba(37,99,235,0.55)]"
                         onPress={() => setIsCreateOpen(true)}
                       >
                         <Plus className="w-3.5 h-3.5" />
@@ -938,10 +1053,10 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* 卡片行式列表 (无横向滚动条、无拥挤感) */}
+                  {/* 卡片行式列表 (无横向滚动条、紧凑高效) */}
                   <div className="divide-y divide-border/50">
                     {filteredWorkspaces.length === 0 ? (
-                      <div className="py-12 text-center text-muted text-[11.5px]">
+                      <div className="py-8 text-center text-muted text-[11.5px]">
                         暂无镜像映射记录，点击右上角「新建映射」快速建立零拷贝虚拟通道
                       </div>
                     ) : (
@@ -951,7 +1066,7 @@ export default function App() {
                           <div
                             key={ws.target_path}
                             onClick={() => setSelectedWsIdx(idx)}
-                            className={`relative px-4 py-3 flex items-center justify-between gap-4 cursor-pointer transition-colors group ${
+                            className={`relative px-3.5 py-2 flex items-center justify-between gap-3 cursor-pointer transition-colors group ${
                               isSelected ? 'bg-blue-500/[0.045] dark:bg-blue-500/[0.08]' : 'hover:bg-surface-secondary/50'
                             }`}
                           >
@@ -983,11 +1098,11 @@ export default function App() {
                                 </div>
                                 <div className="flex items-center gap-1.5 mt-0.5">
                                   <span className="text-[9.5px] font-mono text-muted tabular-nums">
-                                    {ws.pid ? `PID ${ws.pid}` : '脱机'}
+                                    {ws.pid ? `PID ${ws.pid}` : '已断开'}
                                   </span>
                                   <span className="text-border">·</span>
                                   <span className="text-[9.5px] text-blue-600 dark:text-blue-400 font-medium">
-                                    {ws.mode === 'direct_mirror' ? '零拷贝直通' : '写时复制'}
+                                    {ws.mode === 'direct_mirror' ? 'BindFlt 直通' : 'WinFsp CoW'}
                                   </span>
                                 </div>
                               </div>
@@ -1001,7 +1116,7 @@ export default function App() {
                                   handleCopy(ws.source_path, `src-${idx}`, '物理源仓');
                                 }}
                                 title="点击复制物理源仓路径"
-                                className="col-span-5 min-w-0 flex items-center justify-between gap-1.5 bg-surface-secondary/75 hover:bg-surface-secondary border border-border/60 rounded-xl px-2.5 py-1.5 transition-colors"
+                                className="col-span-5 min-w-0 flex items-center justify-between gap-1.5 bg-white hover:bg-zinc-50 dark:bg-surface-secondary/75 dark:hover:bg-surface-secondary border border-zinc-200/85 dark:border-border/60 rounded-lg px-2.5 py-1 transition-colors"
                               >
                                 <PathSegment path={ws.source_path} />
                                 <div className="flex items-center gap-1 shrink-0">
@@ -1033,7 +1148,7 @@ export default function App() {
                                   handleCopy(ws.target_path, `tgt-${idx}`, '虚拟挂载点');
                                 }}
                                 title="点击复制虚拟挂载路径"
-                                className="col-span-5 min-w-0 flex items-center justify-between gap-1.5 bg-surface-secondary/75 hover:bg-surface-secondary border border-border/60 rounded-xl px-2.5 py-1.5 transition-colors"
+                                className="col-span-5 min-w-0 flex items-center justify-between gap-1.5 bg-white hover:bg-zinc-50 dark:bg-surface-secondary/75 dark:hover:bg-surface-secondary border border-zinc-200/85 dark:border-border/60 rounded-lg px-2.5 py-1 transition-colors"
                               >
                                 <PathSegment path={ws.target_path} />
                                 <div className="flex items-center gap-1 shrink-0">
@@ -1060,10 +1175,12 @@ export default function App() {
                             <div className="w-[155px] shrink-0 flex items-center justify-end gap-2">
                               <div className="text-right mr-1">
                                 <span className="font-mono text-[11px] font-semibold text-foreground block tabular-nums">
-                                  {ws.mode === 'direct_mirror' ? '0 B' : `${ws.total_diff_kb.toFixed(1)} KB`}
+                                  {ws.mode === 'direct_mirror' ? '内核透传' : `${ws.total_diff_kb.toFixed(1)} KB`}
                                 </span>
-                                <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-medium block">
-                                  省 99.1%
+                                <span className={`text-[9px] font-medium block ${
+                                  ws.is_alive ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted'
+                                }`}>
+                                  {ws.is_alive ? '内核在线' : '已断开'}
                                 </span>
                               </div>
 
@@ -1073,7 +1190,7 @@ export default function App() {
                                 className="h-7 px-2.5 rounded-lg text-[10.5px]"
                                 onPress={() => handleToggleMount(ws)}
                               >
-                                {ws.is_alive ? '脱机' : '挂载'}
+                                {ws.is_alive ? '断开' : '挂载'}
                               </Button>
 
                               <Button
@@ -1097,33 +1214,33 @@ export default function App() {
                 {/* 3. HeroUI v3 Tabs 驱动的实时内核检验器 */}
                 {/* ================================================================= */}
                 {selectedWs && (
-                  <section className="rounded-2xl bg-surface/95 backdrop-blur-md border border-border/80 p-4 shadow-surface">
+                  <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 p-3">
                     <Tabs
                       selectedKey={inspectorTab}
                       onSelectionChange={(k) => setInspectorTab(k as 'topology' | 'diff')}
                       className="w-full"
                     >
-                      <div className="flex items-center justify-between gap-4 pb-3 border-b border-border/50 mb-3.5">
+                      <div className="flex items-center justify-between gap-3 pb-2 border-b border-zinc-200/75 dark:border-border/50 mb-2.5">
                         <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-                            <Sparkles className="w-3.5 h-3.5" />
+                          <div className="w-5 h-5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                            <Sparkles className="w-3 h-3" />
                           </div>
-                          <span className="text-[12.5px] font-semibold text-foreground">
+                          <span className="text-[12px] font-semibold text-foreground">
                             {selectedWs.name} · 内核通道检验器
                           </span>
-                          <Chip size="sm" variant="soft" color={selectedWs.is_alive ? 'success' : 'default'} className="h-5 text-[9.5px]">
+                          <Chip size="sm" variant="soft" color={selectedWs.is_alive ? 'success' : 'default'} className="h-4.5 text-[9.5px]">
                             <Chip.Label>{selectedWs.is_alive ? 'Passthrough Active' : 'Offline'}</Chip.Label>
                           </Chip>
                         </div>
 
-                        <Tabs.ListContainer>
-                          <Tabs.List aria-label="检验器视图" className="bg-surface-secondary p-0.5 rounded-xl">
-                            <Tabs.Tab id="topology" className="px-3 py-1 text-[11px] rounded-lg">
-                              通道拓扑
+                        <Tabs.ListContainer className="shrink-0">
+                          <Tabs.List aria-label="检验器视图" className="bg-zinc-100 dark:bg-surface-secondary p-0.5 rounded-lg flex-row flex-nowrap whitespace-nowrap w-max">
+                            <Tabs.Tab id="topology" className="px-3 py-1 text-[11px] rounded-md whitespace-nowrap shrink-0">
+                              <span className="whitespace-nowrap">通道拓扑</span>
                               <Tabs.Indicator />
                             </Tabs.Tab>
-                            <Tabs.Tab id="diff" className="px-3 py-1 text-[11px] rounded-lg">
-                              写时变更流 ({selectedWs.changes?.length || 0})
+                            <Tabs.Tab id="diff" className="px-3 py-1 text-[11px] rounded-md whitespace-nowrap shrink-0">
+                              <span className="whitespace-nowrap">写时变更流 ({selectedWs.changes?.length || 0})</span>
                               <Tabs.Indicator />
                             </Tabs.Tab>
                           </Tabs.List>
@@ -1131,7 +1248,7 @@ export default function App() {
                       </div>
 
                       <Tabs.Panel id="topology" className="pt-0">
-                        <div className="relative py-5 px-6 rounded-xl bg-surface-secondary/55 border border-border/60 flex items-center justify-between gap-4 overflow-hidden">
+                        <div className="relative py-3 px-4 rounded-xl bg-white dark:bg-surface-secondary/55 border border-zinc-200/85 dark:border-border/60 flex items-center justify-between gap-3 overflow-hidden">
                           {/* 节点 1：物理源仓 */}
                           <div className="flex items-center gap-3 min-w-0 flex-1">
                             <div className="w-9 h-9 rounded-xl bg-surface border border-border shadow-xs flex items-center justify-center shrink-0">
@@ -1149,7 +1266,7 @@ export default function App() {
                           <div className="relative flex flex-col items-center shrink-0 px-4">
                             <div className="relative z-10 flex items-center gap-1.5 text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-surface px-3 py-1 rounded-full border border-blue-500/25 shadow-xs">
                               <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping" />
-                              <span>{selectedWs.mode === 'direct_mirror' ? 'WinFsp 零拷贝直通' : 'CoW 差异拦截层'}</span>
+                              <span>{selectedWs.mode === 'direct_mirror' ? 'BindFlt 内核直通' : 'WinFsp + BindFlt CoW'}</span>
                             </div>
                             <div className="relative w-44 h-[2px] bg-border/80 mt-2 overflow-hidden rounded-full">
                               {selectedWs.is_alive && (
@@ -1237,18 +1354,18 @@ export default function App() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.16 }}
-                className="flex flex-col h-full max-w-[1100px] mx-auto"
+                className="flex flex-col h-full max-w-[1440px] mx-auto"
               >
-                <div className="flex items-center justify-between pb-4 border-b border-border/60 shrink-0">
+                <div className="flex items-center justify-between pb-2.5 border-b border-border/60 shrink-0">
                   <div>
-                    <h2 className="text-[17px] font-semibold text-foreground">Hosts DNS 映射编辑器</h2>
+                    <h2 className="text-[15px] font-semibold text-foreground">Hosts DNS 映射编辑器</h2>
                     <p className="text-[10.5px] text-muted font-mono mt-0.5">C:\Windows\System32\drivers\etc\hosts</p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <Button
                       size="sm"
                       variant="outline"
-                      className="rounded-xl text-[11px]"
+                      className="h-7 px-2.5 rounded-lg text-[11px]"
                       onPress={() =>
                         callTauri<string>('get_hosts_content').then((t) => {
                           if (t) {
@@ -1263,7 +1380,7 @@ export default function App() {
                     <Button
                       size="sm"
                       variant="primary"
-                      className="rounded-xl text-[11px]"
+                      className="h-7 px-3 rounded-lg text-[11px]"
                       onPress={async () => {
                         await callTauri('save_hosts_content', { content: hostsContent });
                         pushToast('Hosts 已保存并刷新本地 DNS 缓存', 'success');
@@ -1274,10 +1391,10 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="flex-1 mt-4 rounded-2xl border border-border/80 bg-[#0D1117] text-slate-200 p-4 overflow-hidden flex flex-col shadow-surface">
-                  <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-white/10 text-[10px] font-mono text-slate-400">
+                <div className="flex-1 mt-3 rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-[#0D1117] text-foreground dark:text-slate-200 p-3 overflow-hidden flex flex-col">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/60 dark:border-white/10 text-[10px] font-mono text-muted dark:text-slate-400">
                     <span className="flex items-center gap-1.5">
-                      <Terminal className="w-3 h-3 text-blue-400" />
+                      <Terminal className="w-3 h-3 text-blue-500 dark:text-blue-400" />
                       hosts — UTF-8
                     </span>
                     <span>{hostsContent.split('\n').length} 行</span>
@@ -1286,14 +1403,27 @@ export default function App() {
                     value={hostsContent}
                     onChange={(e) => setHostsContent(e.target.value)}
                     spellCheck={false}
-                    className="flex-1 w-full font-mono text-[11.5px] text-slate-100 bg-transparent focus:outline-none resize-none leading-relaxed"
+                    className="flex-1 w-full font-mono text-[11.5px] text-foreground dark:text-slate-100 placeholder-muted bg-transparent focus:outline-none resize-none leading-relaxed"
                     placeholder="正在读取系统 Hosts..."
                   />
                 </div>
               </motion.div>
             )}
 
-            {/* 视图 3：内核与驱动 */}
+            {/* 视图 3：Agent Mind 插件能力与规则维护 */}
+            {activeTab === 'agent-mind' && (
+              <motion.div
+                key="agent-mind"
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.16 }}
+              >
+                <AgentMindView callTauri={callTauri} pushToast={pushToast} />
+              </motion.div>
+            )}
+
+            {/* 视图 4：内核与驱动 */}
             {activeTab === 'doctor' && (
               <motion.div
                 key="doctor"
@@ -1301,25 +1431,44 @@ export default function App() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.16 }}
-                className="flex flex-col max-w-[1000px] mx-auto"
+                className="flex flex-col max-w-[1440px] mx-auto"
               >
-                <div className="flex items-center justify-between pb-4 border-b border-border/60">
+                <div className="flex items-center justify-between pb-2.5 border-b border-border/60">
                   <div>
-                    <h2 className="text-[17px] font-semibold text-foreground">内核与驱动环境体检</h2>
-                    <p className="text-[11px] text-muted mt-0.5">验证 WinFsp 文件系统驱动、用户态权限隔离与服务可达性</p>
+                    <h2 className="text-[15px] font-semibold text-foreground">内核与驱动环境体检</h2>
+                    <p className="text-[11px] text-muted mt-0.5">验证 WinFsp 虚拟文件系统、Windows BindFlt 透明桥接服务与权限状态</p>
                   </div>
-                  <Button size="sm" variant="primary" className="rounded-xl text-[11px]" onPress={() => loadData(false)}>
-                    <RotateCw className="w-3.5 h-3.5" />
-                    <span>立即体检</span>
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-3 rounded-lg text-[11px]"
+                      onPress={async () => {
+                        try {
+                          const msg = await callTauri<string>('setup_kernel_environment');
+                          pushToast(msg || '内核桥接服务安装成功', 'success');
+                          await loadData(true);
+                        } catch (e: any) {
+                          pushToast(`初始化失败: ${e}`, 'danger');
+                        }
+                      }}
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      <span>一键安装/启动内核服务</span>
+                    </Button>
+                    <Button size="sm" variant="primary" className="h-7 px-3 rounded-lg text-[11px]" onPress={() => loadData(false)}>
+                      <RotateCw className="w-3.5 h-3.5" />
+                      <span>立即体检</span>
+                    </Button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mt-5">
-                  <div className="rounded-2xl border border-border/80 bg-surface p-5 shadow-surface flex flex-col gap-3">
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface p-3.5 flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-mono font-semibold text-muted uppercase tracking-wider">WinFsp Kernel Service</span>
                       <Chip size="sm" variant="soft" color="default" className="h-5 text-[9.5px] font-mono">
-                        <Chip.Label>winfsp-2.x</Chip.Label>
+                        <Chip.Label>winfsp.sys</Chip.Label>
                       </Chip>
                     </div>
                     <div className="flex items-center gap-2.5">
@@ -1335,23 +1484,31 @@ export default function App() {
                       </span>
                     </div>
                     <p className="text-[11px] text-muted leading-relaxed">
-                      负责内核级目录挂载与写时复制分发，在用户空间实现标准 NTFS 原生性能穿透。
+                      负责写时复制 (CoW) 虚拟卷的增量拦截与白障隔离，保护物理源仓零修改。
                     </p>
                   </div>
 
-                  <div className="rounded-2xl border border-border/80 bg-surface p-5 shadow-surface flex flex-col gap-3">
+                  <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface p-3.5 flex flex-col gap-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-mono font-semibold text-muted uppercase tracking-wider">Privilege Boundary</span>
+                      <span className="text-[10px] font-mono font-semibold text-muted uppercase tracking-wider">BindFlt Bridge Service</span>
                       <Chip size="sm" variant="soft" color="accent" className="h-5 text-[9.5px] font-mono">
-                        <Chip.Label>HKCU Ready</Chip.Label>
+                        <Chip.Label>CowFsBindService</Chip.Label>
                       </Chip>
                     </div>
                     <div className="flex items-center gap-2.5">
-                      <ShieldCheck className="w-5 h-5 text-blue-500" />
-                      <span className="text-[15px] font-semibold text-foreground">标准用户权限 (免 UAC)</span>
+                      <span className={`w-2.5 h-2.5 rounded-full ${
+                        systemStatus?.bindflt_service_running
+                          ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.75)]'
+                          : 'bg-rose-500'
+                      }`} />
+                      <span className={`text-[15px] font-semibold ${
+                        systemStatus?.bindflt_service_running ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'
+                      }`}>
+                        {systemStatus?.bindflt_service_running ? '内核桥接在线 · 0x10 无感目录' : '服务未安装 / 未启动'}
+                      </span>
                     </div>
                     <p className="text-[11px] text-muted leading-relaxed">
-                      所有挂载工作区与注册表开机自启项均隔离于当前用户命名空间，无需提权弹窗。
+                      以系统服务代调 Windows 原生 bindflt.sys (CreateBindLink)，使目标目录无 ReparsePoint、对 Go 及所有工具完全透明。
                     </p>
                   </div>
                 </div>
@@ -1366,17 +1523,17 @@ export default function App() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.16 }}
-                className="flex flex-col max-w-2xl mx-auto"
+                className="flex flex-col max-w-3xl"
               >
-                <div className="flex items-center justify-between pb-4 border-b border-border/60">
+                <div className="flex items-center justify-between pb-2.5 border-b border-border/60">
                   <div>
-                    <h2 className="text-[17px] font-semibold text-foreground">偏好设置</h2>
+                    <h2 className="text-[15px] font-semibold text-foreground">偏好设置</h2>
                     <p className="text-[11px] text-muted mt-0.5">定制任务栏网速指示条与工作区守护策略</p>
                   </div>
                   <Button
                     size="sm"
                     variant="primary"
-                    className="rounded-xl text-[11px]"
+                    className="h-7 px-3 rounded-lg text-[11px]"
                     onPress={async () => {
                       try {
                         await callTauri('save_app_settings', { newSettings: appSettings });
@@ -1390,8 +1547,8 @@ export default function App() {
                   </Button>
                 </div>
 
-                <div className="rounded-2xl border border-border/80 bg-surface mt-5 divide-y divide-border/50 shadow-surface">
-                  <div className="p-4 flex items-center justify-between">
+                <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface mt-3 divide-y divide-zinc-200/75 dark:divide-border/50">
+                  <div className="px-3.5 py-2.5 flex items-center justify-between">
                     <div>
                       <span className="font-semibold text-foreground block text-[12px]">任务栏原生网速指示条</span>
                       <span className="text-muted mt-0.5 block text-[10.5px]">在 Windows 任务栏系统托盘左侧实时绘制上下行网速</span>
@@ -1409,7 +1566,7 @@ export default function App() {
                     </Switch>
                   </div>
 
-                  <div className="p-4 flex items-center justify-between">
+                  <div className="px-3.5 py-2.5 flex items-center justify-between">
                     <div>
                       <span className="font-semibold text-foreground block text-[12px]">登录 Windows 时自动启动</span>
                       <span className="text-muted mt-0.5 block text-[10.5px]">静默驻留后台并自动恢复全部持久化映射</span>
@@ -1427,7 +1584,7 @@ export default function App() {
                     </Switch>
                   </div>
 
-                  <div className="p-4 flex items-center justify-between">
+                  <div className="px-3.5 py-2.5 flex items-center justify-between">
                     <div>
                       <span className="font-semibold text-foreground block text-[12px]">遥测采样间隔 (秒)</span>
                       <span className="text-muted mt-0.5 block text-[10.5px]">控制带宽统计与任务栏文字刷新频率</span>
@@ -1611,24 +1768,7 @@ export default function App() {
       {/* ========================================================================= */}
       {/* 底部浮层 Toast 通知 */}
       {/* ========================================================================= */}
-      <div className="fixed bottom-4 right-5 z-50 flex flex-col gap-2 pointer-events-none">
-        <AnimatePresence>
-          {toasts.map((t) => (
-            <motion.div
-              key={t.id}
-              initial={{ opacity: 0, y: 12, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.96 }}
-              className="pointer-events-auto flex items-center gap-2 px-3.5 py-2 rounded-xl bg-surface/95 backdrop-blur-xl border border-border shadow-overlay text-[11.5px] font-medium text-foreground"
-            >
-              <span className={`w-2 h-2 rounded-full ${
-                t.tone === 'success' ? 'bg-emerald-500' : t.tone === 'danger' ? 'bg-rose-500' : 'bg-blue-500'
-              }`} />
-              <span>{t.title}</span>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
+      {toastOverlay}
     </div>
   );
 }

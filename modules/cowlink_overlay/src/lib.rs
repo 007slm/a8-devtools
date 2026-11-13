@@ -1,5 +1,8 @@
+use std::collections::HashSet;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use windows::core::{implement, BOOL, GUID, HRESULT, IUnknown, Interface, PCWSTR, PWSTR, Ref};
 use windows::Win32::Foundation::{CLASS_E_CLASSNOTAVAILABLE, E_FAIL, E_POINTER, S_FALSE, S_OK};
 use windows::Win32::System::Com::{IClassFactory, IClassFactory_Impl};
@@ -16,15 +19,32 @@ pub use windows::core as windows_core;
 // CLSID: {55F87E2C-255B-4C2E-893A-A7E004B50341}
 pub const CLSID_COWLINK_OVERLAY: GUID = GUID::from_u128(0x55f87e2c_255b_4c2e_893a_a7e004b50341);
 pub const CLSID_STR: &str = "{55F87E2C-255B-4C2E-893A-A7E004B50341}";
-pub const OVERLAY_REG_NAME: &str = "   A8CowFsOverlay";
+// 7 leading spaces ensure it sorts ahead of other 6-space/3-space shell overlays within Windows' 15-slot cap
+pub const OVERLAY_REG_NAME: &str = "       A8CowFsOverlay";
+
+const FILE_ATTRIBUTE_DIRECTORY_FLAG: u32 = 0x10;
+const CACHE_TTL: Duration = Duration::from_millis(1500);
+
+struct OverlayCache {
+    last_refresh: Instant,
+    active_targets: HashSet<String>,
+}
+
+static WORKSPACE_CACHE: OnceLock<Mutex<OverlayCache>> = OnceLock::new();
 
 #[derive(Default)]
 #[implement(IShellIconOverlayIdentifier)]
 struct CowlinkOverlay;
 
 impl IShellIconOverlayIdentifier_Impl for CowlinkOverlay_Impl {
-    fn IsMemberOf(&self, pwszpath: &PCWSTR, _dwattrib: u32) -> windows::core::Result<()> {
+    fn IsMemberOf(&self, pwszpath: &PCWSTR, dwattrib: u32) -> windows::core::Result<()> {
+        if dwattrib != 0 && (dwattrib & FILE_ATTRIBUTE_DIRECTORY_FLAG) == 0 {
+            return Err(windows::core::Error::from(S_FALSE));
+        }
         let path_str = unsafe { pwszpath.to_string() }.unwrap_or_default();
+        if path_str.is_empty() {
+            return Err(windows::core::Error::from(S_FALSE));
+        }
         if is_registered_workspace(&path_str) {
             Ok(())
         } else {
@@ -59,50 +79,80 @@ impl IShellIconOverlayIdentifier_Impl for CowlinkOverlay_Impl {
     }
 }
 
+const OVERLAY_ICO_BYTES: &[u8] = include_bytes!("../../devtools/icons/overlay-badge.ico");
+
 fn resolve_icon_path() -> String {
-    let candidates = [
-        r"E:\a8-devtools\modules\devtools\icons\folder-workspace.ico",
-        r"E:\a8-devtools\modules\devtools\icons\icon.ico",
-        r"E:\a8-devtools\target\release\a8-devtools.exe",
-        r"E:\a8-devtools\target\debug\a8-devtools.exe",
-    ];
-    for p in &candidates {
-        if Path::new(p).exists() {
-            return p.to_string();
+    // 1. Prefer overlay-badge.ico placed alongside cowlink_overlay.dll
+    let mut dll_path = [0u16; 260];
+    let len = unsafe { GetModuleFileNameW(Some(G_HMODULE), &mut dll_path) };
+    if len > 0 {
+        let dll_str = String::from_utf16_lossy(&dll_path[..len as usize]);
+        if let Some(dir) = Path::new(&dll_str).parent() {
+            let sibling = dir.join("overlay-badge.ico");
+            if sibling.is_file() {
+                return sibling.to_string_lossy().to_string();
+            }
         }
     }
-    r"E:\a8-devtools\modules\devtools\icons\folder-workspace.ico".to_string()
+
+    // 2. Fallback: extract embedded overlay-badge.ico into %LOCALAPPDATA%\cowlink\overlay-badge.ico
+    if let Ok(base) = std::env::var("LOCALAPPDATA") {
+        let dir = PathBuf::from(base).join("cowlink");
+        let target = dir.join("overlay-badge.ico");
+        let need_write = match std::fs::metadata(&target) {
+            Ok(meta) => meta.len() != OVERLAY_ICO_BYTES.len() as u64,
+            Err(_) => true,
+        };
+        if need_write {
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(&target, OVERLAY_ICO_BYTES);
+        }
+        return target.to_string_lossy().to_string();
+    }
+
+    String::new()
 }
 
-fn is_registered_workspace(path: &str) -> bool {
-    let target = Path::new(path);
-    if !target.is_dir() {
-        return false;
-    }
-
+fn load_active_targets() -> HashSet<String> {
+    let mut set = HashSet::new();
     let base = match std::env::var("LOCALAPPDATA") {
         Ok(b) => PathBuf::from(b),
-        Err(_) => return false,
+        Err(_) => return set,
     };
     let workspaces_root = base.join("cowlink").join("workspaces");
-    if !workspaces_root.exists() {
-        return false;
-    }
-
     if let Ok(entries) = std::fs::read_dir(workspaces_root) {
-        let norm_path = path.trim_end_matches('\\').to_lowercase();
         for entry in entries.flatten() {
             let meta_file = entry.path().join("meta.json");
             if let Ok(content) = std::fs::read_to_string(&meta_file) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(target_dir) = v.get("target_dir").and_then(|t| t.as_str()) {
-                        if target_dir.trim_end_matches('\\').to_lowercase() == norm_path {
-                            return true;
+                    let is_active = v.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
+                    if is_active {
+                        if let Some(target_dir) = v.get("target_dir").and_then(|t| t.as_str()) {
+                            set.insert(target_dir.trim_end_matches('\\').to_lowercase());
                         }
                     }
                 }
             }
         }
+    }
+    set
+}
+
+fn is_registered_workspace(path: &str) -> bool {
+    let norm_path = path.trim_end_matches('\\').to_lowercase();
+    let cache = WORKSPACE_CACHE.get_or_init(|| {
+        Mutex::new(OverlayCache {
+            last_refresh: Instant::now() - CACHE_TTL,
+            active_targets: HashSet::new(),
+        })
+    });
+
+    if let Ok(mut guard) = cache.lock() {
+        if guard.last_refresh.elapsed() >= CACHE_TTL {
+            guard.active_targets = load_active_targets();
+            guard.last_refresh = Instant::now();
+        }
+        return guard.active_targets.contains(&norm_path);
     }
 
     false
@@ -218,13 +268,15 @@ pub unsafe extern "system" fn DllRegisterServer() -> HRESULT {
 pub unsafe extern "system" fn DllUnregisterServer() -> HRESULT {
     let roots = [windows::Win32::System::Registry::HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE];
     for &root in &roots {
-        let overlay_reg_path = format!(
-            r"Software\Microsoft\Windows\CurrentVersion\Explorer\ShellIconOverlayIdentifiers\{}",
-            OVERLAY_REG_NAME
-        );
-        let wide_overlay: Vec<u16> = overlay_reg_path.encode_utf16().chain(std::iter::once(0)).collect();
-        unsafe {
-            let _ = RegDeleteTreeW(root, PCWSTR(wide_overlay.as_ptr()));
+        for name in [OVERLAY_REG_NAME, "   A8CowFsOverlay"] {
+            let overlay_reg_path = format!(
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\ShellIconOverlayIdentifiers\{}",
+                name
+            );
+            let wide_overlay: Vec<u16> = overlay_reg_path.encode_utf16().chain(std::iter::once(0)).collect();
+            unsafe {
+                let _ = RegDeleteTreeW(root, PCWSTR(wide_overlay.as_ptr()));
+            }
         }
 
         let clsid_key_path = format!(r"Software\Classes\CLSID\{}", CLSID_STR);
