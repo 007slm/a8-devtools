@@ -4,7 +4,7 @@
 > **文档类型**：SPEC（技术规范与架构设计）  
 > **所属模块**：工作台主程序 (`modules/devtools`)  
 > **当前状态**：PROD-READY / 已验证落地  
-> **最后更新**：2026-11-08  
+> **最后更新**：2026-11-14  
 
 ---
 
@@ -97,9 +97,12 @@ pub struct NetSpeedDto {
    - 窗口宽度拓宽至 136px，高度自适应适配任务栏；
    - 上行：高对比暖金 `▲ 120.5 KB/s`（ClearType 抗锯齿平滑渲染）；
    - 下行：鲜艳天空蓝 `▼ 1.82 MB/s`；
-3. **位置自适应停靠**：
-   - 优先通过 `FindWindowW("Shell_TrayWnd")` 和 `TrayNotifyWnd` 动态计算通知区左侧位置；
-   - 降级支持通过 `SPI_GETWORKAREA` 计算底部任务栏高度，精准停靠在任务栏右侧；
+3. **Win11 XAML 托盘双锚点与事件驱动动态避让 (`taskbar_window.rs`)**：
+   - **平台限制**：Windows 11 重写 XAML 任务栏并移除传统 COM `IDeskBand` 后，第三方长条控件无法由系统自动挤开托盘，必须通过高精度坐标追踪贴靠；
+   - **双锚点实时边界**：结合 Win32 `TrayNotifyWnd` 与 Windows UI Automation (`IUIAutomation`) 查询 `Shell_TrayWnd` 内 XAML 托盘元素（`SystemTray.SystemTrayFrame` / `SystemTrayFrameGrid` / `NormalButton` / `OmniButton` / `ChevronButton` / `OverflowButton`），过滤掉零宽或超半屏根面板后取最左有效边界 `min(win32_left, uia_left)`，精确定位在 `^` 隐藏图标按钮与所有系统托盘图标左侧 `-6px` 处；
+   - **零开销事件驱动（非盲目轮询）**：独立 MTA 线程对 `SystemTray` 容器注册 `StructureChanged` 与 `BoundingRectangle` 事件监听，平时托盘静止时 0 次跨进程 UIA 调用；仅在图标增减、分辨率/DPI/系统设置变化（`WM_DISPLAYCHANGE` / `WM_SETTINGCHANGE` / `WM_DPICHANGED`）或 `TrayNotifyWnd` 矩形变化时触发 180ms 防抖重停靠；
+   - **拖拽尊重与一键复位**：用户手动拖拽位移超过 `2px` 后置位 `USER_DRAG_LOCKED`，保留用户自定义摆放位置；右键点击“复位到任务栏通知区左侧”后解除锁定并重新贴靠；
+   - **降级兜底**：UIA/控件未就绪时回退至 `SPI_GETWORKAREA` 计算底部任务栏右侧安全位置。
 4. **任务栏 Owner 强绑定与防被任务栏遮挡 (Zero Taskbar Overlap)**：
    - 将网速窗口作为 `Shell_TrayWnd` 的 **Owned Window（被拥有窗口）**，遵循 Win32 窗口管理铁律，无论任务栏如何被点击或激活，网速条绝对不会沉入任务栏底层；
    - 原生捕获 `WM_LBUTTONDOWN` / `WM_MOUSEMOVE` / `WM_LBUTTONUP` 实现高精平滑拖拽，点击时绝不误退或遮蔽；

@@ -1,8 +1,10 @@
 use parking_lot::RwLock;
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tauri::Manager;
-use windows::core::{w, PCWSTR};
+use windows::core::{w, BSTR, PCWSTR};
+use windows_core::implement;
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush,
@@ -11,23 +13,41 @@ use windows::Win32::Graphics::Gdi::{
     DT_SINGLELINE, DT_VCENTER, FW_SEMIBOLD, HDC, MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
     PAINTSTRUCT, SRCCOPY, TRANSPARENT,
 };
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+    COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::Accessibility::{
+    CUIAutomation, IUIAutomation, IUIAutomationCondition, IUIAutomationElement,
+    IUIAutomationPropertyChangedEventHandler, IUIAutomationPropertyChangedEventHandler_Impl,
+    IUIAutomationStructureChangedEventHandler, IUIAutomationStructureChangedEventHandler_Impl,
+    StructureChangeType, TreeScope_Element, TreeScope_Subtree, UIA_AutomationIdPropertyId,
+    UIA_BoundingRectanglePropertyId, UIA_ClassNamePropertyId,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, FindWindowExW, FindWindowW, GetClassNameW, GetClientRect, GetCursorPos,
     GetDesktopWindow, GetForegroundWindow, GetMessageW, GetSystemMetrics, GetWindowRect, IsIconic,
-    IsWindowVisible, KillTimer, PostMessageW, PostQuitMessage, RegisterClassExW, SetLayeredWindowAttributes,
-    SetTimer, SetWindowPos, ShowWindow, SystemParametersInfoW, TrackPopupMenu, TranslateMessage, CS_DBLCLKS,
-    CS_HREDRAW, CS_VREDRAW, HWND_TOPMOST, LWA_COLORKEY, MF_DISABLED, MF_GRAYED, MF_SEPARATOR,
-    MF_STRING, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY, WM_LBUTTONDBLCLK,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_TIMER, WM_USER, WNDCLASSEXW,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    IsWindowVisible, KillTimer, PostMessageW, PostQuitMessage, RegisterClassExW,
+    SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow, SystemParametersInfoW,
+    TrackPopupMenu, TranslateMessage, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, HWND_TOPMOST,
+    LWA_COLORKEY, MF_DISABLED, MF_GRAYED, MF_SEPARATOR, MF_STRING, SM_CXSCREEN, SM_CYSCREEN,
+    SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
+    SW_SHOWNOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+    TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_LBUTTONDBLCLK,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_SETTINGCHANGE,
+    WM_TIMER, WM_USER, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 
 pub const WM_TASKBAR_SPEED_UPDATE: u32 = WM_USER + 301;
+const WM_TASKBAR_REDOCK: u32 = WM_USER + 302;
+
+const TIMER_FULLSCREEN: usize = 101;
+const TIMER_REDOCK_DEBOUNCE: usize = 102;
 
 // Color key for 100% true transparent window background
 const TRANSPARENT_COLOR_KEY: COLORREF = COLORREF(0x00000000); // Pure Black RGB(0, 0, 0)
@@ -37,6 +57,13 @@ const MENU_RESET_POS: usize = 1002;
 const MENU_TOGGLE_WIN: usize = 1003;
 const MENU_QUIT_APP: usize = 1004;
 const MENU_HIDE_BAR: usize = 1005;
+
+static USER_DRAG_LOCKED: AtomicBool = AtomicBool::new(false);
+static LAST_NOTIFY_LEFT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+thread_local! {
+    static LOCAL_UIA: RefCell<Option<IUIAutomation>> = const { RefCell::new(None) };
+}
 
 #[derive(Clone, Copy, Default)]
 struct SendHwnd(isize);
@@ -213,32 +240,299 @@ unsafe fn is_fullscreen_app_active(my_hwnd: HWND) -> bool {
     }
 }
 
+fn variant_from_str(s: &str) -> VARIANT {
+    VARIANT::from(BSTR::from(s))
+}
+
+unsafe fn ensure_local_uia() -> Option<IUIAutomation> {
+    LOCAL_UIA.with(|cell| {
+        if let Some(existing) = cell.borrow().as_ref() {
+            return Some(existing.clone());
+        }
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            if let Ok(uia) =
+                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+            {
+                *cell.borrow_mut() = Some(uia.clone());
+                return Some(uia);
+            }
+        }
+        None
+    })
+}
+
+unsafe fn build_tray_condition(uia: &IUIAutomation) -> windows::core::Result<IUIAutomationCondition> {
+    unsafe {
+        let class_names = [
+            "SystemTray.SystemTrayFrame",
+            "SystemTray.NormalButton",
+            "SystemTray.OmniButton",
+            "SystemTray.ChevronButton",
+        ];
+        let auto_ids = ["SystemTrayFrameGrid", "SystemTrayIcon", "OverflowButton"];
+
+        let mut cond: Option<IUIAutomationCondition> = None;
+        for name in class_names {
+            let c = uia.CreatePropertyCondition(UIA_ClassNamePropertyId, &variant_from_str(name))?;
+            cond = Some(match cond {
+                Some(prev) => uia.CreateOrCondition(&prev, &c)?,
+                None => c,
+            });
+        }
+        for id in auto_ids {
+            let c =
+                uia.CreatePropertyCondition(UIA_AutomationIdPropertyId, &variant_from_str(id))?;
+            cond = Some(match cond {
+                Some(prev) => uia.CreateOrCondition(&prev, &c)?,
+                None => c,
+            });
+        }
+        Ok(cond.expect("at least one condition"))
+    }
+}
+
+unsafe fn build_tray_frame_condition(
+    uia: &IUIAutomation,
+) -> windows::core::Result<IUIAutomationCondition> {
+    unsafe {
+        let c1 = uia.CreatePropertyCondition(
+            UIA_ClassNamePropertyId,
+            &variant_from_str("SystemTray.SystemTrayFrame"),
+        )?;
+        let c2 = uia.CreatePropertyCondition(
+            UIA_AutomationIdPropertyId,
+            &variant_from_str("SystemTrayFrameGrid"),
+        )?;
+        uia.CreateOrCondition(&c1, &c2)
+    }
+}
+
+unsafe fn find_tray_left_via_uia(
+    uia: &IUIAutomation,
+    tray_hwnd: HWND,
+    tray_rect: &RECT,
+) -> Option<i32> {
+    unsafe {
+        let root: IUIAutomationElement = uia.ElementFromHandle(tray_hwnd).ok()?;
+        let cond = build_tray_condition(uia).ok()?;
+        let arr = root.FindAll(TreeScope_Subtree, &cond).ok()?;
+        let len = arr.Length().ok()?;
+
+        let tray_w = tray_rect.right - tray_rect.left;
+        let tray_h = tray_rect.bottom - tray_rect.top;
+        let tray_mid_x = tray_rect.left + tray_w / 2;
+
+        let mut min_left: Option<i32> = None;
+        for i in 0..len {
+            let Ok(elem) = arr.GetElement(i) else {
+                continue;
+            };
+            let Ok(r) = elem.CurrentBoundingRectangle() else {
+                continue;
+            };
+            let ew = r.right - r.left;
+            let eh = r.bottom - r.top;
+            // Filter out invalid/hidden/zero-rect or full-bar parent frames
+            if ew <= 4 || ew >= (tray_w / 2) || eh <= 4 || eh > tray_h + 12 {
+                continue;
+            }
+            if r.left <= tray_mid_x
+                || r.right > tray_rect.right + 12
+                || r.top < tray_rect.top - 12
+                || r.bottom > tray_rect.bottom + 12
+            {
+                continue;
+            }
+            min_left = Some(match min_left {
+                Some(cur) => cur.min(r.left),
+                None => r.left,
+            });
+        }
+        min_left
+    }
+}
+
+#[implement(IUIAutomationStructureChangedEventHandler)]
+struct TrayStructureHandler {
+    target_hwnd: SendHwnd,
+}
+
+impl IUIAutomationStructureChangedEventHandler_Impl for TrayStructureHandler_Impl {
+    fn HandleStructureChangedEvent(
+        &self,
+        _sender: windows::core::Ref<'_, IUIAutomationElement>,
+        _changetype: StructureChangeType,
+        _runtimeid: *const windows::Win32::System::Com::SAFEARRAY,
+    ) -> windows::core::Result<()> {
+        unsafe {
+            let _ = PostMessageW(
+                Some(self.target_hwnd.to_hwnd()),
+                WM_TASKBAR_REDOCK,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
+        Ok(())
+    }
+}
+
+#[implement(IUIAutomationPropertyChangedEventHandler)]
+struct TrayBoundsHandler {
+    target_hwnd: SendHwnd,
+}
+
+impl IUIAutomationPropertyChangedEventHandler_Impl for TrayBoundsHandler_Impl {
+    fn HandlePropertyChangedEvent(
+        &self,
+        _sender: windows::core::Ref<'_, IUIAutomationElement>,
+        _propertyid: windows::Win32::UI::Accessibility::UIA_PROPERTY_ID,
+        _newvalue: &VARIANT,
+    ) -> windows::core::Result<()> {
+        unsafe {
+            let _ = PostMessageW(
+                Some(self.target_hwnd.to_hwnd()),
+                WM_TASKBAR_REDOCK,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
+        Ok(())
+    }
+}
+
+fn spawn_uia_observer(target_hwnd: SendHwnd, is_alive: Arc<AtomicBool>) {
+    std::thread::spawn(move || unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let Ok(uia) =
+            CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+        else {
+            CoUninitialize();
+            return;
+        };
+
+        let struct_handler: IUIAutomationStructureChangedEventHandler = TrayStructureHandler {
+            target_hwnd,
+        }
+        .into();
+        let prop_handler: IUIAutomationPropertyChangedEventHandler = TrayBoundsHandler {
+            target_hwnd,
+        }
+        .into();
+
+        let mut last_tray_isize: isize = 0;
+
+        while is_alive.load(Ordering::Relaxed) {
+            let tray_hwnd = FindWindowW(w!("Shell_TrayWnd"), None).unwrap_or_default();
+            let cur_isize = if tray_hwnd.is_invalid() {
+                0
+            } else {
+                tray_hwnd.0 as isize
+            };
+
+            if cur_isize != 0 && cur_isize != last_tray_isize {
+                let _ = uia.RemoveAllEventHandlers();
+                if let Ok(root) = uia.ElementFromHandle(tray_hwnd) {
+                    // Prefer scoping to Win11 SystemTray container to avoid noisy app-button events
+                    let tray_container = build_tray_frame_condition(&uia)
+                        .ok()
+                        .and_then(|cond| root.FindFirst(TreeScope_Subtree, &cond).ok());
+
+                    if let Some(container) = tray_container {
+                        let _ = uia.AddStructureChangedEventHandler(
+                            &container,
+                            TreeScope_Subtree,
+                            None,
+                            &struct_handler,
+                        );
+                        let _ = uia.AddPropertyChangedEventHandlerNativeArray(
+                            &container,
+                            TreeScope_Element,
+                            None,
+                            &prop_handler,
+                            &[UIA_BoundingRectanglePropertyId],
+                        );
+                    } else {
+                        let _ = uia.AddStructureChangedEventHandler(
+                            &root,
+                            TreeScope_Subtree,
+                            None,
+                            &struct_handler,
+                        );
+                    }
+                    last_tray_isize = cur_isize;
+                    let _ = PostMessageW(
+                        Some(target_hwnd.to_hwnd()),
+                        WM_TASKBAR_REDOCK,
+                        WPARAM(0),
+                        LPARAM(0),
+                    );
+                }
+            } else if cur_isize == 0 && last_tray_isize != 0 {
+                let _ = uia.RemoveAllEventHandlers();
+                last_tray_isize = 0;
+            }
+
+            // Sleep 1.5s checking only Shell_TrayWnd HWND identity (microsecond-level Win32 check, zero UIA polling)
+            for _ in 0..6 {
+                if !is_alive.load(Ordering::Relaxed) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+        }
+
+        let _ = uia.RemoveAllEventHandlers();
+        CoUninitialize();
+    });
+}
+
 /// Calculate the optimal docking position and size directly in Windows Taskbar
+/// Combines Win32 TrayNotifyWnd and Win11 XAML UIA tray bounds to avoid overlapping chevron (`^`) or new tray icons.
 /// Returns (x, y, width, height)
 fn calculate_dock_position() -> (i32, i32, i32, i32) {
     unsafe {
-        // 1. Try FindWindow Shell_TrayWnd & TrayNotifyWnd
+        // 1. Try FindWindow Shell_TrayWnd & TrayNotifyWnd + UIA XAML tray bounds
         let tray_hwnd = FindWindowW(w!("Shell_TrayWnd"), None).unwrap_or_default();
         if !tray_hwnd.is_invalid() {
             let mut tray_rect = RECT::default();
             let _ = GetWindowRect(tray_hwnd, &mut tray_rect);
 
+            let tray_w = tray_rect.right - tray_rect.left;
             let tray_h = (tray_rect.bottom - tray_rect.top).max(36);
             let bar_h = (tray_h - 4).clamp(36, 56);
-            // Enlarged width (136px) for larger typography
+            // Enlarged width for crisp two-line typography
             let bar_w = ((bar_h as f32) * 3.5).clamp(132.0, 190.0) as i32;
+            let tray_mid_x = tray_rect.left + tray_w / 2;
+
+            let mut anchor_left: Option<i32> = None;
 
             let notify_hwnd = FindWindowExW(Some(tray_hwnd), None, w!("TrayNotifyWnd"), None)
                 .unwrap_or_default();
             if !notify_hwnd.is_invalid() {
                 let mut notify_rect = RECT::default();
                 let _ = GetWindowRect(notify_hwnd, &mut notify_rect);
+                LAST_NOTIFY_LEFT.store(notify_rect.left, Ordering::Relaxed);
 
-                if notify_rect.left > 100 {
-                    let target_x = notify_rect.left - bar_w - 6;
-                    let target_y = tray_rect.top + (tray_h - bar_h) / 2;
-                    return (target_x, target_y, bar_w, bar_h);
+                if notify_rect.left > tray_mid_x && notify_rect.left < tray_rect.right - 20 {
+                    anchor_left = Some(notify_rect.left);
                 }
+            }
+
+            if let Some(uia) = ensure_local_uia() {
+                if let Some(uia_left) = find_tray_left_via_uia(&uia, tray_hwnd, &tray_rect) {
+                    anchor_left = Some(match anchor_left {
+                        Some(cur) => cur.min(uia_left),
+                        None => uia_left,
+                    });
+                }
+            }
+
+            if let Some(left) = anchor_left {
+                let min_safe_x = tray_rect.left + 120;
+                let target_x = (left - bar_w - 6).max(min_safe_x);
+                let target_y = tray_rect.top + (tray_h - bar_h) / 2;
+                return (target_x, target_y, bar_w, bar_h);
             }
 
             if tray_rect.right > 200 {
@@ -270,6 +564,42 @@ fn calculate_dock_position() -> (i32, i32, i32, i32) {
 
         // 3. Fallback standard
         (1560, 1038, 136, 38)
+    }
+}
+
+unsafe fn apply_redock_if_needed(hwnd: HWND, force: bool) {
+    if !force && USER_DRAG_LOCKED.load(Ordering::Relaxed) {
+        return;
+    }
+    if DRAG_STATE.lock().is_some() {
+        return;
+    }
+
+    let (target_x, target_y, target_w, target_h) = calculate_dock_position();
+    unsafe {
+        let mut cur_rect = RECT::default();
+        let moved = if GetWindowRect(hwnd, &mut cur_rect).is_ok() {
+            let cur_w = cur_rect.right - cur_rect.left;
+            let cur_h = cur_rect.bottom - cur_rect.top;
+            (cur_rect.left - target_x).abs() > 2
+                || (cur_rect.top - target_y).abs() > 2
+                || (cur_w - target_w).abs() > 2
+                || (cur_h - target_h).abs() > 2
+        } else {
+            true
+        };
+
+        if moved || force {
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                target_x,
+                target_y,
+                target_w,
+                target_h,
+                SWP_NOACTIVATE,
+            );
+        }
     }
 }
 
@@ -353,8 +683,9 @@ fn run_win32_taskbar_window(
             SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
 
-        // Timer for lightweight 1-second fullscreen detection (pure user-space, zero IO)
-        let _ = SetTimer(Some(hwnd), 101, 1000, None);
+        // Timer for lightweight 1-second fullscreen detection + microsecond Win32 tray edge check
+        let _ = SetTimer(Some(hwnd), TIMER_FULLSCREEN, 1000, None);
+        spawn_uia_observer(SendHwnd::from_hwnd(hwnd), is_alive.clone());
 
         let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
         while is_alive.load(Ordering::Relaxed) && GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -363,6 +694,10 @@ fn run_win32_taskbar_window(
         }
 
         let _ = DestroyWindow(hwnd);
+        LOCAL_UIA.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+        CoUninitialize();
     }
 }
 
@@ -375,14 +710,47 @@ unsafe extern "system" fn taskbar_wnd_proc(
     match msg {
         WM_TIMER => {
             unsafe {
+                if wparam.0 == TIMER_REDOCK_DEBOUNCE {
+                    let _ = KillTimer(Some(hwnd), TIMER_REDOCK_DEBOUNCE);
+                    apply_redock_if_needed(hwnd, false);
+                    return LRESULT(0);
+                }
+
                 let is_fullscreen = is_fullscreen_app_active(hwnd);
                 let is_visible = IsWindowVisible(hwnd).as_bool();
                 if is_fullscreen {
                     if is_visible {
                         let _ = ShowWindow(hwnd, SW_HIDE);
                     }
-                } else if !is_visible {
-                    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                } else {
+                    if !is_visible {
+                        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                    }
+                    // Fast microsecond-level Win32 check for TrayNotifyWnd width changes (no UIA call)
+                    if !USER_DRAG_LOCKED.load(Ordering::Relaxed) {
+                        let tray_hwnd = FindWindowW(w!("Shell_TrayWnd"), None).unwrap_or_default();
+                        if !tray_hwnd.is_invalid() {
+                            let notify_hwnd =
+                                FindWindowExW(Some(tray_hwnd), None, w!("TrayNotifyWnd"), None)
+                                    .unwrap_or_default();
+                            if !notify_hwnd.is_invalid() {
+                                let mut notify_rect = RECT::default();
+                                if GetWindowRect(notify_hwnd, &mut notify_rect).is_ok()
+                                    && notify_rect.left != LAST_NOTIFY_LEFT.load(Ordering::Relaxed)
+                                {
+                                    apply_redock_if_needed(hwnd, false);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            LRESULT(0)
+        }
+        WM_TASKBAR_REDOCK | WM_DISPLAYCHANGE | WM_SETTINGCHANGE | WM_DPICHANGED => {
+            unsafe {
+                if !USER_DRAG_LOCKED.load(Ordering::Relaxed) && DRAG_STATE.lock().is_none() {
+                    let _ = SetTimer(Some(hwnd), TIMER_REDOCK_DEBOUNCE, 180, None);
                 }
             }
             LRESULT(0)
@@ -483,7 +851,17 @@ unsafe extern "system" fn taskbar_wnd_proc(
         WM_LBUTTONUP => {
             unsafe {
                 let _ = ReleaseCapture();
+                let prev = *DRAG_STATE.lock();
                 *DRAG_STATE.lock() = None;
+
+                if let Some(ctx) = prev {
+                    let mut pt = POINT::default();
+                    if GetCursorPos(&mut pt).is_ok()
+                        && ((pt.x - ctx.cursor_x).abs() > 2 || (pt.y - ctx.cursor_y).abs() > 2)
+                    {
+                        USER_DRAG_LOCKED.store(true, Ordering::Relaxed);
+                    }
+                }
 
                 // Ensure topmost state after releasing mouse
                 let _ = SetWindowPos(
@@ -519,16 +897,8 @@ unsafe extern "system" fn taskbar_wnd_proc(
             let cmd_id = wparam.0 as usize;
             match cmd_id {
                 MENU_RESET_POS => unsafe {
-                    let (x, y, w, h) = calculate_dock_position();
-                    let _ = SetWindowPos(
-                        hwnd,
-                        Some(HWND_TOPMOST),
-                        x,
-                        y,
-                        w,
-                        h,
-                        SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                    );
+                    USER_DRAG_LOCKED.store(false, Ordering::Relaxed);
+                    apply_redock_if_needed(hwnd, true);
                 },
                 MENU_TOGGLE_WIN => {
                     if let Some(app) = GLOBAL_TAURI_APP.get() {
@@ -560,7 +930,8 @@ unsafe extern "system" fn taskbar_wnd_proc(
         }
         WM_DESTROY => {
             unsafe {
-                let _ = KillTimer(Some(hwnd), 101);
+                let _ = KillTimer(Some(hwnd), TIMER_FULLSCREEN);
+                let _ = KillTimer(Some(hwnd), TIMER_REDOCK_DEBOUNCE);
                 PostQuitMessage(0);
             }
             LRESULT(0)

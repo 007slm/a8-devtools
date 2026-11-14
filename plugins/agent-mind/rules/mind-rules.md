@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # Agent Mind 通用架构与文档治理总则 (Universal Mind Rules)
 
 > 本规范由全局插件 `agent-mind` 统一分发，适用于宿主机所有研发工程。项目级独有业务红线请在各工程本地 `.agents/rules/` 下维护，两者互补共存。

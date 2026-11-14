@@ -23,7 +23,6 @@
     }
   ],
   "universal_rules": [
-    "rules/redline.md",
-    "rules/doc.md"
+    "rules/mind-rules.md"
   ]
 }
