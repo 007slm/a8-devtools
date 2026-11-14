@@ -8,11 +8,17 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
-  user-select: none;
   background-color: #ffffff;
   color: var(--foreground);
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   overflow: hidden;
+}
+
+/* 仅对窗口拖拽栏、标签头与按钮禁用文本选中，其余界面文字全部允许选中与复制 */
+[data-tauri-drag-region],
+[role="tab"],
+button {
+  user-select: none;
 }
 
 .dark body {

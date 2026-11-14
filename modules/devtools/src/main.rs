@@ -165,6 +165,95 @@ fn terminate_process_by_pid(pid: u32) {
 #[cfg(not(windows))]
 fn terminate_process_by_pid(_pid: u32) {}
 
+#[cfg(windows)]
+struct SingleInstanceGuard(windows::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl Drop for SingleInstanceGuard {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            unsafe {
+                let _ = windows::Win32::Foundation::CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+struct SingleInstanceGuard;
+
+#[cfg(windows)]
+fn try_acquire_single_instance(mutex_name: &str) -> Option<SingleInstanceGuard> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS,
+    };
+    use windows::Win32::System::Threading::CreateMutexW;
+
+    let wide: Vec<u16> = mutex_name.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        match CreateMutexW(None, false, PCWSTR(wide.as_ptr())) {
+            Ok(handle) => {
+                if GetLastError() == ERROR_ALREADY_EXISTS {
+                    let _ = CloseHandle(handle);
+                    None
+                } else {
+                    Some(SingleInstanceGuard(handle))
+                }
+            }
+            Err(e) => {
+                if e.code() == ERROR_ACCESS_DENIED.to_hresult() {
+                    None
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn try_acquire_single_instance(_mutex_name: &str) -> Option<SingleInstanceGuard> {
+    Some(SingleInstanceGuard)
+}
+
+#[cfg(windows)]
+fn activate_existing_instance() {
+    use windows::core::w;
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, IsIconic, PostMessageW, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+    };
+
+    unsafe {
+        if let Ok(bar_hwnd) =
+            FindWindowW(w!("A8DevToolsTaskbarSpeedBar"), w!("a8-devtools-taskbar-speed"))
+        {
+            if !bar_hwnd.is_invalid() {
+                let _ = PostMessageW(
+                    Some(bar_hwnd),
+                    taskbar_window::WM_TASKBAR_SHOW_MAIN,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
+            }
+        }
+
+        if let Ok(main_hwnd) = FindWindowW(None, w!("a8-devtools 开发者工作台")) {
+            if !main_hwnd.is_invalid() {
+                let _ = ShowWindow(main_hwnd, SW_SHOW);
+                if IsIconic(main_hwnd).as_bool() {
+                    let _ = ShowWindow(main_hwnd, SW_RESTORE);
+                }
+                let _ = SetForegroundWindow(main_hwnd);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn activate_existing_instance() {}
+
 fn spawn_cowfs_mount(
     bin: &Path,
     source: &Path,
@@ -548,12 +637,31 @@ fn app_close(window: tauri::WebviewWindow) {
     let _ = window.hide();
 }
 
+pub(crate) fn quit_app_cleanly(app: &tauri::AppHandle) {
+    if let Some(bar) = app.try_state::<Arc<TaskbarSpeedBar>>() {
+        bar.shutdown();
+    }
+    app.exit(0);
+}
+
+#[tauri::command]
+fn app_quit(app: tauri::AppHandle) {
+    quit_app_cleanly(&app);
+}
+
 #[tauri::command]
 fn app_start_drag(window: tauri::WebviewWindow) {
     let _ = window.start_dragging();
 }
 
 fn main() {
+    let Some(_single_instance_guard) =
+        try_acquire_single_instance("Local\\A8DevTools_SingleInstance_Mutex")
+    else {
+        activate_existing_instance();
+        return;
+    };
+
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && args[1] == "sidecar-board" {
         sidecar::run();
@@ -624,7 +732,7 @@ fn main() {
                         }
                     }
                     "quit_app" => {
-                        app.exit(0);
+                        quit_app_cleanly(app);
                     }
                     _ => {}
                 })
@@ -748,6 +856,7 @@ fn main() {
             app_minimize,
             app_maximize,
             app_close,
+            app_quit,
             app_start_drag,
             agent_mind::get_agent_mind_overview,
             agent_mind::read_agent_mind_file,
@@ -762,9 +871,32 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building a8-devtools application");
 
-    app_built.run(|_app_handle, event| {
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
-            api.prevent_exit();
+    app_built.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+            if code.is_none() {
+                api.prevent_exit();
+            } else if let Some(bar) = app_handle.try_state::<Arc<TaskbarSpeedBar>>() {
+                bar.shutdown();
+            }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::try_acquire_single_instance;
+
+    #[test]
+    fn test_single_instance_mutex_prevents_second_acquire_until_dropped() {
+        let test_name = format!("Local\\A8DevTools_Test_Mutex_{}", std::process::id());
+        let first = try_acquire_single_instance(&test_name);
+        assert!(first.is_some(), "第一次获取命名互斥体必须成功");
+
+        let second = try_acquire_single_instance(&test_name);
+        assert!(second.is_none(), "首个锁未释放前第二次获取必须被拦截");
+
+        drop(first);
+        let third = try_acquire_single_instance(&test_name);
+        assert!(third.is_some(), "释放锁后应允许重新获取");
+    }
 }

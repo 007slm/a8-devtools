@@ -2,13 +2,13 @@
   "name": "agent-mind",
   "display_name": "Agent Mind Dashboard",
   "displayName": "Agent Mind Dashboard",
-  "description": "面向自主智能体的工程良知与持续演进心智中枢。提供宿主机跨项目生态大地图、架构红线裁决、经验复盘沉淀与企业级 UI 设计审美原则。",
-  "version": "1.2.0",
+  "description": "面向自主智能体的工程良知与持续演进心智中枢。提供宿主机全局仓库地图与文档随会话自动治理、AI 自主择机 Google Decisions API 语义红线裁决、DSH 有界终审闭环、经验复盘沉淀与企业级 UI 设计审美原则。",
+  "version": "1.3.0",
   "author": "DevPlus Architecture Team",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
-    "执行语义架构红线终审 (/judge)",
-    "任务收尾复盘并生成大地图补丁 (/improve)",
-    "检查文档规范与架构地图一致性"
+    "发起跨文件 DSH 深度终审闭环 (/dsh-review)",
+    "任务收尾主动触发经验与品味规则沉淀 (/improve)",
+    "剪枝与归并历史架构规则 (/improve prune)"
   ]
 }

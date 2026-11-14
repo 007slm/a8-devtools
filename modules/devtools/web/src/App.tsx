@@ -123,7 +123,10 @@ async function callTauri<T = any>(command: string, args: Record<string, any> = {
             content: args.content,
           })
         : undefined;
-    const res = await fetch(route.path, {
+    const sidecarBridge = (window as any).sidecar;
+    const transport =
+      typeof sidecarBridge?.fetch === 'function' ? sidecarBridge.fetch.bind(sidecarBridge) : fetch;
+    const res = await transport(route.path, {
       method: route.method,
       headers: route.method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
       body: payload,
@@ -435,10 +438,11 @@ export default function App() {
       { id: 'theme', title: theme === 'light' ? '切换为 Obsidian 暗夜工作台' : '切换为 Porcelain 极光亮色', hint: '切换主题皮肤', action: () => setTheme((t) => (t === 'light' ? 'dark' : 'light')) },
       { id: 'tab-mappings', title: '前往：虚拟镜像映射', hint: '工作区总览', action: () => switchTab('mappings') },
       { id: 'tab-hosts', title: '前往：Hosts 维护', hint: '编辑系统 DNS', action: () => switchTab('hosts') },
-      { id: 'tab-agent-mind', title: '前往：Agent Mind 规则中心', hint: '直编 rules 与项目地图', action: () => switchTab('agent-mind') },
+      { id: 'tab-agent-mind', title: '前往：Agent Mind 规则中心', hint: '直编 rules 与仓库地图', action: () => switchTab('agent-mind') },
       { id: 'tab-doctor', title: '前往：内核与驱动诊断', hint: 'WinFsp 健康检查', action: () => switchTab('doctor') },
       { id: 'tab-settings', title: '前往：偏好设置', hint: '任务栏与自启', action: () => switchTab('settings') },
       { id: 'dir', title: '打开全局配置目录', hint: 'Explorer', action: () => callTauri('open_global_dir') },
+      { id: 'quit', title: '退出 a8-devtools', hint: '关闭工作台与托盘常驻', action: () => callTauri('app_quit') },
     ];
     return base.filter((c) =>
       c.title.toLowerCase().includes(paletteQuery.toLowerCase()) ||
@@ -608,22 +612,17 @@ export default function App() {
 
   if (isStandaloneSidecar) {
     return (
-      <div className="relative h-screen w-screen overflow-hidden flex flex-col bg-white dark:bg-[#09090B] text-foreground text-[12px] antialiased select-none">
-        <header className="h-11 px-4 border-b border-zinc-200/85 dark:border-border/70 flex items-center justify-between shrink-0 bg-white dark:bg-[#09090B]">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <img src="./app-icon.png" alt="DevTools" className="w-6 h-6 rounded-lg shrink-0 shadow-xs" />
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="text-[13px] font-bold tracking-tight text-foreground truncate">
-                Agent Mind Dashboard
-              </span>
-              <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[9.5px] font-semibold shrink-0">
-                Web 独立看板
-              </span>
-            </div>
+      <div className="relative h-screen w-screen overflow-hidden flex flex-col bg-white dark:bg-[#09090B] text-foreground text-[12px] antialiased">
+        <header className="h-10 px-4 border-b border-zinc-200/85 dark:border-border/70 flex items-center justify-between shrink-0 bg-white dark:bg-[#09090B]">
+          <div className="flex items-center gap-2 min-w-0">
+            <img src="./app-icon.png" alt="DevTools" className="w-5 h-5 rounded-md shrink-0" />
+            <span className="text-[12.5px] font-semibold tracking-tight text-foreground truncate">
+              Agent Mind
+            </span>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <span className="hidden sm:inline-flex items-center gap-1 text-[10.5px] font-mono text-muted px-2 py-0.5 rounded-full border border-zinc-200/85 dark:border-border/70">
+            <span className="hidden sm:inline-flex items-center gap-1.5 text-[10.5px] font-mono text-muted px-2 py-0.5 rounded-md border border-zinc-200/85 dark:border-border/70">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
               {window.location.host || '127.0.0.1:18765'}
             </span>
@@ -640,7 +639,7 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto px-4 py-3 bg-white dark:bg-[#09090B]">
-          <div className="max-w-7xl mx-auto">
+          <div className="max-w-[1440px] mx-auto">
             <AgentMindView callTauri={callTauri} pushToast={pushToast} isStandalone />
           </div>
         </main>
@@ -651,7 +650,7 @@ export default function App() {
   }
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden flex flex-row bg-white dark:bg-[#09090B] text-foreground text-[12px] antialiased select-none">
+    <div className="relative h-screen w-screen overflow-hidden flex flex-row bg-white dark:bg-[#09090B] text-foreground text-[12px] antialiased">
       {/* ========================================================================= */}
       {/* 左侧栏：X 风格纯白极简边线导航轨 */}
       {/* ========================================================================= */}

@@ -112,13 +112,17 @@ pub struct NetSpeedDto {
    - 当检测到前台运行全屏视频（B站/YouTube/浏览器全屏播放）、全屏游戏、全屏幻灯片（PPT）时，**自动调用 `SW_HIDE` 隐身避让**，彻底杜绝遮挡视频字幕与画面；
    - 当用户退出全屏或切回日常桌面/正常窗口时，**瞬间无缝自动唤醒恢复显示 (`SW_SHOWNOACTIVATE`)**，丝滑无感。
 
-### 3.2 托盘图标交互规范
-1. **左键单击托盘图标**：
+### 3.2 托盘图标交互与单实例唤醒规范
+1. **全局单实例互斥锁与重复启动唤醒**：
+   - `a8-devtools.exe` 启动入口处通过 `CreateMutexW` 申请命名互斥锁 `Local\A8DevTools_SingleInstance_Mutex`（检查 `ERROR_ALREADY_EXISTS` 与跨权限 `ERROR_ACCESS_DENIED`），从进程生命周期源头保证同一会话全局仅允许运行唯一实例；
+   - 若重复启动发生，次实例在退出前通过 `FindWindowW` 查找已运行实例的常驻 Win32 消息窗口 `A8DevToolsTaskbarSpeedBar`（已预先调用 `ChangeWindowMessageFilterEx` 对 `WM_TASKBAR_SHOW_MAIN` 放行 UIPI 跨特权消息）及主窗口，自动唤醒隐藏在托盘或最小化的主窗口并前置聚焦；
+   - 点击“浏览器独立打开”启动 `:18765` 独立看板时，由主进程内 [`sidecar::ensure_running`](file:///e:/a8-devtools/modules/devtools/src/sidecar.rs) 在当前线程同步完成 `TcpListener::bind` 第一现场确权并由原子状态 `SIDECAR_RUNNING` 守护后台监听线程，彻底消除跨线程 TCP 探测轮询，同时不再派生第二个 `a8-devtools.exe` 子进程，主进程退出后端口随之回收，杜绝孤儿进程残留。
+2. **左键单击托盘图标**：
    - 若主窗口处于最小化或隐藏状态 $\rightarrow$ 显示窗口、恢复最小化、并将其置顶聚焦（`show + unminimize + set_focus`）；
    - 若主窗口已处于可见状态 $\rightarrow$ 快速隐藏（`hide`）；
-2. **主窗口右上角关闭按钮（`X`）**：
+3. **主窗口右上角关闭按钮（`X`）**：
    - 拦截 `CloseRequested` 事件，调用 `api.prevent_close()`，将窗口平滑隐入托盘后台，维持网速连续监控；
-3. **右键托盘上下文菜单**：
+4. **右键托盘上下文菜单**：
    - 第一项（禁用态）：显示当前实时双向网速看板（如 `↑ 124.5 KB/s   ↓ 1.82 MB/s`）；
    - 分割线；
    - 第二项：`显示 / 隐藏工作台`；

@@ -1,19 +1,23 @@
 ---
 name: arch-judge
-description: "通用语义架构红线裁判技能。基于 Jev 架构与两阶段调查模式，利用正交分类动态路由，对当前 Git Diff 及代码变更进行深层因果链审查与严格 Schema 结构化裁决。彻底摆脱传统 ArchUnit 的死板枚举与高误判。"
+description: "通用语义架构红线裁判技能。基于语法元特征自适应路由（judge_router.py）与 Google Gemini Decisions API（gemini-decision-1 零输出 Token 概率校准裁决），对当前 Git Diff 及代码变更进行 4 大正交维度毫秒级结构化裁决。依据 mind-rules.md 由 AI 在触及架构红线的代码变更交卷前自主择机调用一次（无需人工触发），亦支持用户通过 /judge 显式发起。"
 ---
 
 # Semantic Architecture Judge (语义架构裁判技能)
 
-本技能提供跨项目通用的语义架构审查能力。采用 **两阶段调查模式（Two-Phase Investigation）** 结合 **TypeSafe AI Jev 极速结构化决策契约**，确保架构审查既有深层因果链事实支撑，又有毫秒级、0 废话的强类型裁决。
+本技能提供跨仓库通用的语义架构审查能力。结合 **语法元特征自适应路由 (`judge_router.py`)** 与 **Google Gemini Decisions API (`gemini-decision-1` 零输出 Token 概率校准定音)**，确保架构审查既有精准事实支撑，又有毫秒级、0 废话的强类型裁决。
+
+## 触发机制：AI 自主择机终审（无需人工调用）
+- **常规自主闭环（遵循 `mind-rules.md`）**：凡涉及代码、接口契约、模块依赖、并发锁或核心生命周期变更且触及 4 大正交维度之一时，AI 应在代码修改与本地编译通过后、正式交卷汇报前**自主择机主动执行一次本技能**（或调度只读 `arch-judge` 子代理）完成红线自检，不依赖用户手动调用；
+- **自主免检边界**：纯文档、注释、仓库地图（`AGENTS.md` / `repos.md`）同步或无关轻量文案/样式调整，AI 自主跳过本检查；
+- **显式指令覆盖**：当用户输入 `/judge` 或 `@arch-judge` 时，无论变更大小立即强制执行完整裁决。
 
 ## 核心设计哲学
 
 1. **告别死板枚举与机械匹配 (No AST Regex Guessing)**：
-   不搞类名包含 `Compat` 等形式主义关键字匹配；基于代码改动的真实物理意图、调用拓扑与设计生命周期进行因果推理。
-2. **两阶段审查流水线 (Two-Phase Pipeline)**：
-   - **阶段一：架构调查与证据切片 (Thinking ON)**：只读工具探索，逆向追踪被修改代码的调用方、生命周期与 ADR 审批凭据，形成客观事实证据；
-   - **阶段二：Jev 结构化裁决 (Thinking OFF / Strict Schema)**：对照 4 大正交维度进行布尔判定并输出标准 `ArchitectureVerdict`，直接指导构建门禁。
+   不搞类名包含 `Compat` 等形式主义关键字匹配；基于代码改动的真实物理意图、调用拓扑与设计生命周期进行语义判断。
+2. **语法元特征自适应路由 + Google Gemini Decisions API 零输出 Token 定音**：
+   先由 `judge_router.py` 毫秒级识别变更触及的正交维度，再由 `decisions_client.py` 调用 Google Gemini Decisions API (`gemini-decision-1`) 直接输出校准先验概率与布尔判定，必要时结合只读上下文核查调用链与 ADR 凭据。
 3. **4 大正交维度动态路由 (Orthogonal Categories)**：
    - `lifecycle_and_evolution`: 演化契约、零擅自向后兼容、旧模型破坏权剥离；
    - `topology_and_boundaries`: 客户端 SDK 纯净隔离、模块单向分层；
@@ -27,27 +31,23 @@ description: "通用语义架构红线裁判技能。基于 Jev 架构与两阶�
 ### 步骤 1：捕获变动与正交分类自适应路由
 运行插件内置路由工具分析当前变更：
 ```bash
-python <plugin_dir>/skills/arch-judge/scripts/judge_router.py <workspace_dir>
+py -3 <plugin_dir>/skills/arch-judge/scripts/judge_router.py <workspace_dir>
 ```
 获取激活的 `activated_categories` 与跳过的维度，避免不必要的上下文浪费。
 
-### 步骤 2：第一阶段——架构调查与事实确权 (Thinking ON)
-针对激活维度的可疑点，使用只读工具展开纵深调查：
+### 步骤 2：调用 Google Gemini Decisions API 执行校准概率裁决并核实物理现场
+针对激活维度，调用插件内置的 Google Gemini Decisions API (`gemini-decision-1`) 客户端执行零输出 Token 概率校准定音：
+```bash
+py -3 <plugin_dir>/skills/arch-judge/scripts/decisions_client.py <workspace_dir> <activated_categories>
+```
+（支持 `<workspace_dir>` 目录自动提取 Git Diff、单文件路径或 `--stdin`；工作区无变更且需审上一次提交时可追加 `--last-commit`。）
+
+脚本自动读取插件配置 `config.json` 并展开 `${GEMINI_API_KEY}` 环境变量，同时动态加载 `rules/*.md` 增量规则判据；再结合以下只读上下文查证要点给出裁决报告：
 - 被修改的方法是否还有历史下游系统在调用？
 - 删除或保留的接口，在 `docs/` 或提交信息中是否存在明确的 ADR 批准记录？
 - 驱动或 SDK 是否悄悄引入了服务端的重型类库？
 
-### 步骤 3：第二阶段——Jev 结构化定音 (Thinking OFF / Strict Schema)
-在第二阶段裁决时，插件直接调用官方 **Google Gemini Decisions API (`gemini-decision-1`)** 执行闭环定音。
-该 API 采用非自回归零文本生成架构，直接根据 4 大正交维度矩阵计算先验概率与置信度：
-```bash
-py -3 <plugin_dir>/skills/arch-judge/scripts/decisions_client.py <workspace_dir> <activated_categories>
-```
-脚本自动读取插件配置 `config.json`（或环境变量 `GEMINI_API_KEY`），对照标准 Schema 输出 JSON 裁决报告：
-- 若所有激活维度均合规，返回 `PASSED`，输出 calibrated probabilities；
-- 若存在确凿红线破坏，返回 `VIOLATED`，并在 `violations` 中明确指出：
-  - `rule_id`: 违规红线标识符
-  - `file_path`: 物理文件路径与行号
-  - `violation_reason`: 具体因果物理事实证据（非推测）
-  - `actionable_fix`: 明确、可直接执行的代码级修正或删除指引。
-- 若存在无法求证的极端假想，按照 YAGNI 原则标记为观察项，严禁私自加复杂度。
+结果处理原则：
+- 若所有激活维度均合规且置信度达标，返回 `PASSED`，输出 calibrated probabilities；
+- 若存在确凿红线破坏，返回 `VIOLATED`，核实物理文件路径、行号与因果事实后输出 `actionable_fix`（可直接执行的代码级修正或删除指引）；
+- 若存在 API 缺失、Diff 截断、置信度低于阈值或无法求证的推测边界，返回 `REQUIRES_APPROVAL` 请求人工确认，严禁私自加复杂度。

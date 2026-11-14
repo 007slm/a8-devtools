@@ -1,6 +1,7 @@
-# a8-devtools 架构大地图与全局文档索引 (AGENTS.md)
+# a8-devtools 仓库大地图与全局文档索引 (AGENTS.md)
 
 > **系统定位**：面向 Windows 的高性能开发者百宝箱平台（a8-devtools）。采用与大型工程（如 `e:\a8-turbo`）一致的多模块工作空间架构（Cargo Workspace），内嵌高颜值纯白桌面工作台，并首发集成自主研发的 WinFsp 写时复制文件系统（`cowfs`）与本机 Hosts 维护等多元开发能力。
+> **仓库大地图与两级查找准则**：本文件为本仓库的**仓库大地图 (`AGENTS.md`)**。查找任何模块、代码、脚本或文档时，**请先从本仓库大地图中查找**；若发现所找内容不属于本仓库（如其他仓库的模块、服务、文档、Demo 或测试靶场），请**优先从全局仓库地图（[`plugins/agent-mind/repos.md`](file:///e:/a8-devtools/plugins/agent-mind/repos.md) / 全局挂载 `%USERPROFILE%/.gemini/config/plugins/agent-mind/repos.md`）中根据索引查找定位**。
 
 ---
 
@@ -57,7 +58,7 @@ graph TD
 | **工作台主程序** (`modules/devtools`) | Tauri 2.0 桌面端百宝箱门户、系统托盘动态网速渲染、Win32 网速采集、Hosts 编辑与 Doctor 检测 | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/) | `a8-devtools.exe` (~9.2MB) | `tauri = "2"`, `rfd`, `cowfs`, `windows` |
 | **写时复制文件系统** (`modules/cowfs`) | WinFsp 虚拟驱动集成、COW 状态机、原子 Copy-Up、源内 `.cowdiff` 自完整存储、`bindflt` 直通与注册辅助 | [`modules/cowfs/`](file:///e:/a8-devtools/modules/cowfs/) | `cowfs.exe` & `libcowfs` | `winfsp`, `dashmap`, `parking_lot` |
 | **桌面角标扩展** (`modules/cowlink_overlay`) | 基于 `IShellIconOverlayIdentifier` 的零侵入文件夹左下角徽章 COM DLL（内嵌透明角标与 TTL 缓存） | [`modules/cowlink_overlay/`](file:///e:/a8-devtools/modules/cowlink_overlay/) | `cowlink_overlay.dll` | `windows`, `serde_json` |
-| **语义架构裁判插件** (`plugins/arch-judge`) | 通用 Antigravity 架构裁判插件，基于 Jev 结构化决策模型与两阶段调查模式，提供 4 大正交维度自适应路由与高质感 Generative UI 紧凑报表 | [`plugins/arch-judge/`](file:///e:/a8-devtools/plugins/arch-judge/) | `arch-judge` (Antigravity Plugin) | `Jev Schema`, `Generative UI`, `Antigravity SDK` |
+| **心智治理与复盘插件** (`plugins/agent-mind`) | 通用 Antigravity 架构治理心智插件：包含 Google Gemini Decisions API 语义裁判 (`arch-judge`)、DSH 有界终审闭环 (`dsh-review` + `dsh-reviewer` + `reviews/`)、用户主动规则沉淀 (`arch-improve`)、极简 UI 原则 (`ui-polish`)、三端同源看板支持 (`sidecars/panel` 复用 `modules/devtools/ui`) 及随会话自动生效的 `mind-rules.md` | [`plugins/agent-mind/`](file:///e:/a8-devtools/plugins/agent-mind/) | `agent-mind` (Antigravity Plugin) | `Google Decisions API`, `DeepSeek Harness`, `Generative UI`, `bindflt` |
 | **统一脚本与引导** (`scripts/` & 根目录) | WinFsp 驱动静默安装与多模式启动脚本 | [`scripts/`](file:///e:/a8-devtools/scripts/), [`start.bat`](file:///e:/a8-devtools/start.bat) | 启动批处理与自动化脚本 | 纯 Win32 / PowerShell 原生调用 |
 
 ---
@@ -68,11 +69,12 @@ graph TD
 
 | 文档路径 | 文档类型 | 所属模块 | 当前状态 | 核心用途与摘要 | 关联源码/模块 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| [`docs/20261114-BUG-工作台与插件看板-三端同源Dashboard白屏根因与防踩坑指南.md`](file:///e:/a8-devtools/docs/20261114-BUG-工作台与插件看板-三端同源Dashboard白屏根因与防踩坑指南.md) | BUG | 工作台与插件看板 | 已修复并实测 | 沉淀三端同源（桌面端 + Rust `:18765` + 插件 Sidecar）Dashboard 4 大白屏根因（`type="module"`/`crossorigin` + `Origin: null`/`plugin://` 403 静态资源拦截、`preload.js` 缺失、Vite `base: './'`、HeroUI v3 复合契约与 `RootErrorBoundary`）及经典 IIFE 构建/校验 Checklist | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/), [`plugins/agent-mind/sidecars/panel/`](file:///e:/a8-devtools/plugins/agent-mind/sidecars/panel/) |
 | [`docs/20261113-ADR-存储与桌面集成-纯直通透明映射与ShellOverlay角标架构.md`](file:///e:/a8-devtools/docs/20261113-ADR-存储与桌面集成-纯直通透明映射与ShellOverlay角标架构.md) | ADR | 存储与桌面集成 | 实施已生效 | 记录废弃 `desktop.ini`/`READONLY` 伪装与 `mount_direct`，切换为纯 `bindflt` 透明直通 + `IShellIconOverlayIdentifier` 内嵌角标与 `HKLM` 启动自注册架构 | [`modules/cowfs/`](file:///e:/a8-devtools/modules/cowfs/), [`modules/cowlink_overlay/`](file:///e:/a8-devtools/modules/cowlink_overlay/) |
-| [`docs/20261110-SPEC-插件与治理-基于Jev架构的通用语义红线裁判设计与演进规范.md`](file:///e:/a8-devtools/docs/20261110-SPEC-插件与治理-基于Jev架构的通用语义红线裁判设计与演进规范.md) | SPEC | 插件与治理 | 实施已生效 | 规约基于 Jev 架构的通用架构红线裁判插件设计：两阶段调查流水线、4 大正交维度语法元特征路由、Generative UI 紧凑型高颜值报表与跨项目即插即用演进契约 | [`plugins/agent-mind/`](file:///e:/a8-devtools/plugins/agent-mind/) |
+| [`docs/20261110-SPEC-插件与治理-基于GoogleDecisionsAPI的语义红线裁判与规则沉淀设计.md`](file:///e:/a8-devtools/docs/20261110-SPEC-插件与治理-基于GoogleDecisionsAPI的语义红线裁判与规则沉淀设计.md) | SPEC | 插件与治理 | 实施已生效 | 规约基于 Google Gemini Decisions API (`gemini-decision-1`) 的 `agent-mind` 插件设计：语法元特征路由裁判（`arch-judge`）、DSH 有界终审闭环与 `reviews/` 结构化归档及三端同源看板（`dsh-review` + `dsh-reviewer`）、随会话自动生成文档与仓库地图（`mind-rules.md`）、用户主动五维信号防膨胀规则沉淀（`arch-improve`）及紧凑型 Generative UI 契约 | [`plugins/agent-mind/`](file:///e:/a8-devtools/plugins/agent-mind/) |
 | [`docs/20261022-ADR-架构演进-a8-devtools多模块工作台与cowfs集成.md`](file:///e:/a8-devtools/docs/20261022-ADR-架构演进-a8-devtools多模块工作台与cowfs集成.md) | ADR | 平台底座 | 实施已生效 | 记录从单一 cowlink 演进为 a8-devtools 多模块工作区（对标 a8-turbo 结构）的战略决策 | [`Cargo.toml`](file:///e:/a8-devtools/Cargo.toml), [`modules/`](file:///e:/a8-devtools/modules/) |
 | [`docs/20261022-SPEC-存储引擎-自完整差异存储与虚拟化架构.md`](file:///e:/a8-devtools/docs/20261022-SPEC-存储引擎-自完整差异存储与虚拟化架构.md) | SPEC | 存储引擎 | 实施已生效 | 规约源内 `.cowdiff/{pathHash}/` 自完整布局、C盘零占用、驱动重入死锁防御与根级遮蔽机制 | [`modules/cowfs/`](file:///e:/a8-devtools/modules/cowfs/) |
-| [`docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md`](file:///e:/a8-devtools/docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md) | SPEC | 工作台模块 | 实施已生效 | 规约 Win32 IP Helper 无锁网速采集、任务栏原生实时网速悬浮条 (双缓冲 GDI、全透明大字号、Win11 XAML UIA 事件驱动动态避让、全屏隐藏)、托盘图标同步与全局设置中心 | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/) |
+| [`docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md`](file:///e:/a8-devtools/docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md) | SPEC | 工作台模块 | 实施已生效 | 规约 Win32 IP Helper 无锁网速采集、任务栏原生实时网速悬浮条 (双缓冲 GDI、全透明大字号、Win11 XAML UIA 事件驱动动态避让、全屏隐藏)、`Local\A8DevTools_SingleInstance_Mutex` 单实例互斥与托盘唤醒闭环、进程内 `:18765` 看板线程及全局设置中心 | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/) |
 
 ---
 
@@ -88,5 +90,5 @@ graph TD
    - 物理存储层（Upper/Lower）绝对不能位于虚拟挂载点（Mount Point）内部；
    - 虚拟文件系统必须在解析层与遍历层对 `.cowdiff` 和 `.cowlink` 执行根级静默过滤，禁止工作区透视自身增量。
 4. **验证交卷门槛**：
-   - 提交前必须执行 `cargo test --workspace` 并确认 100% 通过（当前 7 项单元测试 + 2 项集成探测全绿）；
+   - 提交前必须执行 `cargo test --workspace` 并确认 100% 通过（当前 `cowfs` 4 项单测 + 7 项单元测试 + 1 项 WinFsp 集成探测 + `a8_devtools` 7 项安全边界、Origin 与 DSH 归档解析单测，共 19 项全绿）；
    - 执行 `cargo check --workspace` 确认零告警/编译通过。

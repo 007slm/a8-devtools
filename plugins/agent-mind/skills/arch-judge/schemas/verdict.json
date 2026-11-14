@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ArchitectureVerdict",
-  "description": "Jev-Style Schema-Constrained Architecture Decision Output",
+  "description": "Google Gemini Decisions API Schema-Constrained Architecture Decision Output",
   "type": "object",
   "properties": {
     "verdict": {

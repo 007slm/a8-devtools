@@ -5,6 +5,7 @@
     <link rel="icon" type="image/png" href="./app-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>a8-devtools</title>
+    <script src="./preload.js"></script>
     <script>
       window.onerror = function(msg, url, line, col, error) {
         console.error('[Window Error]', msg, url, line, col, error);
@@ -13,8 +14,7 @@
         console.warn('[Unhandled Rejection]', e.reason);
       };
     </script>
-    <script type="module" crossorigin src="./assets/index-VnAl04sp.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-flcFrfg8.css">
+    <script defer src="./assets/index.js"></script>
   </head>
   <body>
     <div id="root"></div>

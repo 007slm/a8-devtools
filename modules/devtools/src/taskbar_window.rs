@@ -28,23 +28,24 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, FindWindowExW, FindWindowW, GetClassNameW, GetClientRect, GetCursorPos,
-    GetDesktopWindow, GetForegroundWindow, GetMessageW, GetSystemMetrics, GetWindowRect, IsIconic,
-    IsWindowVisible, KillTimer, PostMessageW, PostQuitMessage, RegisterClassExW,
-    SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow, SystemParametersInfoW,
-    TrackPopupMenu, TranslateMessage, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, HWND_TOPMOST,
-    LWA_COLORKEY, MF_DISABLED, MF_GRAYED, MF_SEPARATOR, MF_STRING, SM_CXSCREEN, SM_CYSCREEN,
-    SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
-    SW_SHOWNOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
-    TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_LBUTTONDBLCLK,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_SETTINGCHANGE,
-    WM_TIMER, WM_USER, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    AppendMenuW, ChangeWindowMessageFilterEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+    DestroyMenu, DestroyWindow, DispatchMessageW, FindWindowExW, FindWindowW, GetClassNameW,
+    GetClientRect, GetCursorPos, GetDesktopWindow, GetForegroundWindow, GetMessageW,
+    GetSystemMetrics, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, PostMessageW,
+    PostQuitMessage, RegisterClassExW, SetLayeredWindowAttributes, SetTimer, SetWindowPos,
+    ShowWindow, SystemParametersInfoW, TrackPopupMenu, TranslateMessage, CS_DBLCLKS, CS_HREDRAW,
+    CS_VREDRAW, HWND_TOPMOST, LWA_COLORKEY, MF_DISABLED, MF_GRAYED, MF_SEPARATOR, MF_STRING,
+    MSGFLT_ALLOW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY, WM_DISPLAYCHANGE,
+    WM_DPICHANGED, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT,
+    WM_RBUTTONUP, WM_SETTINGCHANGE, WM_TIMER, WM_USER, WNDCLASSEXW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 
 pub const WM_TASKBAR_SPEED_UPDATE: u32 = WM_USER + 301;
 const WM_TASKBAR_REDOCK: u32 = WM_USER + 302;
+pub const WM_TASKBAR_SHOW_MAIN: u32 = WM_USER + 303;
 
 const TIMER_FULLSCREEN: usize = 101;
 const TIMER_REDOCK_DEBOUNCE: usize = 102;
@@ -160,21 +161,27 @@ impl TaskbarSpeedBar {
             }
         }
     }
-}
 
-impl Drop for TaskbarSpeedBar {
-    fn drop(&mut self) {
+    pub fn shutdown(&self) {
         self.is_alive.store(false, Ordering::SeqCst);
         if let Some(send_hwnd) = *self.hwnd.lock() {
             unsafe {
+                let h = send_hwnd.to_hwnd();
+                let _ = ShowWindow(h, SW_HIDE);
                 let _ = PostMessageW(
-                    Some(send_hwnd.to_hwnd()),
+                    Some(h),
                     windows::Win32::UI::WindowsAndMessaging::WM_CLOSE,
                     WPARAM(0),
                     LPARAM(0),
                 );
             }
         }
+    }
+}
+
+impl Drop for TaskbarSpeedBar {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -669,6 +676,8 @@ fn run_win32_taskbar_window(
 
         // Enable 100% transparent background
         let _ = SetLayeredWindowAttributes(hwnd, TRANSPARENT_COLOR_KEY, 0, LWA_COLORKEY);
+        // Allow lower-privilege duplicate launches to wake an elevated running instance
+        let _ = ChangeWindowMessageFilterEx(hwnd, WM_TASKBAR_SHOW_MAIN, MSGFLT_ALLOW, None);
 
         *hwnd_out.lock() = Some(SendHwnd::from_hwnd(hwnd));
 
@@ -876,8 +885,8 @@ unsafe extern "system" fn taskbar_wnd_proc(
             }
             LRESULT(0)
         }
-        WM_LBUTTONDBLCLK => {
-            // Double click: open/restore main window
+        WM_LBUTTONDBLCLK | WM_TASKBAR_SHOW_MAIN => {
+            // Double click or secondary instance launch: open/restore main window
             if let Some(app) = GLOBAL_TAURI_APP.get() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
@@ -914,6 +923,10 @@ unsafe extern "system" fn taskbar_wnd_proc(
                     }
                 }
                 MENU_QUIT_APP => {
+                    unsafe {
+                        let _ = ShowWindow(hwnd, SW_HIDE);
+                        let _ = DestroyWindow(hwnd);
+                    }
                     if let Some(app) = GLOBAL_TAURI_APP.get() {
                         app.exit(0);
                     }

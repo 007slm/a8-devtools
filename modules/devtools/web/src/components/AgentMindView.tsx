@@ -1,33 +1,29 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Button,
-  Chip,
   InputGroup,
   Label,
-  Modal,
-  Tabs,
   TextField,
 } from '@heroui/react';
 import {
-  BookOpen,
-  Bot,
-  Calculator,
-  CheckCircle2,
+  ArrowLeft,
+  Check,
+  Clock,
   Copy,
+  Edit3,
   ExternalLink,
-  FileCode2,
-  FileText,
+  Eye,
   FolderGit2,
   FolderOpen,
-  Layers,
+  History,
+  Network,
   Plus,
   RotateCw,
   Save,
   Search,
   ShieldAlert,
-  ShieldCheck,
-  Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
 
 export interface AgentMindFileEntry {
@@ -48,10 +44,20 @@ export interface HostProjectCard {
   detail_exists: boolean;
 }
 
-export interface ManifestCategory {
+export interface DshReviewRecord {
   id: string;
-  name: string;
-  description: string;
+  rel_path: string;
+  timestamp: string;
+  modified_ts: number;
+  repo: string;
+  workspace: string;
+  round: number;
+  verdict: string;
+  title: string;
+  session_id: string;
+  duration_sec: number;
+  summary: string;
+  size_bytes: number;
 }
 
 export interface AgentMindOverview {
@@ -67,7 +73,6 @@ export interface AgentMindOverview {
     description?: string;
     version?: string;
     author?: string;
-    suggestedPrompts?: string[];
   };
   config_json: {
     api_key?: string;
@@ -76,12 +81,8 @@ export interface AgentMindOverview {
     timeout_seconds?: number;
     confidence_threshold?: number;
   };
-  rules_manifest: {
-    version?: string;
-    categories?: ManifestCategory[];
-    universal_rules?: string[];
-  };
   projects: HostProjectCard[];
+  reviews?: DshReviewRecord[];
   files: AgentMindFileEntry[];
 }
 
@@ -94,50 +95,434 @@ interface AgentMindViewProps {
 const PROTECTED_FILES = new Set([
   'plugin.json',
   'config.json',
-  'projects.md',
-  'rules/AGENTS.md',
-  'rules/manifest.json',
+  'repos.md',
+  'rules/mind-rules.md',
+  'repos/relations.md',
 ]);
 
-const ROLE_STYLES: Record<string, { label: string; color: 'accent' | 'default' | 'danger' | 'success' }> = {
-  core: { label: 'CORE · 生产核心', color: 'accent' },
-  tooling: { label: 'TOOLING · 工具底座', color: 'success' },
-  'test-bed': { label: 'TEST-BED · 只读靶场', color: 'danger' },
-  reference: { label: 'REFERENCE · 架构参考', color: 'default' },
+const ROLE_LABELS: Record<string, string> = {
+  core: 'CORE',
+  tooling: 'TOOLING',
+  'test-bed': 'TEST-BED',
+  reference: 'REFERENCE',
 };
 
+const VERDICT_META: Record<
+  string,
+  { label: string; shortLabel: string; dotClass: string; textClass: string }
+> = {
+  PASSED: {
+    label: 'PASSED · 通过',
+    shortLabel: '通过',
+    dotClass: 'bg-emerald-500',
+    textClass: 'text-emerald-700 dark:text-emerald-400',
+  },
+  VIOLATED: {
+    label: 'VIOLATED · 阻断',
+    shortLabel: '拦截',
+    dotClass: 'bg-rose-500',
+    textClass: 'text-rose-700 dark:text-rose-400',
+  },
+  REQUIRES_APPROVAL: {
+    label: '需人工拍板',
+    shortLabel: '待拍板',
+    dotClass: 'bg-amber-500',
+    textClass: 'text-amber-700 dark:text-amber-400',
+  },
+  ERROR: {
+    label: '执行异常',
+    shortLabel: '异常',
+    dotClass: 'bg-rose-500',
+    textClass: 'text-rose-700 dark:text-rose-400',
+  },
+};
+
+function stripReviewFrontmatter(raw: string): string {
+  const clean = raw.replace(/^\uFEFF/, '');
+  const match = clean.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
+  return match ? match[1].trim() : clean.trim();
+}
+
+function formatReviewTime(iso: string, modifiedTs: number): string {
+  if (iso) {
+    return iso.replace('T', ' ').replace(/\+08:00$/, '').slice(0, 16);
+  }
+  if (modifiedTs > 0) {
+    const d = new Date(modifiedTs * 1000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  return '-';
+}
+
+function getRuleTabLabel(file: AgentMindFileEntry): string {
+  if (file.rel_path === 'rules/mind-rules.md') {
+    return '全局架构与治理总则';
+  }
+  return file.name.replace(/\.md$/i, '');
+}
+
+/** 行内 Markdown 轻量安全渲染（零 dangerouslySetInnerHTML） */
+function renderInlineMd(text: string): React.ReactNode[] {
+  const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g);
+  return tokens.map((part, idx) => {
+    if (!part) return null;
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return (
+        <strong key={idx} className="font-semibold text-foreground">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+      return (
+        <code
+          key={idx}
+          className="px-1.5 py-0.5 mx-0.5 rounded bg-zinc-100 dark:bg-zinc-800/80 font-mono text-[11px] text-zinc-800 dark:text-zinc-200"
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (linkMatch) {
+      return (
+        <span
+          key={idx}
+          title={linkMatch[2]}
+          className="underline decoration-zinc-300 dark:decoration-zinc-600 underline-offset-2 text-foreground font-medium"
+        >
+          {linkMatch[1]}
+        </span>
+      );
+    }
+    return <Fragment key={idx}>{part}</Fragment>;
+  });
+}
+
+function parseTableCells(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((c) => c.trim());
+}
+
+/** 轻量安全 Markdown 阅读排版组件 */
+function MarkdownArticle({ content }: { content: string }) {
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  const blocks: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const raw = lines[i];
+    const line = raw.trim();
+
+    if (!line) {
+      i += 1;
+      continue;
+    }
+
+    if (line.startsWith('```')) {
+      const lang = line.slice(3).trim();
+      const codeLines: string[] = [];
+      i += 1;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i += 1;
+      }
+      i += 1;
+      blocks.push(
+        <div
+          key={`code-${i}`}
+          className="my-2.5 rounded-xl border border-zinc-200/85 dark:border-border/70 bg-zinc-50/80 dark:bg-zinc-900/60 overflow-hidden"
+        >
+          {lang && (
+            <div className="px-3 py-1 border-b border-zinc-200/70 dark:border-border/60 text-[10px] font-mono text-muted">
+              {lang}
+            </div>
+          )}
+          <pre className="p-3 overflow-x-auto font-mono text-[11.5px] leading-relaxed text-zinc-800 dark:text-zinc-200 select-text">
+            {codeLines.join('\n')}
+          </pre>
+        </div>
+      );
+      continue;
+    }
+
+    if (/^[-*_]{3,}$/.test(line)) {
+      blocks.push(<hr key={`hr-${i}`} className="my-4 border-zinc-200/75 dark:border-border/60" />);
+      i += 1;
+      continue;
+    }
+
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const text = headingMatch[2];
+      const cls =
+        level === 1
+          ? 'text-[16px] font-semibold tracking-tight text-foreground mt-0.5 mb-2.5'
+          : level === 2
+          ? 'text-[13.5px] font-semibold text-foreground mt-5 mb-2 pb-1.5 border-b border-zinc-200/75 dark:border-border/60'
+          : 'text-[12.5px] font-semibold text-foreground mt-3.5 mb-1.5';
+      blocks.push(
+        <div key={`h-${i}`} className={cls}>
+          {renderInlineMd(text)}
+        </div>
+      );
+      i += 1;
+      continue;
+    }
+
+    if (line.startsWith('|') && i + 1 < lines.length && /^\|?[\s:|-]+\|/.test(lines[i + 1].trim())) {
+      const header = parseTableCells(line);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        rows.push(parseTableCells(lines[i]));
+        i += 1;
+      }
+      blocks.push(
+        <div key={`tbl-${i}`} className="my-2.5 overflow-x-auto rounded-xl border border-zinc-200/85 dark:border-border/70">
+          <table className="w-full text-left border-collapse text-[11.5px]">
+            <thead>
+              <tr className="bg-zinc-50/90 dark:bg-surface-secondary/50 border-b border-zinc-200/80 dark:border-border/70">
+                {header.map((cell, ci) => (
+                  <th key={ci} className="px-3 py-2 font-semibold text-foreground whitespace-nowrap">
+                    {renderInlineMd(cell)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-200/65 dark:divide-border/50">
+              {rows.map((row, ri) => (
+                <tr key={ri} className="hover:bg-zinc-50/60 dark:hover:bg-surface-secondary/30">
+                  {header.map((_, ci) => (
+                    <td key={ci} className="px-3 py-2 text-zinc-700 dark:text-zinc-300 align-top">
+                      {renderInlineMd(row[ci] || '')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+
+    if (line.startsWith('>')) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith('>')) {
+        quoteLines.push(lines[i].trim().replace(/^>\s?/, ''));
+        i += 1;
+      }
+      blocks.push(
+        <blockquote
+          key={`q-${i}`}
+          className="my-2 pl-3 border-l-2 border-zinc-300 dark:border-zinc-600 text-[12px] leading-relaxed text-muted"
+        >
+          {quoteLines.map((ql, qi) => (
+            <p key={qi}>{renderInlineMd(ql)}</p>
+          ))}
+        </blockquote>
+      );
+      continue;
+    }
+
+    if (/^([-*+]|\d+\.)\s+/.test(line)) {
+      const items: { marker: string; text: string; indent: number }[] = [];
+      while (i < lines.length) {
+        const cur = lines[i];
+        const curTrim = cur.trim();
+        const m = curTrim.match(/^([-*+]|(\d+)\.)\s+(.+)$/);
+        if (!m) break;
+        const indent = cur.search(/\S|$/);
+        items.push({
+          marker: m[2] ? `${m[2]}.` : '•',
+          text: m[3],
+          indent,
+        });
+        i += 1;
+      }
+      blocks.push(
+        <ul key={`list-${i}`} className="my-2 space-y-1.5">
+          {items.map((it, idx) => (
+            <li
+              key={idx}
+              style={{ paddingLeft: `${Math.min(it.indent, 6) * 8}px` }}
+              className="flex items-start gap-2 text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300"
+            >
+              <span className="text-muted font-mono text-[11px] shrink-0 mt-[1px]">{it.marker}</span>
+              <span className="min-w-0 flex-1">{renderInlineMd(it.text)}</span>
+            </li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    const paraLines: string[] = [];
+    while (i < lines.length) {
+      const cur = lines[i].trim();
+      if (
+        !cur ||
+        cur.startsWith('#') ||
+        cur.startsWith('```') ||
+        cur.startsWith('>') ||
+        cur.startsWith('|') ||
+        /^([-*+]|\d+\.)\s+/.test(cur) ||
+        /^[-*_]{3,}$/.test(cur)
+      ) {
+        break;
+      }
+      paraLines.push(cur);
+      i += 1;
+    }
+    blocks.push(
+      <p key={`p-${i}`} className="my-1.5 text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+        {renderInlineMd(paraLines.join(' '))}
+      </p>
+    );
+  }
+
+  return <div className="select-text">{blocks}</div>;
+}
+
+/** 原位两步删除确认按钮 */
+function InlineDeleteButton({
+  confirming,
+  deleting,
+  onRequest,
+  onConfirm,
+  onCancel,
+}: {
+  confirming: boolean;
+  deleting?: boolean;
+  onRequest: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!confirming) {
+    return (
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 px-2 rounded-lg text-[11px] text-rose-600 dark:text-rose-400 hover:bg-rose-500/10"
+        onPress={onRequest}
+      >
+        <Trash2 className="w-3.5 h-3.5" />
+        <span>删除</span>
+      </Button>
+    );
+  }
+
+  return (
+    <div className="inline-flex items-center gap-1 rounded-lg bg-rose-500/10 border border-rose-500/30 px-1.5 py-0.5">
+      <Button
+        size="sm"
+        variant="danger"
+        isPending={deleting}
+        className="h-6 px-2 rounded-md text-[10.5px]"
+        onPress={onConfirm}
+      >
+        确认删除
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        isDisabled={deleting}
+        className="h-6 px-1.5 rounded-md text-[10.5px]"
+        onPress={onCancel}
+      >
+        取消
+      </Button>
+    </div>
+  );
+}
+
+/** 原位未保存提示条 */
+function UnsavedInlineBar({
+  busy,
+  onSaveAndContinue,
+  onDiscardAndContinue,
+  onCancel,
+}: {
+  busy: boolean;
+  onSaveAndContinue: () => void;
+  onDiscardAndContinue: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/25 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+      <span className="text-amber-800 dark:text-amber-300 font-medium">
+        当前文档有未保存修改，切换前如何处理？
+      </span>
+      <div className="flex items-center gap-1.5">
+        <Button size="sm" variant="primary" isPending={busy} className="h-6 px-2.5 rounded-md text-[10.5px]" onPress={onSaveAndContinue}>
+          保存并继续
+        </Button>
+        <Button size="sm" variant="outline" isDisabled={busy} className="h-6 px-2.5 rounded-md text-[10.5px]" onPress={onDiscardAndContinue}>
+          放弃修改
+        </Button>
+        <Button size="sm" variant="ghost" isDisabled={busy} className="h-6 px-2 rounded-md text-[10.5px]" onPress={onCancel}>
+          留在这里
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function AgentMindView({ callTauri, pushToast, isStandalone = false }: AgentMindViewProps) {
-  const [subTab, setSubTab] = useState<'overview' | 'rules' | 'projects' | 'config'>('overview');
+  // 默认首页即“规则维护”，直接加载并呈现主规则 rules/mind-rules.md
+  const [subTab, setSubTab] = useState<'rules' | 'reviews' | 'projects' | 'config'>('rules');
   const [overview, setOverview] = useState<AgentMindOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Rule .md editor state
-  const [fileSearch, setFileSearch] = useState('');
-  const [selectedRelPath, setSelectedRelPath] = useState<string>('rules/AGENTS.md');
-  const [editorContent, setEditorContent] = useState<string>('');
-  const [savedContent, setSavedContent] = useState<string>('');
+  // Tab 1 (默认首页): Rules state - 默认直接展示主规则 rules/mind-rules.md
+  const [selectedRulePath, setSelectedRulePath] = useState<string>('rules/mind-rules.md');
+  const [ruleMode, setRuleMode] = useState<'preview' | 'edit'>('preview');
+  const [editorContent, setEditorContent] = useState('');
+  const [savedContent, setSavedContent] = useState('');
   const [loadingFile, setLoadingFile] = useState(false);
   const [savingFile, setSavingFile] = useState(false);
-
-  // Quick drill-down modal editor (for projects/*.md, manifest, skill/agent docs)
-  const [quickModal, setQuickModal] = useState<{
-    relPath: string;
-    content: string;
-    saved: string;
-    saving: boolean;
-  } | null>(null);
-
-  // Create rule modal
+  const [pendingRuleSwitch, setPendingRuleSwitch] = useState<string | null>(null);
+  const [confirmDeleteRule, setConfirmDeleteRule] = useState(false);
   const [isNewRuleOpen, setIsNewRuleOpen] = useState(false);
   const [newRuleName, setNewRuleName] = useState('');
   const [newRuleDesc, setNewRuleDesc] = useState('');
   const [creatingRule, setCreatingRule] = useState(false);
 
-  // Delete confirmation modal
-  const [deleteFileTarget, setDeleteFileTarget] = useState<string | null>(null);
+  // Tab 2: Reviews list vs inline detail view
+  const [reviewFilterVerdict, setReviewFilterVerdict] = useState<'ALL' | 'PASSED' | 'VIOLATED' | 'REQUIRES_APPROVAL'>('ALL');
+  const [reviewFilterRepo, setReviewFilterRepo] = useState<string>('ALL');
+  const [reviewSearch, setReviewSearch] = useState('');
+  const [activeReviewView, setActiveReviewView] = useState<'list' | 'detail' | 'spec'>('list');
+  const [openedReview, setOpenedReview] = useState<DshReviewRecord | null>(null);
+  const [openedReviewRaw, setOpenedReviewRaw] = useState('');
+  const [reviewSourceMode, setReviewSourceMode] = useState<'rendered' | 'raw'>('rendered');
+  const [loadingReviewBody, setLoadingReviewBody] = useState(false);
+  const [specContent, setSpecContent] = useState('');
+  const [loadingSpec, setLoadingSpec] = useState(false);
+  const [confirmDeleteReview, setConfirmDeleteReview] = useState(false);
+  const [deletingFile, setDeletingFile] = useState(false);
 
-  // Config form state
+  // Tab 3: Projects grid vs inline detail/editor view
+  const [activeProjectItem, setActiveProjectItem] = useState<
+    { kind: 'file'; title: string; relPath: string } | { kind: 'repo'; project: HostProjectCard } | null
+  >(null);
+  const [projectDocPath, setProjectDocPath] = useState('');
+  const [projectDocContent, setProjectDocContent] = useState('');
+  const [projectDocSaved, setProjectDocSaved] = useState('');
+  const [projectMode, setProjectMode] = useState<'preview' | 'edit'>('preview');
+  const [loadingProjectDoc, setLoadingProjectDoc] = useState(false);
+  const [savingProjectDoc, setSavingProjectDoc] = useState(false);
+  const [pendingProjectExit, setPendingProjectExit] = useState(false);
+
+  // Tab 4: Config form state
   const [cfgModel, setCfgModel] = useState('');
   const [cfgEndpoint, setCfgEndpoint] = useState('');
   const [cfgTimeout, setCfgTimeout] = useState('15');
@@ -145,11 +530,8 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
   const [cfgApiKey, setCfgApiKey] = useState('');
   const [savingConfig, setSavingConfig] = useState(false);
 
-  // Interactive YAGNI risk calculator (synced with sidecar dashboard)
-  const [yagniFreq, setYagniFreq] = useState(1);
-  const [yagniSev, setYagniSev] = useState(3);
-
-  const isDirty = editorContent !== savedContent;
+  const isRuleDirty = editorContent !== savedContent;
+  const isProjectDirty = projectDocContent !== projectDocSaved;
 
   const loadOverview = useCallback(
     async (silent = true) => {
@@ -164,14 +546,12 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
           setCfgTimeout(String(res.config_json?.timeout_seconds ?? 15));
           setCfgThreshold(String(res.config_json?.confidence_threshold ?? 0.85));
           setCfgApiKey(res.config_json?.api_key || '');
-          if (!silent) {
-            pushToast('已同步 Agent Mind 插件最新规则与能力', 'success');
-          }
+          if (!silent) pushToast('已刷新面板数据', 'success');
         }
       } catch (e: any) {
         const msg = String(e || '加载失败');
         setLoadError(msg);
-        if (!silent) pushToast(`加载 Agent Mind 失败: ${msg}`, 'danger');
+        if (!silent) pushToast(`加载失败: ${msg}`, 'danger');
       } finally {
         setLoading(false);
       }
@@ -179,12 +559,13 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
     [callTauri, pushToast]
   );
 
-  const openFile = useCallback(
-    async (relPath: string, switchToRulesTab = false) => {
-      if (switchToRulesTab) {
-        setSubTab('rules');
-      }
-      setSelectedRelPath(relPath);
+  // ---------------- Rule Actions (默认直显主规则) ----------------
+  const loadRuleFileDirect = useCallback(
+    async (relPath: string, nextMode?: 'preview' | 'edit') => {
+      setSelectedRulePath(relPath);
+      if (nextMode) setRuleMode(nextMode);
+      setConfirmDeleteRule(false);
+      setPendingRuleSwitch(null);
       setLoadingFile(true);
       try {
         const txt = await callTauri<string>('read_agent_mind_file', { relPath });
@@ -200,44 +581,36 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
     [callTauri, pushToast]
   );
 
-  const handleSaveCurrentFile = useCallback(async () => {
-    if (!selectedRelPath) return;
+  const requestSwitchRule = (relPath: string) => {
+    if (relPath === selectedRulePath && !isRuleDirty) {
+      return;
+    }
+    if (isRuleDirty) {
+      setPendingRuleSwitch(relPath);
+      return;
+    }
+    loadRuleFileDirect(relPath);
+  };
+
+  const handleSaveCurrentRule = useCallback(async (): Promise<boolean> => {
+    if (!selectedRulePath) return false;
     setSavingFile(true);
     try {
       await callTauri('save_agent_mind_file', {
-        relPath: selectedRelPath,
+        relPath: selectedRulePath,
         content: editorContent,
       });
       setSavedContent(editorContent);
-      pushToast(`已保存 ${selectedRelPath}（镜像挂载已同步生效）`, 'success');
+      pushToast(`已保存 ${selectedRulePath}`, 'success');
       await loadOverview(true);
+      return true;
     } catch (e: any) {
       pushToast(`保存失败: ${e}`, 'danger');
+      return false;
     } finally {
       setSavingFile(false);
     }
-  }, [selectedRelPath, editorContent, callTauri, pushToast, loadOverview]);
-
-  useEffect(() => {
-    loadOverview(true).then(() => {
-      openFile('rules/AGENTS.md', false);
-    });
-  }, []);
-
-  // Ctrl+S shortcut inside Rules editor
-  useEffect(() => {
-    if (subTab !== 'rules') return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        if (isDirty && !savingFile) {
-          handleSaveCurrentFile();
-        }
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [subTab, isDirty, savingFile, handleSaveCurrentFile]);
+  }, [selectedRulePath, editorContent, callTauri, pushToast, loadOverview]);
 
   const handleCreateRule = async () => {
     const cleanName = newRuleName.trim();
@@ -248,7 +621,7 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
     setCreatingRule(true);
     try {
       const title = cleanName.replace(/\.md$/i, '');
-      const template = `# ${title}\n\n> ${newRuleDesc.trim() || 'Agent Mind 架构治理与工程红线规范'}\n\n## 1. 核心约束\n\n- 待补充约束细则...\n\n## 2. 验证与拦截标准\n\n- 变更提交前需通过 \`/judge\` 语义审查。\n`;
+      const template = `# ${title}\n\n> ${newRuleDesc.trim() || 'Agent Mind 架构治理与工程红线规范'}\n\n## 1. 核心约束\n\n- **${title}核心原则**：待补充具体工程约束与物理判据。\n\n## 2. 验证与拦截标准\n\n- **门禁与验证**：变更提交前由 AI 自主通过 \`arch-judge\` 语义审查。\n`;
       const createdRel = await callTauri<string>('create_agent_mind_rule', {
         relPath: cleanName,
         content: template,
@@ -259,7 +632,7 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
       pushToast(`已新建规则 ${createdRel}`, 'success');
       await loadOverview(true);
       if (createdRel) {
-        await openFile(createdRel, true);
+        await loadRuleFileDirect(createdRel, 'edit');
       }
     } catch (e: any) {
       pushToast(`创建规则失败: ${e}`, 'danger');
@@ -268,29 +641,190 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
     }
   };
 
-  const confirmDeleteFile = async () => {
-    if (!deleteFileTarget) return;
+  // Initial load: 总览数据 + 默认直接加载主规则 rules/mind-rules.md
+  useEffect(() => {
+    loadOverview(true);
+    loadRuleFileDirect('rules/mind-rules.md', 'preview');
+  }, []);
+
+  // ---------------- Review Drill-down ----------------
+  const openReviewDetail = useCallback(
+    async (rv: DshReviewRecord) => {
+      setOpenedReview(rv);
+      setActiveReviewView('detail');
+      setReviewSourceMode('rendered');
+      setConfirmDeleteReview(false);
+      setLoadingReviewBody(true);
+      try {
+        const raw = await callTauri<string>('read_agent_mind_file', { relPath: rv.rel_path });
+        setOpenedReviewRaw(raw || '');
+      } catch (e: any) {
+        setOpenedReviewRaw(`读取终审报告失败: ${e}`);
+      } finally {
+        setLoadingReviewBody(false);
+      }
+    },
+    [callTauri]
+  );
+
+  const openSpecDetail = useCallback(async () => {
+    setActiveReviewView('spec');
+    if (specContent) return;
+    setLoadingSpec(true);
     try {
-      await callTauri('delete_agent_mind_file', { relPath: deleteFileTarget });
-      pushToast(`已删除扩展文件 ${deleteFileTarget}`, 'success');
-      const deleted = deleteFileTarget;
-      setDeleteFileTarget(null);
+      const txt = await callTauri<string>('read_agent_mind_file', {
+        relPath: 'skills/dsh-review/SKILL.md',
+      });
+      setSpecContent(txt || '（未找到 DSH 规约文档）');
+    } catch (e: any) {
+      setSpecContent(`读取 DSH 规约失败: ${e}`);
+    } finally {
+      setLoadingSpec(false);
+    }
+  }, [specContent, callTauri]);
+
+  // ---------------- Project Drill-down ----------------
+  const openProjectFile = useCallback(
+    async (title: string, relPath: string) => {
+      setActiveProjectItem({ kind: 'file', title, relPath });
+      setProjectDocPath(relPath);
+      setProjectMode('preview');
+      setPendingProjectExit(false);
+      setLoadingProjectDoc(true);
+      try {
+        const txt = await callTauri<string>('read_agent_mind_file', { relPath });
+        const content = txt ?? '';
+        setProjectDocContent(content);
+        setProjectDocSaved(content);
+      } catch (e: any) {
+        pushToast(`读取 ${relPath} 失败: ${e}`, 'danger');
+      } finally {
+        setLoadingProjectDoc(false);
+      }
+    },
+    [callTauri, pushToast]
+  );
+
+  const openProjectCard = useCallback(
+    async (proj: HostProjectCard) => {
+      setActiveProjectItem({ kind: 'repo', project: proj });
+      setProjectMode('preview');
+      setPendingProjectExit(false);
+      if (!proj.detail_exists || !proj.detail_rel_path) {
+        setProjectDocPath('');
+        setProjectDocContent('');
+        setProjectDocSaved('');
+        return;
+      }
+      setProjectDocPath(proj.detail_rel_path);
+      setLoadingProjectDoc(true);
+      try {
+        const txt = await callTauri<string>('read_agent_mind_file', {
+          relPath: proj.detail_rel_path,
+        });
+        const content = txt ?? '';
+        setProjectDocContent(content);
+        setProjectDocSaved(content);
+      } catch (e: any) {
+        pushToast(`读取 ${proj.detail_rel_path} 失败: ${e}`, 'danger');
+      } finally {
+        setLoadingProjectDoc(false);
+      }
+    },
+    [callTauri, pushToast]
+  );
+
+  const handleSaveProjectDoc = useCallback(async (): Promise<boolean> => {
+    if (!projectDocPath) return false;
+    setSavingProjectDoc(true);
+    try {
+      await callTauri('save_agent_mind_file', {
+        relPath: projectDocPath,
+        content: projectDocContent,
+      });
+      setProjectDocSaved(projectDocContent);
+      pushToast(`已保存 ${projectDocPath}`, 'success');
       await loadOverview(true);
-      if (selectedRelPath === deleted) {
-        await openFile('rules/AGENTS.md', false);
+      return true;
+    } catch (e: any) {
+      pushToast(`保存失败: ${e}`, 'danger');
+      return false;
+    } finally {
+      setSavingProjectDoc(false);
+    }
+  }, [projectDocPath, projectDocContent, callTauri, pushToast, loadOverview]);
+
+  const requestExitProject = () => {
+    if (isProjectDirty) {
+      setPendingProjectExit(true);
+      return;
+    }
+    setActiveProjectItem(null);
+    setProjectDocPath('');
+  };
+
+  // Ctrl+S inside active editors
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's')) return;
+      if (subTab === 'rules' && selectedRulePath && isRuleDirty && !savingFile) {
+        e.preventDefault();
+        handleSaveCurrentRule();
+      } else if (subTab === 'projects' && activeProjectItem && projectDocPath && isProjectDirty && !savingProjectDoc) {
+        e.preventDefault();
+        handleSaveProjectDoc();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    subTab,
+    selectedRulePath,
+    isRuleDirty,
+    savingFile,
+    handleSaveCurrentRule,
+    activeProjectItem,
+    projectDocPath,
+    isProjectDirty,
+    savingProjectDoc,
+    handleSaveProjectDoc,
+  ]);
+
+  const executeDeleteFile = async (relPath: string, source: 'review' | 'rule') => {
+    setDeletingFile(true);
+    try {
+      await callTauri('delete_agent_mind_file', { relPath });
+      pushToast(`已删除文件 ${relPath}`, 'success');
+      if (source === 'review') {
+        setConfirmDeleteReview(false);
+        setActiveReviewView('list');
+        setOpenedReview(null);
+        setOpenedReviewRaw('');
+        await loadOverview(true);
+      } else {
+        setConfirmDeleteRule(false);
+        await loadOverview(true);
+        await loadRuleFileDirect('rules/mind-rules.md', 'preview');
       }
     } catch (e: any) {
       pushToast(`删除失败: ${e}`, 'danger');
+    } finally {
+      setDeletingFile(false);
     }
   };
 
   const handleSaveConfig = async () => {
+    const endpointTrimmed = cfgEndpoint.trim();
+    if (!endpointTrimmed || (!endpointTrimmed.startsWith('http://') && !endpointTrimmed.startsWith('https://'))) {
+      pushToast('Endpoint 不能为空且必须以 http:// 或 https:// 开头', 'danger');
+      return;
+    }
     setSavingConfig(true);
     try {
       const payload = {
         api_key: cfgApiKey.trim() || '${GEMINI_API_KEY}',
         model: cfgModel.trim() || 'gemini-decision-1',
-        endpoint: cfgEndpoint.trim(),
+        endpoint: endpointTrimmed,
         timeout_seconds: Math.max(1, parseInt(cfgTimeout, 10) || 15),
         confidence_threshold: Math.min(1, Math.max(0.1, parseFloat(cfgThreshold) || 0.85)),
       };
@@ -298,11 +832,8 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
         relPath: 'config.json',
         content: `${JSON.stringify(payload, null, 2)}\n`,
       });
-      pushToast('config.json 决策参数已保存', 'success');
+      pushToast('决策参数已保存', 'success');
       await loadOverview(true);
-      if (selectedRelPath === 'config.json') {
-        await openFile('config.json', false);
-      }
     } catch (e: any) {
       pushToast(`保存 config.json 失败: ${e}`, 'danger');
     } finally {
@@ -310,124 +841,113 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
     }
   };
 
-  const ruleMdFiles = useMemo(() => {
-    const list = overview?.files || [];
-    return list.filter((f) => f.category === 'rules' && f.extension === 'md');
+  // ---------------- Derived lists ----------------
+  const ruleFiles = useMemo(() => {
+    const list = (overview?.files || []).filter(
+      (f) => f.category === 'rules' && f.extension === 'md'
+    );
+    const rank = (rel: string) => (rel === 'rules/mind-rules.md' ? 0 : 1);
+    return [...list].sort(
+      (a, b) => rank(a.rel_path) - rank(b.rel_path) || a.rel_path.localeCompare(b.rel_path)
+    );
   }, [overview]);
 
-  const filteredRuleFiles = useMemo(() => {
-    const q = fileSearch.trim().toLowerCase();
-    if (!q) return ruleMdFiles;
-    return ruleMdFiles.filter(
-      (f) => f.rel_path.toLowerCase().includes(q) || f.name.toLowerCase().includes(q)
-    );
-  }, [ruleMdFiles, fileSearch]);
+  const allReviews = useMemo(() => overview?.reviews || [], [overview]);
 
-  const openQuickModal = useCallback(
-    async (relPath: string) => {
-      try {
-        const txt = await callTauri<string>('read_agent_mind_file', { relPath });
-        const content = txt ?? '';
-        setQuickModal({ relPath, content, saved: content, saving: false });
-      } catch (e: any) {
-        pushToast(`读取 ${relPath} 失败: ${e}`, 'danger');
+  const availableReviewRepos = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of allReviews) {
+      const key = r.repo || 'unknown';
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([repo, count]) => ({ repo, count }))
+      .sort((a, b) => a.repo.localeCompare(b.repo));
+  }, [allReviews]);
+
+  const activeReviewRepo = useMemo(() => {
+    if (reviewFilterRepo === 'ALL') return 'ALL';
+    return availableReviewRepos.some((item) => item.repo === reviewFilterRepo)
+      ? reviewFilterRepo
+      : 'ALL';
+  }, [reviewFilterRepo, availableReviewRepos]);
+
+  const repoScopedReviews = useMemo(() => {
+    if (activeReviewRepo === 'ALL') return allReviews;
+    return allReviews.filter((r) => (r.repo || 'unknown') === activeReviewRepo);
+  }, [allReviews, activeReviewRepo]);
+
+  const filteredReviews = useMemo(() => {
+    const q = reviewSearch.trim().toLowerCase();
+    return repoScopedReviews.filter((r) => {
+      if (reviewFilterVerdict !== 'ALL' && r.verdict !== reviewFilterVerdict) {
+        return false;
       }
-    },
-    [callTauri, pushToast]
+      if (!q) return true;
+      return (
+        r.repo.toLowerCase().includes(q) ||
+        r.title.toLowerCase().includes(q) ||
+        r.summary.toLowerCase().includes(q) ||
+        r.id.toLowerCase().includes(q)
+      );
+    });
+  }, [repoScopedReviews, reviewFilterVerdict, reviewSearch]);
+
+  const reviewStats = useMemo(() => {
+    let passed = 0;
+    let violated = 0;
+    for (const r of repoScopedReviews) {
+      if (r.verdict === 'PASSED') passed += 1;
+      else if (r.verdict === 'VIOLATED' || r.verdict === 'ERROR') violated += 1;
+    }
+    return { total: repoScopedReviews.length, passed, violated };
+  }, [repoScopedReviews]);
+
+  const displayedReviewBody = useMemo(
+    () => (reviewSourceMode === 'raw' ? openedReviewRaw.trim() : stripReviewFrontmatter(openedReviewRaw)),
+    [reviewSourceMode, openedReviewRaw]
   );
 
-  const saveQuickModal = useCallback(async () => {
-    if (!quickModal) return;
-    setQuickModal((prev) => (prev ? { ...prev, saving: true } : null));
-    try {
-      await callTauri('save_agent_mind_file', {
-        relPath: quickModal.relPath,
-        content: quickModal.content,
-      });
-      pushToast(`已保存 ${quickModal.relPath}`, 'success');
-      setQuickModal((prev) => (prev ? { ...prev, saved: prev.content, saving: false } : null));
-      await loadOverview(true);
-    } catch (e: any) {
-      pushToast(`保存失败: ${e}`, 'danger');
-      setQuickModal((prev) => (prev ? { ...prev, saving: false } : null));
-    }
-  }, [quickModal, callTauri, pushToast, loadOverview]);
+  const canDeleteSelectedRule =
+    selectedRulePath &&
+    !PROTECTED_FILES.has(selectedRulePath) &&
+    selectedRulePath.startsWith('rules/');
 
-  const yagniScore = yagniFreq * yagniSev;
-  const isYagniAccepted = yagniScore < 10;
-
-  const pluginDisplayName =
-    overview?.plugin_meta?.displayName ||
-    overview?.plugin_meta?.display_name ||
-    'Agent Mind Dashboard';
-  const pluginVersion = overview?.plugin_meta?.version || '1.2.0';
-  const categories = overview?.rules_manifest?.categories || [];
-  const suggestedPrompts = overview?.plugin_meta?.suggestedPrompts || [];
-
-  const fileCountsByCat = useMemo(() => {
-    const counts: Record<string, number> = {
-      rules: 0,
-      projects: 0,
-      skills: 0,
-      agents: 0,
-      config: 0,
-    };
-    for (const f of overview?.files || []) {
-      counts[f.category] = (counts[f.category] || 0) + 1;
-    }
-    return counts;
-  }, [overview]);
-
-  const canDeleteSelected =
-    selectedRelPath &&
-    !PROTECTED_FILES.has(selectedRelPath) &&
-    (selectedRelPath.startsWith('rules/') || selectedRelPath.startsWith('projects/'));
+  const navItems: { id: typeof subTab; label: string; count?: number }[] = [
+    { id: 'rules', label: '规则规范', count: ruleFiles.length || undefined },
+    { id: 'reviews', label: '终审记录', count: allReviews.length || undefined },
+    { id: 'projects', label: '仓库地图', count: overview?.projects.length || undefined },
+    { id: 'config', label: '模型参数' },
+  ];
 
   return (
     <div className="flex flex-col gap-3 max-w-[1440px] mx-auto">
       {/* ================================================================= */}
-      {/* 顶部纯白边线摘要卡片 + 子导航栏 */}
+      {/* 1. 与映射页同体系的顶部摘要卡：标题 + 根路径 + 一级下划线导航 */}
       {/* ================================================================= */}
-      <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 px-4 py-3 flex flex-col gap-2.5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-3 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 flex items-center justify-center shrink-0">
-              <Sparkles className="w-4 h-4" />
+      <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 px-4 pt-3 pb-0 flex flex-col gap-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-7 h-7 rounded-lg bg-zinc-100 dark:bg-surface-secondary border border-zinc-200/80 dark:border-border/70 flex items-center justify-center shrink-0">
+              <Network className="w-3.5 h-3.5 text-foreground" />
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-[15px] font-semibold text-foreground tracking-tight">
-                  {pluginDisplayName}
-                </h2>
-                <Chip size="sm" variant="soft" color="accent" className="h-4.5 text-[10px] font-mono">
-                  <Chip.Label>v{pluginVersion}</Chip.Label>
-                </Chip>
-                <Chip
-                  size="sm"
-                  variant="soft"
-                  color={overview?.mount_alive ? 'success' : 'default'}
-                  className="h-4.5 text-[10px]"
-                >
-                  <Chip.Label>
-                    {overview?.mount_alive ? 'CowFS 实时透视生效中' : '物理源码直编模式'}
-                  </Chip.Label>
-                </Chip>
+              <div className="flex items-center gap-2">
+                <h1 className="text-[13.5px] font-semibold tracking-tight text-foreground">
+                  agent-mind 治理面板
+                </h1>
+                <span className="inline-flex items-center gap-1 text-[10px] text-muted">
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      overview?.mount_alive ? 'bg-emerald-500' : 'bg-zinc-400'
+                    }`}
+                  />
+                  <span>{overview?.mount_alive ? 'CowFS 实时透视' : '源码直连'}</span>
+                </span>
               </div>
-              <p className="text-[11px] text-muted mt-0.5 leading-snug max-w-2xl">
-                {overview?.plugin_meta?.description ||
-                  '面向自主智能体的工程良知与持续演进心智中枢，在 DevTools 内直接维护 rules、宿主机项目生态地图与裁决技能。'}
-              </p>
               {overview?.plugin_root && (
-                <div className="flex items-center gap-2 mt-1 text-[10px] font-mono text-muted flex-wrap">
-                  <span className="truncate">源码基座: {overview.plugin_root}</span>
-                  {overview.mounted_target && (
-                    <>
-                      <span>→</span>
-                      <span className="truncate text-blue-600 dark:text-blue-400">
-                        挂载点: {overview.mounted_target}
-                      </span>
-                    </>
-                  )}
+                <div className="text-[10.5px] font-mono text-muted truncate mt-0.5">
+                  {overview.plugin_root}
                 </div>
               )}
             </div>
@@ -441,7 +961,7 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
               onPress={() => callTauri('open_agent_mind_dir')}
             >
               <FolderOpen className="w-3.5 h-3.5" />
-              <span>打开插件目录</span>
+              <span>打开目录</span>
             </Button>
             {!isStandalone && (
               <Button
@@ -451,7 +971,7 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
                 onPress={async () => {
                   try {
                     const url = await callTauri<string>('launch_agent_mind_sidecar');
-                    pushToast(`独立 Web 看板已就绪: ${url || '127.0.0.1:18765'}`, 'success');
+                    pushToast(`独立看板已就绪: ${url || '127.0.0.1:18765'}`, 'success');
                     await loadOverview(true);
                   } catch (e: any) {
                     pushToast(`启动独立看板失败: ${e}`, 'danger');
@@ -464,7 +984,7 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
             )}
             <Button
               size="sm"
-              variant="primary"
+              variant="outline"
               isPending={loading}
               className="h-7 px-2.5 rounded-lg text-[11px]"
               onPress={() => loadOverview(false)}
@@ -475,541 +995,792 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
           </div>
         </div>
 
-        {loadError && (
-          <div className="rounded-lg bg-rose-500/10 border border-rose-500/30 px-3 py-2 text-[11px] text-rose-600 dark:text-rose-400 flex items-center gap-2">
-            <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-            <span>{loadError}</span>
-          </div>
-        )}
-
-        <div className="pt-2 border-t border-border/50 flex flex-wrap items-center justify-between gap-2.5">
-          <Tabs
-            selectedKey={subTab}
-            onSelectionChange={(k) => setSubTab(k as typeof subTab)}
-            className="w-auto max-w-full"
-          >
-            <Tabs.ListContainer className="overflow-x-auto">
-              <Tabs.List
-                aria-label="Agent Mind 视图切换"
-                className="bg-zinc-200/65 dark:bg-surface-secondary p-0.5 rounded-xl flex flex-row flex-nowrap whitespace-nowrap w-max"
-              >
-                <Tabs.Tab id="overview" className="px-3.5 py-1.5 text-[11.5px] rounded-lg whitespace-nowrap shrink-0 w-auto">
-                  <span className="whitespace-nowrap">能力总览与评估</span>
-                  <Tabs.Indicator />
-                </Tabs.Tab>
-                <Tabs.Tab id="rules" className="px-3.5 py-1.5 text-[11.5px] rounded-lg whitespace-nowrap shrink-0 w-auto">
-                  <span className="whitespace-nowrap">规则维护 ({ruleMdFiles.length})</span>
-                  <Tabs.Indicator />
-                </Tabs.Tab>
-                <Tabs.Tab id="projects" className="px-3.5 py-1.5 text-[11.5px] rounded-lg whitespace-nowrap shrink-0 w-auto">
-                  <span className="whitespace-nowrap">宿主机项目地图 ({overview?.projects.length || 0})</span>
-                  <Tabs.Indicator />
-                </Tabs.Tab>
-                <Tabs.Tab id="config" className="px-3.5 py-1.5 text-[11.5px] rounded-lg whitespace-nowrap shrink-0 w-auto">
-                  <span className="whitespace-nowrap">决策模型参数</span>
-                  <Tabs.Indicator />
-                </Tabs.Tab>
-              </Tabs.List>
-            </Tabs.ListContainer>
-          </Tabs>
-
-          <div className="flex items-center gap-3 text-[11px] font-mono text-muted tabular-nums shrink-0 whitespace-nowrap">
-            <span>规则 {ruleMdFiles.length}</span>
-            <span>·</span>
-            <span>项目卡 {fileCountsByCat.projects}</span>
-            <span>·</span>
-            <span>技能 {fileCountsByCat.skills}</span>
-            <span>·</span>
-            <span>智能体 {fileCountsByCat.agents}</span>
-          </div>
-        </div>
-      </section>
-
-      {/* ================================================================= */}
-      {/* Tab 1: 能力总览 + 红线维度 + YAGNI 计算器 */}
-      {/* ================================================================= */}
-      {subTab === 'overview' && (
-        <div className="grid grid-cols-12 gap-3">
-          {/* 左 8 列：4 正交治理维度 + 技能/智能体能力矩阵 */}
-          <div className="col-span-12 lg:col-span-8 flex flex-col gap-3">
-            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 p-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                  <h3 className="text-[12.5px] font-semibold text-foreground">
-                    规则清单 · 四大正交治理维度 (rules/manifest.json)
-                  </h3>
-                </div>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="h-6 px-2 rounded-md text-[10.5px]"
-                  onPress={() => openQuickModal('rules/manifest.json')}
-                >
-                  编辑清单
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                {categories.map((cat) => (
-                  <div
-                    key={cat.id}
-                    className="rounded-xl bg-white dark:bg-surface-secondary/55 border border-zinc-200/85 dark:border-border/60 p-2.5 flex flex-col gap-1"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[12px] font-semibold text-foreground">{cat.name}</span>
-                      <span className="text-[9.5px] font-mono text-blue-600 dark:text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded">
-                        {cat.id}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-muted leading-snug">{cat.description}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 p-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-indigo-500" />
-                  <h3 className="text-[12.5px] font-semibold text-foreground">插件内建能力与快捷维护入口</h3>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                <div className="rounded-xl border border-zinc-200/85 dark:border-border/70 bg-white dark:bg-surface-secondary/40 p-2.5 flex flex-col justify-between gap-2">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-[11.5px] text-foreground flex items-center gap-1.5">
-                        <BookOpen className="w-3.5 h-3.5 text-blue-500" />
-                        全局心智规则
-                      </span>
-                      <Chip size="sm" variant="soft" color="accent" className="h-4.5 text-[9px] font-mono">
-                        <Chip.Label>AGENTS.md</Chip.Label>
-                      </Chip>
-                    </div>
-                    <p className="text-[10.5px] text-muted mt-1 leading-snug">
-                      约束所有 Agent 的第一性原则、物理验证、静态门禁与零妥协红线。
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 rounded-lg text-[10.5px] w-full"
-                    onPress={() => openFile('rules/AGENTS.md', true)}
-                  >
-                    直接维护 AGENTS.md
-                  </Button>
-                </div>
-
-                <div className="rounded-xl border border-zinc-200/85 dark:border-border/70 bg-white dark:bg-surface-secondary/40 p-2.5 flex flex-col justify-between gap-2">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-[11.5px] text-foreground flex items-center gap-1.5">
-                        <Bot className="w-3.5 h-3.5 text-emerald-500" />
-                        语义终审智能体
-                      </span>
-                      <Chip size="sm" variant="soft" color="success" className="h-4.5 text-[9px] font-mono">
-                        <Chip.Label>/judge</Chip.Label>
-                      </Chip>
-                    </div>
-                    <p className="text-[10.5px] text-muted mt-1 leading-snug">
-                      调度 arch-judge 与 Jev 两阶段管道执行源码因果链、红线与架构缺陷终审。
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 rounded-lg text-[10.5px] w-full"
-                    onPress={() => openQuickModal('agents/arch-judge.md')}
-                  >
-                    查看 / 调整 arch-judge
-                  </Button>
-                </div>
-
-                <div className="rounded-xl border border-zinc-200/85 dark:border-border/70 bg-white dark:bg-surface-secondary/40 p-2.5 flex flex-col justify-between gap-2">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-[11.5px] text-foreground flex items-center gap-1.5">
-                        <FileCode2 className="w-3.5 h-3.5 text-amber-500" />
-                        架构复盘演进
-                      </span>
-                      <Chip size="sm" variant="soft" color="default" className="h-4.5 text-[9px] font-mono">
-                        <Chip.Label>/improve</Chip.Label>
-                      </Chip>
-                    </div>
-                    <p className="text-[10.5px] text-muted mt-1 leading-snug">
-                      在任务收尾时萃取教训、更新宿主机地图与规则补丁，避免同类回归。
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 rounded-lg text-[10.5px] w-full"
-                    onPress={() => openQuickModal('skills/arch-improve/SKILL.md')}
-                  >
-                    查看 arch-improve 技能
-                  </Button>
-                </div>
-              </div>
-            </section>
-          </div>
-
-          {/* 右 4 列：YAGNI 评估器 + 推荐 Prompt */}
-          <div className="col-span-12 lg:col-span-4 flex flex-col gap-3">
-            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 p-3 flex flex-col gap-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[12px] font-semibold text-foreground flex items-center gap-1.5">
-                  <Calculator className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                  YAGNI 缺陷风险评估器
-                </span>
-                <span className="font-mono text-[10px] text-muted">F × S &lt; 10</span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] text-muted block mb-1">发生频率 (1-5)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={5}
-                    value={yagniFreq}
-                    onChange={(e) => setYagniFreq(Math.min(5, Math.max(1, Number(e.target.value) || 1)))}
-                    className="w-full h-7 px-2 rounded-lg bg-surface-secondary border border-border font-mono text-[11.5px] text-foreground outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-muted block mb-1">危害程度 (1-5)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={5}
-                    value={yagniSev}
-                    onChange={(e) => setYagniSev(Math.min(5, Math.max(1, Number(e.target.value) || 1)))}
-                    className="w-full h-7 px-2 rounded-lg bg-surface-secondary border border-border font-mono text-[11.5px] text-foreground outline-none focus:border-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div
-                className={`rounded-lg border px-3 py-2 flex items-center justify-between ${
-                  isYagniAccepted
-                    ? 'bg-emerald-500/8 border-emerald-500/25 text-emerald-700 dark:text-emerald-300'
-                    : 'bg-rose-500/8 border-rose-500/25 text-rose-700 dark:text-rose-300'
+        {/* 下划线一级导航 */}
+        <nav aria-label="Agent Mind 视图切换" className="flex items-center gap-6">
+          {navItems.map((item) => {
+            const active = subTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setSubTab(item.id)}
+                className={`relative pb-2.5 text-[12px] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                  active
+                    ? 'font-semibold text-foreground'
+                    : 'font-medium text-muted hover:text-foreground'
                 }`}
               >
-                <div className="flex flex-col">
-                  <span className="text-[11px] font-semibold">
-                    {isYagniAccepted ? '风险可控 · 建议接受 (不做冗余防御)' : '高危隐患 · 必须修补!'}
-                  </span>
-                  <span className="text-[9.5px] opacity-80">
-                    {isYagniAccepted ? '保持代码精简，拒绝过度防御' : '风险值 ≥ 10，不得以 YAGNI 豁免'}
-                  </span>
-                </div>
-                <span className="font-mono font-bold text-[14px] tabular-nums">{yagniScore}</span>
-              </div>
-            </section>
+                <span>{item.label}</span>
+                {typeof item.count === 'number' && (
+                  <span className="text-[10px] font-mono text-muted">{item.count}</span>
+                )}
+                {active && (
+                  <span className="absolute left-0 right-0 bottom-0 h-[2px] bg-foreground rounded-full" />
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      </section>
 
-            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 p-3 flex flex-col gap-2">
-              <span className="text-[12px] font-semibold text-foreground">推荐指令 (点击复制)</span>
-              <div className="flex flex-col gap-1.5">
-                {suggestedPrompts.map((prompt, i) => (
-                  <button
-                    key={i}
-                    onClick={() => {
-                      navigator.clipboard.writeText(prompt);
-                      pushToast('已复制推荐指令到剪贴板', 'success');
-                    }}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg bg-white hover:bg-zinc-50 dark:bg-surface-secondary/65 dark:hover:bg-surface-secondary border border-zinc-200/85 dark:border-border/60 text-[11px] text-foreground flex items-center justify-between gap-2 transition-colors cursor-pointer"
-                  >
-                    <span className="truncate">{prompt}</span>
-                    <Copy className="w-3 h-3 text-muted shrink-0" />
-                  </button>
-                ))}
-              </div>
-            </section>
-          </div>
+      {loadError && (
+        <div className="rounded-xl bg-rose-500/8 border border-rose-500/25 px-3.5 py-2 text-[11px] text-rose-600 dark:text-rose-400 flex items-center gap-2">
+          <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+          <span>{loadError}</span>
         </div>
       )}
 
       {/* ================================================================= */}
-      {/* Tab 2: 规则与文档直编工作台 (Master-Detail Live Editor) */}
+      {/* Tab 1 (首页): 规则规范 — 默认直接呈现主规则 rules/mind-rules.md */}
       {/* ================================================================= */}
       {subTab === 'rules' && (
-        <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden grid grid-cols-12 min-h-[460px]">
-          {/* 左侧规则目录导航栏（仅展示 rules/*.md） */}
-          <div className="col-span-12 md:col-span-4 lg:col-span-3 border-r border-zinc-200/85 dark:border-border/70 flex flex-col bg-white dark:bg-surface-secondary/25">
-            <div className="p-2.5 border-b border-border/60 flex flex-col gap-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11.5px] font-semibold text-foreground">规则文件 (rules/*.md)</span>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  className="h-6 px-2 rounded-md text-[10.5px]"
-                  onPress={() => setIsNewRuleOpen(true)}
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>新建规则</span>
-                </Button>
-              </div>
-
-              <div className="relative flex items-center">
-                <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 pointer-events-none" />
-                <input
-                  value={fileSearch}
-                  onChange={(e) => setFileSearch(e.target.value)}
-                  placeholder="过滤规则文件名..."
-                  className="w-full h-7 pl-8 pr-2 rounded-lg bg-surface border border-border text-[11px] text-foreground placeholder-muted outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-1.5 flex flex-col gap-0.5 max-h-[460px]">
-              {filteredRuleFiles.map((f) => {
-                const active = selectedRelPath === f.rel_path;
+        <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden flex flex-col">
+          {/* 卡片头栏：主规则及扩展规则切换 + 阅读/编辑/新建/保存（完全对齐映射页 px-4 py-2.5 规范） */}
+          <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+              {ruleFiles.map((f) => {
+                const active = selectedRulePath === f.rel_path;
+                const isMaster = f.rel_path === 'rules/mind-rules.md';
                 return (
                   <button
                     key={f.rel_path}
-                    onClick={() => openFile(f.rel_path, false)}
-                    className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                    onClick={() => requestSwitchRule(f.rel_path)}
+                    title={f.rel_path}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11.5px] transition-colors cursor-pointer whitespace-nowrap ${
                       active
-                        ? 'bg-blue-500/12 text-blue-700 dark:text-blue-300 ring-1 ring-blue-500/25'
-                        : 'hover:bg-surface-secondary text-foreground/85'
+                        ? 'bg-zinc-100 dark:bg-surface-secondary font-semibold text-foreground'
+                        : 'text-muted hover:text-foreground hover:bg-zinc-50 dark:hover:bg-surface-secondary/60'
                     }`}
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileText className="w-3.5 h-3.5 shrink-0 opacity-75" />
-                      <div className="min-w-0">
-                        <div className="text-[11.5px] font-medium truncate">{f.name}</div>
-                        <div className="text-[9.5px] font-mono text-muted truncate">{f.rel_path}</div>
-                      </div>
-                    </div>
-                    <span className="text-[9.5px] font-mono text-muted shrink-0">
-                      {(f.size_bytes / 1024).toFixed(1)}K
-                    </span>
+                    <span>{getRuleTabLabel(f)}</span>
+                    <span className="text-[10px] font-mono text-muted/85">{f.name}</span>
+                    {isMaster && (
+                      <span className="text-[9.5px] font-mono px-1.5 py-[1px] rounded bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/70 text-muted">
+                        主规则
+                      </span>
+                    )}
                   </button>
                 );
               })}
-              {filteredRuleFiles.length === 0 && (
-                <div className="py-10 text-center text-[11px] text-muted">暂无匹配的规则 Markdown 文件</div>
+
+              <button
+                onClick={() => setIsNewRuleOpen((v) => !v)}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] text-muted hover:text-foreground hover:bg-zinc-50 dark:hover:bg-surface-secondary/60 transition-colors cursor-pointer"
+              >
+                {isNewRuleOpen ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                <span>{isNewRuleOpen ? '收起' : '新建规则'}</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              {isRuleDirty ? (
+                <span className="text-[10.5px] text-amber-600 dark:text-amber-400 px-1.5">未保存</span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[10.5px] text-emerald-600 dark:text-emerald-400 px-1.5">
+                  <Check className="w-3 h-3" />
+                  已同步
+                </span>
               )}
+
+              <div className="inline-flex items-center rounded-lg bg-zinc-100 dark:bg-surface-secondary p-0.5 text-[11px]">
+                <button
+                  onClick={() => setRuleMode('preview')}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                    ruleMode === 'preview'
+                      ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                      : 'text-muted hover:text-foreground'
+                  }`}
+                >
+                  <Eye className="w-3 h-3" />
+                  <span>阅读</span>
+                </button>
+                <button
+                  onClick={() => setRuleMode('edit')}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                    ruleMode === 'edit'
+                      ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                      : 'text-muted hover:text-foreground'
+                  }`}
+                >
+                  <Edit3 className="w-3 h-3" />
+                  <span>编辑</span>
+                </button>
+              </div>
+
+              {canDeleteSelectedRule && (
+                <InlineDeleteButton
+                  confirming={confirmDeleteRule}
+                  deleting={deletingFile}
+                  onRequest={() => setConfirmDeleteRule(true)}
+                  onCancel={() => setConfirmDeleteRule(false)}
+                  onConfirm={() => executeDeleteFile(selectedRulePath, 'rule')}
+                />
+              )}
+
+              <Button
+                size="sm"
+                variant="outline"
+                isPending={loadingFile}
+                className="h-7 px-2.5 rounded-lg text-[11px]"
+                onPress={() => requestSwitchRule(selectedRulePath)}
+              >
+                重载
+              </Button>
+
+              <Button
+                size="sm"
+                variant="primary"
+                isPending={savingFile}
+                isDisabled={!isRuleDirty && !savingFile}
+                className="h-7 px-3 rounded-lg text-[11px]"
+                onPress={handleSaveCurrentRule}
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>保存 (Ctrl+S)</span>
+              </Button>
             </div>
           </div>
 
-          {/* 右侧编辑器区 */}
-          <div className="col-span-12 md:col-span-8 lg:col-span-9 flex flex-col">
-            <div className="px-3.5 py-2 border-b border-border/60 flex flex-wrap items-center justify-between gap-2 bg-surface">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="font-mono text-[12px] font-semibold text-foreground truncate">
-                  {selectedRelPath}
-                </span>
-                {isDirty ? (
-                  <Chip size="sm" variant="soft" color="warning" className="h-5 text-[9.5px]">
-                    <Chip.Label>未保存</Chip.Label>
-                  </Chip>
-                ) : (
-                  <Chip size="sm" variant="soft" color="success" className="h-5 text-[9.5px]">
-                    <Chip.Label>已同步</Chip.Label>
-                  </Chip>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                {canDeleteSelected && (
-                  <Button
-                    size="sm"
-                    variant="danger-soft"
-                    className="h-7 px-2.5 rounded-lg text-[10.5px]"
-                    onPress={() => setDeleteFileTarget(selectedRelPath)}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>删除</span>
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  isPending={loadingFile}
-                  className="h-7 px-2.5 rounded-lg text-[10.5px]"
-                  onPress={() => openFile(selectedRelPath, false)}
-                >
-                  重载
-                </Button>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  isPending={savingFile}
-                  isDisabled={!isDirty && !savingFile}
-                  className="h-7 px-3 rounded-lg text-[10.5px]"
-                  onPress={handleSaveCurrentFile}
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>保存 (Ctrl+S)</span>
-                </Button>
-              </div>
+          {/* 原位新建规则条 */}
+          {isNewRuleOpen && (
+            <div className="px-4 py-2.5 bg-zinc-50/80 dark:bg-surface-secondary/35 border-b border-zinc-200/80 dark:border-border/60 flex flex-wrap items-center gap-2">
+              <input
+                value={newRuleName}
+                onChange={(e) => setNewRuleName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleCreateRule();
+                  } else if (e.key === 'Escape') {
+                    setIsNewRuleOpen(false);
+                  }
+                }}
+                placeholder="文件名（如 redline-sql.md）"
+                className="h-7 px-2.5 rounded-lg bg-white dark:bg-surface border border-zinc-200/90 dark:border-border/70 font-mono text-[11px] text-foreground placeholder-muted outline-none focus:border-zinc-400 w-52"
+              />
+              <input
+                value={newRuleDesc}
+                onChange={(e) => setNewRuleDesc(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleCreateRule();
+                  }
+                }}
+                placeholder="一句话定位说明（可选）"
+                className="h-7 px-2.5 rounded-lg bg-white dark:bg-surface border border-zinc-200/90 dark:border-border/70 text-[11px] text-foreground placeholder-muted outline-none focus:border-zinc-400 flex-1 min-w-[200px]"
+              />
+              <Button
+                size="sm"
+                variant="primary"
+                isPending={creatingRule}
+                className="h-7 px-3 rounded-lg text-[11px]"
+                onPress={handleCreateRule}
+              >
+                立即创建
+              </Button>
             </div>
+          )}
 
-            <div className="flex-1 bg-surface dark:bg-[#0D1117] text-foreground dark:text-slate-100 p-3 flex flex-col min-h-[410px]">
-              <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-border/60 dark:border-white/10 text-[10px] font-mono text-muted dark:text-slate-400">
-                <span>{selectedRelPath} — UTF-8</span>
-                <span>{editorContent.split('\n').length} 行 · {editorContent.length} 字符</span>
-              </div>
+          {/* 原位未保存提示条 */}
+          {pendingRuleSwitch && (
+            <UnsavedInlineBar
+              busy={savingFile}
+              onSaveAndContinue={async () => {
+                const next = pendingRuleSwitch;
+                const ok = await handleSaveCurrentRule();
+                if (ok && next) await loadRuleFileDirect(next);
+              }}
+              onDiscardAndContinue={() => loadRuleFileDirect(pendingRuleSwitch)}
+              onCancel={() => setPendingRuleSwitch(null)}
+            />
+          )}
+
+          {/* 主规则内容展示 / 编辑器 */}
+          <div className="px-5 py-4">
+            {loadingFile && !editorContent ? (
+              <div className="py-16 text-center text-[11.5px] text-muted">正在加载 {selectedRulePath}...</div>
+            ) : ruleMode === 'preview' ? (
+              <MarkdownArticle content={stripReviewFrontmatter(editorContent)} />
+            ) : (
               <textarea
                 value={editorContent}
                 onChange={(e) => setEditorContent(e.target.value)}
                 spellCheck={false}
-                placeholder="正在读取规则内容..."
-                className="flex-1 w-full font-mono text-[12px] text-foreground dark:text-slate-100 placeholder-muted bg-transparent focus:outline-none resize-none leading-relaxed"
+                className="w-full min-h-[540px] font-mono text-[12px] text-foreground dark:text-slate-100 bg-transparent focus:outline-none resize-y leading-relaxed"
               />
-            </div>
+            )}
           </div>
         </section>
       )}
 
       {/* ================================================================= */}
-      {/* Tab 3: 宿主机项目生态地图 */}
+      {/* Tab 2: 终审记录 (映射页同款 rounded-2xl 列表卡 <-> 原位全宽阅读卡) */}
       {/* ================================================================= */}
-      {subTab === 'projects' && (
-        <div className="flex flex-col gap-3">
-          <div className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 px-3.5 py-2.5 flex items-center justify-between gap-3">
-            <div className="text-[11px] text-muted">
-              索引源自 <span className="font-mono text-foreground">projects.md</span>，支持直接维护跨项目红线、关联图谱与各项目渐进式详情卡片。
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 px-2.5 rounded-lg text-[10.5px]"
-                onPress={() => openQuickModal('projects/relations.md')}
-              >
-                编辑关联关系 (relations.md)
-              </Button>
-              <Button
-                size="sm"
-                variant="primary"
-                className="h-7 px-2.5 rounded-lg text-[10.5px]"
-                onPress={() => openQuickModal('projects.md')}
-              >
-                编辑项目总索引 (projects.md)
-              </Button>
-            </div>
-          </div>
+      {subTab === 'reviews' && (
+        <>
+          {activeReviewView === 'list' && (
+            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-[12.5px] font-semibold text-foreground">DSH 终审归档</h2>
+                  <span className="text-[10.5px] font-mono text-muted">
+                    {reviewStats.total} 份 · {reviewStats.passed} 通过 · {reviewStats.violated} 拦截
+                  </span>
+                </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {(overview?.projects || []).map((proj) => {
-              const roleMeta = ROLE_STYLES[proj.role] || {
-                label: proj.role.toUpperCase(),
-                color: 'default' as const,
-              };
-              return (
-                <div
-                  key={proj.code}
-                  className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 p-3 flex flex-col justify-between gap-2.5"
-                >
-                  <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <FolderGit2 className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                        <span className="text-[13px] font-semibold text-foreground truncate">
-                          {proj.code}
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={activeReviewRepo}
+                    onChange={(e) => setReviewFilterRepo(e.target.value)}
+                    aria-label="按仓库筛选"
+                    className="h-7 px-2 rounded-lg border border-zinc-200/90 dark:border-border/70 bg-white dark:bg-surface-secondary text-[11px] text-foreground outline-none focus:border-zinc-400 cursor-pointer"
+                  >
+                    <option value="ALL">全部项目 ({allReviews.length})</option>
+                    {availableReviewRepos.map((item) => (
+                      <option key={item.repo} value={item.repo}>
+                        {item.repo} ({item.count})
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="flex items-center gap-0.5 text-[11px]">
+                    {(
+                      [
+                        { id: 'ALL', label: '全部' },
+                        { id: 'PASSED', label: '通过' },
+                        { id: 'VIOLATED', label: '拦截' },
+                        { id: 'REQUIRES_APPROVAL', label: '待拍板' },
+                      ] as const
+                    ).map((item) => {
+                      const active = reviewFilterVerdict === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => setReviewFilterVerdict(item.id)}
+                          className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                            active
+                              ? 'bg-zinc-100 dark:bg-surface-secondary font-semibold text-foreground'
+                              : 'text-muted hover:text-foreground'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="relative flex items-center w-48">
+                    <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 pointer-events-none" />
+                    <input
+                      value={reviewSearch}
+                      onChange={(e) => setReviewSearch(e.target.value)}
+                      placeholder="搜索标题或摘要..."
+                      className="w-full h-7 pl-8 pr-2.5 rounded-lg bg-surface-secondary/60 focus:bg-white dark:focus:bg-surface border border-zinc-200/85 dark:border-border/70 text-[11px] text-foreground placeholder-muted outline-none focus:border-zinc-400"
+                    />
+                  </div>
+
+                  <button
+                    onClick={openSpecDetail}
+                    className="text-[11px] text-muted hover:text-foreground px-1.5 py-1 rounded-md hover:bg-zinc-100/80 dark:hover:bg-surface-secondary transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    查看规约 →
+                  </button>
+                </div>
+              </div>
+
+              <div className="divide-y divide-zinc-200/70 dark:divide-border/50">
+                {filteredReviews.map((rv) => {
+                  const meta = VERDICT_META[rv.verdict] || {
+                    label: rv.verdict,
+                    shortLabel: rv.verdict,
+                    dotClass: 'bg-zinc-400',
+                    textClass: 'text-muted',
+                  };
+                  return (
+                    <button
+                      key={rv.rel_path}
+                      onClick={() => openReviewDetail(rv)}
+                      className="w-full text-left px-4 py-3 hover:bg-zinc-50/75 dark:hover:bg-surface-secondary/40 transition-colors cursor-pointer flex flex-col gap-1"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className={`inline-flex items-center gap-1.5 text-[11px] font-medium shrink-0 ${meta.textClass}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${meta.dotClass}`} />
+                            {meta.shortLabel}
+                          </span>
+                          <span className="text-[13px] font-semibold text-foreground truncate">
+                            {rv.title}
+                          </span>
+                        </div>
+                        <span className="text-[10.5px] font-mono text-muted shrink-0">
+                          {rv.repo} · R{rv.round}
                         </span>
                       </div>
-                      <Chip size="sm" variant="soft" color={roleMeta.color} className="h-4.5 text-[9px] font-mono">
-                        <Chip.Label>{roleMeta.label}</Chip.Label>
-                      </Chip>
-                    </div>
 
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(proj.physical_path);
-                        pushToast(`已复制 ${proj.code} 物理路径`, 'success');
-                      }}
-                      title="点击复制物理路径"
-                      className="text-left px-2 py-1 rounded-lg bg-white hover:bg-zinc-50 dark:bg-surface-secondary/75 dark:hover:bg-surface-secondary border border-zinc-200/85 dark:border-border/60 font-mono text-[10px] text-foreground flex items-center justify-between gap-2 cursor-pointer"
-                    >
-                      <span className="truncate">{proj.physical_path}</span>
-                      <Copy className="w-3 h-3 text-muted shrink-0" />
+                      <p className="text-[11.5px] text-muted leading-snug line-clamp-1">{rv.summary}</p>
+
+                      <div className="flex items-center gap-3 text-[10px] font-mono text-muted/85 pt-0.5">
+                        <span className="inline-flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {formatReviewTime(rv.timestamp, rv.modified_ts)}
+                        </span>
+                        {rv.duration_sec > 0 && <span>{rv.duration_sec.toFixed(1)}s</span>}
+                        <span className="truncate">{rv.rel_path}</span>
+                      </div>
                     </button>
+                  );
+                })}
 
-                    <p className="text-[11px] text-muted leading-snug">{proj.summary}</p>
+                {filteredReviews.length === 0 && (
+                  <div className="py-16 text-center flex flex-col items-center gap-2 text-muted">
+                    <History className="w-6 h-6 opacity-35" />
+                    <span className="text-[12px]">暂无匹配的 DSH 终审归档记录</span>
+                    <span className="text-[10.5px]">执行 /dsh-review 后归档结果将自动呈现在此</span>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {activeReviewView === 'detail' && openedReview && (
+            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
+                <button
+                  onClick={() => {
+                    setActiveReviewView('list');
+                    setConfirmDeleteReview(false);
+                  }}
+                  className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-muted hover:text-foreground transition-colors cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>返回终审记录</span>
+                </button>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="inline-flex items-center rounded-lg bg-zinc-100 dark:bg-surface-secondary p-0.5 text-[11px]">
+                    <button
+                      onClick={() => setReviewSourceMode('rendered')}
+                      className={`px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                        reviewSourceMode === 'rendered'
+                          ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                          : 'text-muted hover:text-foreground'
+                      }`}
+                    >
+                      阅读
+                    </button>
+                    <button
+                      onClick={() => setReviewSourceMode('raw')}
+                      className={`px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                        reviewSourceMode === 'raw'
+                          ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                          : 'text-muted hover:text-foreground'
+                      }`}
+                    >
+                      源文件
+                    </button>
                   </div>
 
-                  <div className="pt-2 border-t border-border/50 flex items-center justify-between gap-2">
-                    <span className="font-mono text-[10px] text-muted truncate">
-                      {proj.detail_rel_path || '无详情卡'}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      isDisabled={!proj.detail_exists}
-                      className="h-6 px-2 rounded-md text-[10px] shrink-0"
-                      onPress={() => openQuickModal(proj.detail_rel_path)}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2.5 rounded-lg text-[11px]"
+                    onPress={() => {
+                      navigator.clipboard.writeText(displayedReviewBody);
+                      pushToast(
+                        reviewSourceMode === 'raw' ? '已复制原始归档文件内容' : '已复制终审报告正文',
+                        'success'
+                      );
+                    }}
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>复制</span>
+                  </Button>
+
+                  <InlineDeleteButton
+                    confirming={confirmDeleteReview}
+                    deleting={deletingFile}
+                    onRequest={() => setConfirmDeleteReview(true)}
+                    onCancel={() => setConfirmDeleteReview(false)}
+                    onConfirm={() => executeDeleteFile(openedReview.rel_path, 'review')}
+                  />
+                </div>
+              </div>
+
+              <div className="px-5 py-4">
+                <div className="pb-3.5 mb-4 border-b border-zinc-200/75 dark:border-border/60">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <h2 className="text-[16px] font-semibold text-foreground">{openedReview.title}</h2>
+                    <span
+                      className={`inline-flex items-center gap-1.5 text-[11px] font-mono font-medium ${
+                        (VERDICT_META[openedReview.verdict] || { textClass: 'text-muted' }).textClass
+                      }`}
                     >
-                      维护详情卡
-                    </Button>
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          (VERDICT_META[openedReview.verdict] || { dotClass: 'bg-zinc-400' }).dotClass
+                        }`}
+                      />
+                      {openedReview.verdict}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[10.5px] font-mono text-muted">
+                    <span>{openedReview.repo}</span>
+                    <span>·</span>
+                    <span>Round {openedReview.round}</span>
+                    <span>·</span>
+                    <span>{formatReviewTime(openedReview.timestamp, openedReview.modified_ts)}</span>
+                    {openedReview.duration_sec > 0 && (
+                      <>
+                        <span>·</span>
+                        <span>{openedReview.duration_sec.toFixed(1)}s</span>
+                      </>
+                    )}
+                    {openedReview.session_id && (
+                      <>
+                        <span>·</span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(openedReview.session_id);
+                            pushToast('已复制 Session ID', 'success');
+                          }}
+                          className="hover:text-foreground underline decoration-dotted cursor-pointer"
+                        >
+                          Session {openedReview.session_id.slice(0, 12)}...
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        </div>
+
+                {loadingReviewBody ? (
+                  <div className="py-12 text-center text-[11.5px] text-muted">正在加载终审报告...</div>
+                ) : reviewSourceMode === 'raw' ? (
+                  <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-zinc-800 dark:text-zinc-200 select-text">
+                    {displayedReviewBody || '（空报告）'}
+                  </pre>
+                ) : (
+                  <MarkdownArticle content={displayedReviewBody || '（空报告）'} />
+                )}
+              </div>
+            </section>
+          )}
+
+          {activeReviewView === 'spec' && (
+            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex items-center justify-between gap-2">
+                <button
+                  onClick={() => setActiveReviewView('list')}
+                  className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-muted hover:text-foreground transition-colors cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>返回终审记录</span>
+                </button>
+                <span className="font-mono text-[11px] text-muted">skills/dsh-review/SKILL.md</span>
+              </div>
+
+              <div className="px-5 py-4">
+                {loadingSpec ? (
+                  <div className="py-12 text-center text-[11.5px] text-muted">正在加载规约文档...</div>
+                ) : (
+                  <MarkdownArticle content={stripReviewFrontmatter(specContent)} />
+                )}
+              </div>
+            </section>
+          )}
+        </>
       )}
 
       {/* ================================================================= */}
-      {/* Tab 4: 决策模型与插件参数配置 (config.json) */}
+      {/* Tab 3: 仓库地图 (同款 rounded-2xl + gap-3 卡片与原位阅读编辑) */}
+      {/* ================================================================= */}
+      {subTab === 'projects' && (
+        <>
+          {!activeProjectItem ? (
+            <div className="flex flex-col gap-3">
+              {/* 全局索引 2 列 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {[
+                  {
+                    title: '宿主机仓库总表',
+                    relPath: 'repos.md',
+                    desc: '记录宿主机全量仓库物理路径、角色定位与详情索引路径',
+                  },
+                  {
+                    title: '跨仓依赖关系',
+                    relPath: 'repos/relations.md',
+                    desc: '定义仓库间的服务调用、共享插件与部署耦合方向',
+                  },
+                ].map((item) => (
+                  <button
+                    key={item.relPath}
+                    onClick={() => openProjectFile(item.title, item.relPath)}
+                    className="text-left rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 hover:border-zinc-300 dark:hover:border-zinc-600 px-4 py-3.5 transition-colors cursor-pointer flex flex-col gap-1"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-[13px] font-semibold text-foreground">{item.title}</span>
+                      <span className="text-[10.5px] font-mono text-muted">{item.relPath}</span>
+                    </div>
+                    <p className="text-[11.5px] text-muted leading-snug">{item.desc}</p>
+                  </button>
+                ))}
+              </div>
+
+              {/* 已登记仓库 */}
+              <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-[12.5px] font-semibold text-foreground">已登记仓库</h2>
+                    <span className="text-[10.5px] font-mono text-muted">{overview?.projects.length || 0}</span>
+                  </div>
+                  <span className="text-[11px] text-muted">点击查看详情卡或复制物理路径</span>
+                </div>
+
+                <div className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {(overview?.projects || []).map((proj) => (
+                    <div
+                      key={proj.code}
+                      onClick={() => openProjectCard(proj)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openProjectCard(proj);
+                        }
+                      }}
+                      className="rounded-xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/75 hover:border-zinc-300 dark:hover:border-zinc-600 p-3.5 transition-colors cursor-pointer flex flex-col justify-between gap-2.5 min-h-[110px]"
+                    >
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-[13px] font-semibold text-foreground truncate">{proj.code}</span>
+                          <span className="text-[10px] font-mono text-muted shrink-0">
+                            {ROLE_LABELS[proj.role] || proj.role.toUpperCase()}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted leading-relaxed line-clamp-2">{proj.summary}</p>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-zinc-200/60 dark:border-border/50 text-[10px] font-mono text-muted">
+                        <span className="truncate">{proj.physical_path}</span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(proj.physical_path);
+                            pushToast(`已复制 ${proj.code} 物理路径`, 'success');
+                          }}
+                          title="复制物理路径"
+                          className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-surface-secondary text-muted hover:text-foreground shrink-0 cursor-pointer"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          ) : (
+            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden flex flex-col">
+              <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <button
+                    onClick={requestExitProject}
+                    className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-muted hover:text-foreground transition-colors cursor-pointer shrink-0"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>返回仓库地图</span>
+                  </button>
+                  <span className="text-zinc-300 dark:text-zinc-700">/</span>
+                  <span className="font-mono text-[11.5px] font-medium text-foreground truncate">
+                    {activeProjectItem.kind === 'file'
+                      ? activeProjectItem.relPath
+                      : activeProjectItem.project.detail_rel_path || activeProjectItem.project.code}
+                  </span>
+                  {projectDocPath &&
+                    (isProjectDirty ? (
+                      <span className="text-[10.5px] text-amber-600 dark:text-amber-400 shrink-0">未保存</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[10.5px] text-emerald-600 dark:text-emerald-400 shrink-0">
+                        <Check className="w-3 h-3" />
+                        已同步
+                      </span>
+                    ))}
+                </div>
+
+                {projectDocPath && (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="inline-flex items-center rounded-lg bg-zinc-100 dark:bg-surface-secondary p-0.5 text-[11px]">
+                      <button
+                        onClick={() => setProjectMode('preview')}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                          projectMode === 'preview'
+                            ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                            : 'text-muted hover:text-foreground'
+                        }`}
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>阅读</span>
+                      </button>
+                      <button
+                        onClick={() => setProjectMode('edit')}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                          projectMode === 'edit'
+                            ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                            : 'text-muted hover:text-foreground'
+                        }`}
+                      >
+                        <Edit3 className="w-3 h-3" />
+                        <span>编辑</span>
+                      </button>
+                    </div>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      isPending={loadingProjectDoc}
+                      className="h-7 px-2.5 rounded-lg text-[11px]"
+                      onPress={() =>
+                        activeProjectItem.kind === 'file'
+                          ? openProjectFile(activeProjectItem.title, activeProjectItem.relPath)
+                          : openProjectCard(activeProjectItem.project)
+                      }
+                    >
+                      重载
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      isPending={savingProjectDoc}
+                      isDisabled={!isProjectDirty && !savingProjectDoc}
+                      className="h-7 px-3 rounded-lg text-[11px]"
+                      onPress={handleSaveProjectDoc}
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>保存 (Ctrl+S)</span>
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {pendingProjectExit && (
+                <UnsavedInlineBar
+                  busy={savingProjectDoc}
+                  onSaveAndContinue={async () => {
+                    const ok = await handleSaveProjectDoc();
+                    if (ok) {
+                      setPendingProjectExit(false);
+                      setActiveProjectItem(null);
+                      setProjectDocPath('');
+                    }
+                  }}
+                  onDiscardAndContinue={() => {
+                    setPendingProjectExit(false);
+                    setActiveProjectItem(null);
+                    setProjectDocPath('');
+                  }}
+                  onCancel={() => setPendingProjectExit(false)}
+                />
+              )}
+
+              {activeProjectItem.kind === 'repo' && (
+                <div className="px-4 py-2.5 bg-zinc-50/70 dark:bg-surface-secondary/25 border-b border-zinc-200/75 dark:border-border/60 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="font-semibold text-foreground">{activeProjectItem.project.code}</span>
+                    <span className="font-mono text-[10px] text-muted">
+                      {ROLE_LABELS[activeProjectItem.project.role] || activeProjectItem.project.role.toUpperCase()}
+                    </span>
+                    <span className="text-muted">· {activeProjectItem.project.summary}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(activeProjectItem.project.physical_path);
+                      pushToast(`已复制 ${activeProjectItem.project.code} 物理路径`, 'success');
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/70 font-mono text-[10px] text-foreground hover:bg-zinc-100 dark:hover:bg-surface-secondary cursor-pointer"
+                  >
+                    <span>{activeProjectItem.project.physical_path}</span>
+                    <Copy className="w-3 h-3 text-muted" />
+                  </button>
+                </div>
+              )}
+
+              <div className="px-5 py-4">
+                {!projectDocPath ? (
+                  <div className="py-16 flex flex-col items-center justify-center gap-2 text-muted text-[11.5px]">
+                    <FolderGit2 className="w-6 h-6 opacity-40" />
+                    <span>该仓库暂未在 repos/ 下配置独立详情卡</span>
+                  </div>
+                ) : projectMode === 'preview' ? (
+                  <MarkdownArticle content={projectDocContent} />
+                ) : (
+                  <textarea
+                    value={projectDocContent}
+                    onChange={(e) => setProjectDocContent(e.target.value)}
+                    spellCheck={false}
+                    className="w-full min-h-[520px] font-mono text-[12px] text-foreground dark:text-slate-100 bg-transparent focus:outline-none resize-y leading-relaxed"
+                  />
+                )}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+
+      {/* ================================================================= */}
+      {/* Tab 4: 模型参数 (与映射页同款 rounded-2xl 容器) */}
       {/* ================================================================= */}
       {subTab === 'config' && (
-        <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 p-4 max-w-2xl">
-          <div className="flex items-center justify-between pb-3 border-b border-border/60">
+        <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden max-w-2xl">
+          <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex items-center justify-between gap-2">
             <div>
-              <h3 className="text-[15px] font-semibold text-foreground">决策裁决器运行时参数 (config.json)</h3>
-              <p className="text-[11px] text-muted mt-0.5">
-                调整 `/judge` 分类器模型、置信阈值与请求超时，保存后立即写入插件目录
-              </p>
+              <h2 className="text-[12.5px] font-semibold text-foreground">Decisions API 裁决参数 (config.json)</h2>
             </div>
             <Button
               size="sm"
               variant="primary"
               isPending={savingConfig}
-              className="rounded-xl text-[11px]"
+              className="h-7 px-3 rounded-lg text-[11px]"
               onPress={handleSaveConfig}
             >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>保存 config.json</span>
+              <Save className="w-3.5 h-3.5" />
+              <span>保存配置</span>
             </Button>
           </div>
 
-          <div className="flex flex-col gap-3.5 mt-4 text-[12px]">
+          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3.5 text-[12px]">
             <TextField value={cfgModel} onChange={setCfgModel}>
-              <Label className="text-[11px] font-medium text-foreground">决策模型名称 (model)</Label>
+              <Label className="text-[11px] font-medium text-foreground">裁决模型 (Model)</Label>
               <InputGroup className="mt-1">
                 <InputGroup.Input placeholder="gemini-decision-1" className="font-mono text-[11.5px]" />
               </InputGroup>
             </TextField>
 
-            <TextField value={cfgEndpoint} onChange={setCfgEndpoint}>
-              <Label className="text-[11px] font-medium text-foreground">裁决 API 端点 (endpoint)</Label>
+            <TextField value={cfgThreshold} onChange={setCfgThreshold}>
+              <Label className="text-[11px] font-medium text-foreground">置信度阈值 (Confidence Threshold)</Label>
               <InputGroup className="mt-1">
-                <InputGroup.Input placeholder="https://generativelanguage.googleapis.com/..." className="font-mono text-[11.5px]" />
+                <InputGroup.Input placeholder="0.85" className="font-mono text-[11.5px]" />
               </InputGroup>
             </TextField>
 
-            <div className="grid grid-cols-2 gap-3">
-              <TextField value={cfgTimeout} onChange={setCfgTimeout}>
-                <Label className="text-[11px] font-medium text-foreground">超时时间 (timeout_seconds)</Label>
-                <InputGroup className="mt-1">
-                  <InputGroup.Input type="number" className="font-mono text-[11.5px]" />
-                </InputGroup>
-              </TextField>
+            <TextField value={cfgEndpoint} onChange={setCfgEndpoint} className="md:col-span-2">
+              <Label className="text-[11px] font-medium text-foreground">Decisions API Endpoint</Label>
+              <InputGroup className="mt-1">
+                <InputGroup.Input
+                  placeholder="https://generativelanguage.googleapis.com/..."
+                  className="font-mono text-[11.5px]"
+                />
+              </InputGroup>
+            </TextField>
 
-              <TextField value={cfgThreshold} onChange={setCfgThreshold}>
-                <Label className="text-[11px] font-medium text-foreground">置信度阈值 (confidence_threshold)</Label>
-                <InputGroup className="mt-1">
-                  <InputGroup.Input type="number" step="0.05" min="0.1" max="1" className="font-mono text-[11.5px]" />
-                </InputGroup>
-              </TextField>
-            </div>
+            <TextField value={cfgTimeout} onChange={setCfgTimeout}>
+              <Label className="text-[11px] font-medium text-foreground">请求超时（秒）</Label>
+              <InputGroup className="mt-1">
+                <InputGroup.Input placeholder="15" className="font-mono text-[11.5px]" />
+              </InputGroup>
+            </TextField>
 
             <TextField value={cfgApiKey} onChange={setCfgApiKey}>
-              <Label className="text-[11px] font-medium text-foreground">API Key 引用变量 (api_key)</Label>
+              <Label className="text-[11px] font-medium text-foreground">API Key / Env 变量表达式</Label>
               <InputGroup className="mt-1">
                 <InputGroup.Input placeholder="${GEMINI_API_KEY}" className="font-mono text-[11.5px]" />
               </InputGroup>
@@ -1017,151 +1788,6 @@ export function AgentMindView({ callTauri, pushToast, isStandalone = false }: Ag
           </div>
         </section>
       )}
-
-      {/* ================================================================= */}
-      {/* 新建规则模态框 */}
-      {/* ================================================================= */}
-      <Modal.Backdrop isOpen={isNewRuleOpen} onOpenChange={setIsNewRuleOpen} variant="blur">
-        <Modal.Container size="md" placement="center">
-          <Modal.Dialog className="rounded-2xl border border-border bg-overlay p-5 shadow-overlay">
-            <Modal.Header className="flex items-center gap-2.5 pb-3 border-b border-border/60">
-              <div className="w-7 h-7 rounded-xl bg-blue-600 text-white flex items-center justify-center">
-                <Plus className="w-4 h-4" />
-              </div>
-              <Modal.Heading className="text-[14px] font-semibold text-foreground">
-                新建 Agent Mind 规则文档
-              </Modal.Heading>
-              <Modal.CloseTrigger />
-            </Modal.Header>
-
-            <Modal.Body className="flex flex-col gap-3.5 py-4 text-[12px]">
-              <TextField value={newRuleName} onChange={setNewRuleName}>
-                <Label className="text-[11px] font-medium text-foreground">规则文件名 (默认创建在 rules/ 下)</Label>
-                <InputGroup className="mt-1">
-                  <InputGroup.Input placeholder="例如: redline-security.md" className="font-mono text-[11.5px]" />
-                </InputGroup>
-              </TextField>
-
-              <TextField value={newRuleDesc} onChange={setNewRuleDesc}>
-                <Label className="text-[11px] font-medium text-foreground">一句话规则定位说明</Label>
-                <InputGroup className="mt-1">
-                  <InputGroup.Input placeholder="例如: 鉴权与数据库物理表访问安全红线" className="text-[11.5px]" />
-                </InputGroup>
-              </TextField>
-            </Modal.Body>
-
-            <Modal.Footer className="pt-3 border-t border-border/60 flex justify-end gap-2">
-              <Button size="sm" variant="ghost" className="rounded-xl text-[11px]" onPress={() => setIsNewRuleOpen(false)}>
-                取消
-              </Button>
-              <Button
-                size="sm"
-                variant="primary"
-                isPending={creatingRule}
-                className="rounded-xl text-[11px]"
-                onPress={handleCreateRule}
-              >
-                立即创建并编辑
-              </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
-
-      {/* ================================================================= */}
-      {/* 删除扩展文件确认框 */}
-      {/* ================================================================= */}
-      <Modal.Backdrop
-        isOpen={!!deleteFileTarget}
-        onOpenChange={(open) => !open && setDeleteFileTarget(null)}
-        variant="blur"
-      >
-        <Modal.Container size="sm" placement="center">
-          <Modal.Dialog className="rounded-2xl border border-border bg-overlay p-5 shadow-overlay">
-            <Modal.Header className="pb-2">
-              <Modal.Heading className="text-[14px] font-semibold text-foreground">
-                确认删除规则文件
-              </Modal.Heading>
-            </Modal.Header>
-            <Modal.Body className="py-2 text-[11.5px] text-muted leading-relaxed">
-              确定要从插件目录删除以下文件吗？
-              <div className="mt-2 p-2 rounded-xl bg-surface-secondary font-mono text-[10.5px] text-foreground break-all">
-                {deleteFileTarget}
-              </div>
-            </Modal.Body>
-            <Modal.Footer className="pt-3 flex justify-end gap-2">
-              <Button size="sm" variant="ghost" className="rounded-xl text-[11px]" onPress={() => setDeleteFileTarget(null)}>
-                取消
-              </Button>
-              <Button size="sm" variant="danger" className="rounded-xl text-[11px]" onPress={confirmDeleteFile}>
-                确认删除
-              </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
-
-      {/* ================================================================= */}
-      {/* 快捷文档弹窗直编器 (用于项目地图卡片 / manifest / 技能详情) */}
-      {/* ================================================================= */}
-      <Modal.Backdrop
-        isOpen={!!quickModal}
-        onOpenChange={(open) => !open && setQuickModal(null)}
-        variant="blur"
-      >
-        <Modal.Container size="lg" placement="center">
-          <Modal.Dialog className="rounded-2xl border border-border bg-overlay p-5 shadow-overlay w-[min(90vw,780px)] max-w-[780px]">
-            <Modal.Header className="flex items-center justify-between gap-2 pb-3 border-b border-border/60">
-              <div className="flex items-center gap-2 min-w-0">
-                <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                <Modal.Heading className="text-[13.5px] font-semibold font-mono text-foreground truncate">
-                  {quickModal?.relPath}
-                </Modal.Heading>
-                {quickModal && quickModal.content !== quickModal.saved ? (
-                  <Chip size="sm" variant="soft" color="warning" className="h-5 text-[9.5px]">
-                    <Chip.Label>未保存</Chip.Label>
-                  </Chip>
-                ) : (
-                  <Chip size="sm" variant="soft" color="success" className="h-5 text-[9.5px]">
-                    <Chip.Label>已同步</Chip.Label>
-                  </Chip>
-                )}
-              </div>
-              <Modal.CloseTrigger />
-            </Modal.Header>
-
-            <Modal.Body className="py-3">
-              <div className="rounded-xl border border-border/80 bg-surface dark:bg-[#0D1117] text-foreground dark:text-slate-100 p-3.5 flex flex-col h-[380px]">
-                <textarea
-                  value={quickModal?.content || ''}
-                  onChange={(e) =>
-                    setQuickModal((prev) => (prev ? { ...prev, content: e.target.value } : null))
-                  }
-                  spellCheck={false}
-                  className="flex-1 w-full font-mono text-[12px] text-foreground dark:text-slate-100 bg-transparent focus:outline-none resize-none leading-relaxed"
-                />
-              </div>
-            </Modal.Body>
-
-            <Modal.Footer className="pt-3 border-t border-border/60 flex justify-end gap-2">
-              <Button size="sm" variant="ghost" className="rounded-xl text-[11px]" onPress={() => setQuickModal(null)}>
-                关闭
-              </Button>
-              <Button
-                size="sm"
-                variant="primary"
-                isPending={quickModal?.saving}
-                isDisabled={!quickModal || quickModal.content === quickModal.saved}
-                className="rounded-xl text-[11px]"
-                onPress={saveQuickModal}
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>保存修改</span>
-              </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
     </div>
   );
 }
