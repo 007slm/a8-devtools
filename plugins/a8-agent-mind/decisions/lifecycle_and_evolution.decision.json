@@ -18,10 +18,10 @@
   "file_patterns": [],
   "question": {
     "type": "choice",
-    "instructions": "Evaluate compliance with Evolution Contract: zero unapproved backward compatibility, removal of dead/deprecated code, and clean deprecation.",
+    "instructions": "Evaluate compliance with Evolution Contract: zero unapproved backward compatibility, removal of dead/deprecated code, clean deprecation, and consistency with any Documented Design Context.",
     "criteria": {
-      "passed": "Complies with clean deprecation. Dead code, deprecated endpoints or legacy fallbacks are deleted rather than preserved secretly. No unapproved backward-compatibility layers.",
-      "violated": "Violates rule: unapproved deprecated code, zombie backward-compatible fallback, dual-track compatibility or hidden compatibility layers introduced."
+      "passed": "Complies with clean deprecation and documented architecture. Dead code, deprecated endpoints, and legacy fallbacks are deleted rather than preserved silently. Security redaction/sanitization guards, fail-open telemetry preservation, and intentional trade-offs explained in Documented Design Context (AGENTS.md/docs/) are acceptable when they do not add unapproved compatibility layers.",
+      "violated": "Violates rule: unapproved deprecated code, zombie backward-compatible fallback, dual-track compatibility layer, or implementation that contradicts approved architecture in docs/."
     }
   },
   "why": "核心正交架构红线：任何作为向后兼容保留的逻辑必须经用户明确批准后方可保留；旧模型退役必须执行全生命周期逆向清缴。"

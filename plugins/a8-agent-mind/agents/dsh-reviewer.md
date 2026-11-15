@@ -2,12 +2,9 @@
 name: dsh-reviewer
 description: 调度本机 DeepSeek Harness (DSH) 资深架构审查同事，对代码、修改、架构进行静态因果链、全生命周期闭环与设计缺陷终审，并自动归档至 A8 Agent Mind Dashboard。
 model: inherit
-tools:
-  - run_command
-  - read_file
-  - write_file
-  - edit_file
 subagent: true
+mainAgent: false
+tools: [run_command, read_file, write_file, edit_file, manage_task, search_web]
 ---
 
 # DeepSeek Harness (DSH) 架构审查智能体 (`dsh-reviewer`)
@@ -24,9 +21,9 @@ subagent: true
 2. **外部门禁先行，DSH 沙箱禁止跑 Shell**：
    - Windows 下 DSH 沙箱受 ACL 限制，若 DSH 在沙箱内尝试执行 `pwsh` / `cmd` 会反复触发 `0xC0000142` 并拖慢 5~10 分钟；
    - 必须由你在宿主机侧先行核验编译、单测与 Lint 门禁，将实测结果写入 Prompt，并在 Prompt 中明令要求 DSH **仅使用只读文件读取/检索工具审核，禁止调用任何 Shell / 编译命令**。
-3. **聚焦深层因果链，跳过机械检查噪声**：
+3. **聚焦深层因果链，尊重 `docs/` 既定设计权衡并跳过机械检查噪声**：
    - 凡仓库已存在 `scripts/lints/` 覆盖的机械性规范检查，已在宿主门禁先行跑通，DSH 不再浪费时间重复核对简单静态规约；
-   - `review.ps1` 默认以 `reasoningEffort = medium` 启动并自动预打包 `git status` / `git diff --stat`（大重构或显式要求深审时传 `-Deep` 切换 `high`）。
+   - `review.ps1` 默认以 `reasoningEffort = medium` 启动，并自动预打包 `git status` / `git diff --stat` 与关联 `AGENTS.md` / `docs/` 设计文档摘录（大重构或显式要求深审时传 `-Deep` 切换 `high`）。对于已在 `docs/` SPEC/ADR 中明确论证的架构权衡，只要代码实现与其一致，严禁重复判为 `VIOLATED`。
 4. **跨仓自适应 & 双通道输出**：
    - 严禁硬编码单一仓库路径或会话 ID，调用脚本时显式传入 `-WorkspaceDir` 与 `-Repo`；
    - 每次审查同时完成**主会话返回**（纯净结构化结论）与 **Dashboard 归档**（按项目子目录隔离存储于 `<plugin_dir>/reviews/<repo>/*.md`，已配置 `.gitignore` 忽略）。

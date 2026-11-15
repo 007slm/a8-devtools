@@ -21,6 +21,7 @@ import {
   History,
   Lock,
   Network,
+  Play,
   Plus,
   RotateCw,
   Save,
@@ -63,6 +64,12 @@ export interface DecisionEntry {
   repo: string;
   category: string;
   enabled: boolean;
+  retired_at?: string;
+  retired_reason?: string;
+  eval_count?: number;
+  hit_count?: number;
+  last_eval_ts?: number;
+  last_hit_ts?: number;
   triggers: string[];
   file_patterns: string[];
   instructions: string;
@@ -87,6 +94,10 @@ export interface LintItem {
   abs_path: string;
   description: string;
   line_number: number;
+  eval_count?: number;
+  hit_count?: number;
+  last_eval_ts?: number;
+  last_hit_ts?: number;
 }
 
 export interface GovernanceSummary {
@@ -157,6 +168,8 @@ export interface HarnessMetricEvent {
   confidence: number;
   docs_choice: string;
   lesson_choice: string;
+  evaluated_ids?: string[];
+  violated_ids?: string[];
 }
 
 export interface DailyHarnessTrend {
@@ -690,6 +703,7 @@ export function AgentMindView({
   const [selectedLint, setSelectedLint] = useState<LintItem | null>(null);
   const [lintSourceText, setLintSourceText] = useState('');
   const [loadingLintSource, setLoadingLintSource] = useState(false);
+  const [runningLintRepo, setRunningLintRepo] = useState<string | null>(null);
 
   // Tab 2: Reviews list vs inline detail view
   const [reviewFilterVerdict, setReviewFilterVerdict] = useState<'ALL' | 'PASSED' | 'VIOLATED' | 'REQUIRES_APPROVAL'>('ALL');
@@ -719,7 +733,7 @@ export function AgentMindView({
   const [updatingProposalStatus, setUpdatingProposalStatus] = useState<string | null>(null);
 
   // Tab 4: Harness observability filter
-  const [telemetryFilter, setTelemetryFilter] = useState<'ALL' | 'stop_hook' | 'a8_judge' | 'alerts'>('ALL');
+  const [telemetryFilter, setTelemetryFilter] = useState<'ALL' | 'stop_hook' | 'a8_judge' | 'repo_lint' | 'alerts'>('ALL');
 
   // Tab 3: Projects grid vs inline detail/editor view
   const [activeProjectItem, setActiveProjectItem] = useState<
@@ -930,13 +944,25 @@ export function AgentMindView({
   const handleToggleDecisionEnabled = async (item: DecisionEntry) => {
     if (!item.editable || item.parse_error) return;
     const repoCode = item.scope === 'global' ? '' : item.repo;
+    const retiring = item.enabled;
     try {
       const raw = await callTauri<string>('read_agent_mind_file', {
         relPath: item.rel_path,
         repoCode: repoCode || undefined,
       });
       const parsed = JSON.parse(raw || '{}');
-      parsed.enabled = !item.enabled;
+      parsed.enabled = !retiring;
+      if (retiring) {
+        const now = new Date();
+        const ymd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        parsed.retired_at = ymd;
+        if (!parsed.retired_reason) {
+          parsed.retired_reason = '看板一键退役';
+        }
+      } else {
+        delete parsed.retired_at;
+        delete parsed.retired_reason;
+      }
       const nextContent = `${JSON.stringify(parsed, null, 2)}\n`;
       await callTauri('save_agent_mind_file', {
         relPath: item.rel_path,
@@ -951,7 +977,7 @@ export function AgentMindView({
         setDecisionEditorContent(nextContent);
         setDecisionSavedContent(nextContent);
       }
-      pushToast(`${item.name} 已${parsed.enabled ? '启用' : '停用'}`, 'success');
+      pushToast(`${item.name} ${retiring ? '已退役' : '已恢复启用'}`, 'success');
       await loadOverview(true);
     } catch (e: any) {
       pushToast(`切换 Decision 状态失败: ${e}`, 'danger');
@@ -1038,6 +1064,37 @@ export function AgentMindView({
       }
     },
     [callTauri, pushToast]
+  );
+
+  const handleRunRepoLints = useCallback(
+    async (repoCode: string) => {
+      if (!repoCode || runningLintRepo) return;
+      setRunningLintRepo(repoCode);
+      try {
+        const res = await callTauri<{
+          ok: boolean;
+          repo: string;
+          evaluated_ids?: string[];
+          violated_ids?: string[];
+          error?: string;
+        }>('run_repo_lints', { repoCode });
+        await loadOverview(true);
+        if (res?.ok) {
+          pushToast(`${repoCode} Lint 全绿通过（检测 ${res.evaluated_ids?.length || 0} 项）`, 'success');
+        } else {
+          const vCount = res?.violated_ids?.length || 0;
+          pushToast(
+            res?.error || `${repoCode} Lint 拦截 ${vCount} 项违规`,
+            'danger'
+          );
+        }
+      } catch (e: any) {
+        pushToast(`执行 Lint 失败: ${e}`, 'danger');
+      } finally {
+        setRunningLintRepo(null);
+      }
+    },
+    [callTauri, loadOverview, pushToast, runningLintRepo]
   );
 
   // Initial load: 总览数据 + 默认直接加载主规则 rules/mind-rules.md
@@ -1718,6 +1775,7 @@ export function AgentMindView({
     return events.filter((ev) => {
       if (telemetryFilter === 'stop_hook') return ev.source === 'stop_hook';
       if (telemetryFilter === 'a8_judge') return ev.source === 'a8_judge';
+      if (telemetryFilter === 'repo_lint') return ev.source === 'repo_lint';
       if (telemetryFilter === 'alerts') {
         const v = (ev.verdict || '').toUpperCase();
         const m = (ev.mode || '').toUpperCase();
@@ -1726,6 +1784,48 @@ export function AgentMindView({
       return true;
     });
   }, [telemetry, telemetryFilter]);
+
+  const checkerPerfRows = useMemo(() => {
+    const decisions = overview?.decisions || [];
+    const lints = overview?.lints || [];
+    const rows = [
+      ...decisions.map((d) => ({
+        kind: 'decision' as const,
+        key: `decision::${d.scope}::${d.repo}::${d.id}`,
+        id: d.id,
+        name: d.name,
+        scopeLabel: d.scope === 'global' ? '全局' : d.repo,
+        enabled: d.enabled,
+        retired_at: d.retired_at,
+        eval_count: d.eval_count ?? 0,
+        hit_count: d.hit_count ?? 0,
+        last_eval_ts: d.last_eval_ts ?? 0,
+        decision: d,
+        lint: undefined as LintItem | undefined,
+      })),
+      ...lints.map((l) => ({
+        kind: 'lint' as const,
+        key: `lint::${l.repo}::${l.rel_path}::${l.id}`,
+        id: l.id,
+        name: l.name,
+        scopeLabel: l.repo,
+        enabled: true,
+        retired_at: '',
+        eval_count: l.eval_count ?? 0,
+        hit_count: l.hit_count ?? 0,
+        last_eval_ts: l.last_eval_ts ?? 0,
+        decision: undefined as DecisionEntry | undefined,
+        lint: l,
+      })),
+    ];
+    return rows.sort(
+      (a, b) =>
+        b.hit_count - a.hit_count ||
+        b.eval_count - a.eval_count ||
+        b.last_eval_ts - a.last_eval_ts ||
+        a.id.localeCompare(b.id)
+    );
+  }, [overview?.decisions, overview?.lints]);
 
   const chartTooltipBase = useMemo(
     () => ({
@@ -2544,14 +2644,37 @@ export function AgentMindView({
                                   e.stopPropagation();
                                   handleToggleDecisionEnabled(d);
                                 }}
+                                title={d.enabled ? '点击一键退役' : '点击恢复启用'}
                                 className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-medium border transition-colors cursor-pointer ${
                                   d.enabled
-                                    ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30'
-                                    : 'bg-zinc-100 dark:bg-surface-secondary text-muted border-zinc-200 dark:border-border/70'
+                                    ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/15'
+                                    : 'bg-zinc-100 dark:bg-surface-secondary text-muted border-zinc-200 dark:border-border/70 hover:text-foreground'
                                 }`}
                               >
-                                {d.enabled ? '已启用' : '已停用'}
+                                {d.enabled ? '使用中' : '已退役'}
                               </button>
+                            )}
+                          </div>
+
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                            <span
+                              className={`text-[9.5px] font-mono px-1.5 py-[1px] rounded border ${
+                                (d.hit_count ?? 0) > 0
+                                  ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/25'
+                                  : 'bg-zinc-50 dark:bg-surface border-zinc-200/80 dark:border-border/60 text-muted'
+                              }`}
+                            >
+                              评估 {d.eval_count ?? 0} · 拦截 {d.hit_count ?? 0}
+                            </span>
+                            {d.enabled && (d.eval_count ?? 0) >= 5 && (d.hit_count ?? 0) === 0 && (
+                              <span className="text-[9.5px] px-1.5 py-[1px] rounded bg-amber-500/8 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                                0 拦截 · 可考虑退役
+                              </span>
+                            )}
+                            {!d.enabled && d.retired_at && (
+                              <span className="text-[9.5px] font-mono text-muted">
+                                退役于 {d.retired_at}
+                              </span>
                             )}
                           </div>
 
@@ -2649,6 +2772,17 @@ export function AgentMindView({
                             </button>
                           </div>
 
+                          {activeDecisionEntry.editable && !activeDecisionEntry.parse_error && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              className="h-7 px-2.5 rounded-lg text-[11px]"
+                              onPress={() => handleToggleDecisionEnabled(activeDecisionEntry)}
+                            >
+                              {activeDecisionEntry.enabled ? '退役' : '恢复'}
+                            </Button>
+                          )}
+
                           {canDeleteSelectedDecision && selectedDecisionKey && (
                             <InlineDeleteButton
                               confirming={confirmDeleteDecision}
@@ -2698,6 +2832,36 @@ export function AgentMindView({
                                 解析错误：{activeDecisionEntry.parse_error}
                               </div>
                             )}
+
+                            {!activeDecisionEntry.enabled && (
+                              <div className="rounded-xl bg-zinc-100/90 dark:bg-surface-secondary/50 border border-zinc-200/85 dark:border-border/70 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[11.5px]">
+                                <span className="text-muted">
+                                  已退役{activeDecisionEntry.retired_at ? ` (${activeDecisionEntry.retired_at})` : ''}
+                                  {activeDecisionEntry.retired_reason ? ` · ${activeDecisionEntry.retired_reason}` : ''}
+                                </span>
+                                {activeDecisionEntry.editable && (
+                                  <button
+                                    onClick={() => handleToggleDecisionEnabled(activeDecisionEntry)}
+                                    className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                                  >
+                                    恢复启用
+                                  </button>
+                                )}
+                              </div>
+                            )}
+
+                            <div className="rounded-xl border border-zinc-200/80 dark:border-border/70 px-3 py-2 bg-zinc-50/40 dark:bg-surface-secondary/15 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                              <span className="font-mono text-muted">
+                                累计评估 {activeDecisionEntry.eval_count ?? 0} 次 · 累计拦截 {activeDecisionEntry.hit_count ?? 0} 次
+                              </span>
+                              <span className="font-mono text-muted">
+                                {activeDecisionEntry.last_hit_ts
+                                  ? `最近拦截 ${formatReviewTime('', activeDecisionEntry.last_hit_ts)}`
+                                  : activeDecisionEntry.last_eval_ts
+                                    ? `最近评估 ${formatReviewTime('', activeDecisionEntry.last_eval_ts)}`
+                                    : '暂无评估记录'}
+                              </span>
+                            </div>
 
                             <div className="rounded-xl border border-zinc-200/80 dark:border-border/70 p-3 bg-zinc-50/50 dark:bg-surface-secondary/20">
                               <div className="text-[10.5px] font-semibold uppercase tracking-wide text-muted mb-1">
@@ -2784,10 +2948,30 @@ export function AgentMindView({
                 <span className="text-[11.5px] font-medium text-foreground">
                   项目确定性结构检查 ({filteredLints.length} 项 · scripts/lints/*.py)
                 </span>
-                <span className="inline-flex items-center gap-1 text-[10.5px] text-muted">
-                  <Lock className="w-3 h-3" />
-                  脚本只读展示（零误报机械防线，提交前自动运行）
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  {(selectedLint?.repo || filteredLints[0]?.repo) && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      isPending={runningLintRepo === (selectedLint?.repo || filteredLints[0]?.repo)}
+                      isDisabled={Boolean(runningLintRepo)}
+                      className="h-7 px-2.5 rounded-lg text-[11px]"
+                      onPress={() => {
+                        const targetRepo = selectedLint?.repo || filteredLints[0]?.repo;
+                        if (targetRepo) void handleRunRepoLints(targetRepo);
+                      }}
+                    >
+                      <Play className="w-3 h-3" />
+                      <span>
+                        运行 {selectedLint?.repo || filteredLints[0]?.repo} 检测
+                      </span>
+                    </Button>
+                  )}
+                  <span className="inline-flex items-center gap-1 text-[10.5px] text-muted">
+                    <Lock className="w-3 h-3" />
+                    脚本只读展示（零误报机械防线，提交前自动运行）
+                  </span>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-12 min-h-[520px]">
@@ -2820,8 +3004,19 @@ export function AgentMindView({
                               {lint.repo}
                             </span>
                           </div>
-                          <div className="text-[10.5px] font-mono text-muted mt-0.5">
-                            {lint.id} · {lint.rel_path}:{lint.line_number}
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10.5px] font-mono text-muted">
+                              {lint.id} · {lint.rel_path}:{lint.line_number}
+                            </span>
+                            <span
+                              className={`text-[9.5px] font-mono px-1.5 py-[1px] rounded border ${
+                                (lint.hit_count ?? 0) > 0
+                                  ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/25'
+                                  : 'bg-zinc-50 dark:bg-surface border-zinc-200/80 dark:border-border/60 text-muted'
+                              }`}
+                            >
+                              检测 {lint.eval_count ?? 0} · 拦截 {lint.hit_count ?? 0}
+                            </span>
                           </div>
                           {lint.description && (
                             <p className="mt-1.5 text-[11.5px] text-muted leading-relaxed">
@@ -2841,11 +3036,16 @@ export function AgentMindView({
                     </div>
                   ) : (
                     <>
-                      <div className="px-4 py-2.5 border-b border-zinc-200/80 dark:border-border/60 bg-zinc-50/40 dark:bg-surface-secondary/20 flex items-center justify-between gap-2">
+                      <div className="px-4 py-2.5 border-b border-zinc-200/80 dark:border-border/60 bg-zinc-50/40 dark:bg-surface-secondary/20 flex flex-wrap items-center justify-between gap-2">
                         <div className="text-[11px] font-mono text-foreground truncate">
                           {selectedLint.repo} / {selectedLint.rel_path}#L{selectedLint.line_number}
                         </div>
-                        <span className="text-[10.5px] font-mono text-muted">Python Read-Only</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10.5px] font-mono text-muted">
+                            检测 {selectedLint.eval_count ?? 0} · 拦截 {selectedLint.hit_count ?? 0}
+                          </span>
+                          <span className="text-[10.5px] font-mono text-muted">Python Read-Only</span>
+                        </div>
                       </div>
                       <div className="p-4 flex-1 overflow-auto max-h-[560px]">
                         {loadingLintSource ? (
@@ -3630,6 +3830,7 @@ export function AgentMindView({
                     { id: 'ALL', label: '全部' },
                     { id: 'stop_hook', label: 'Stop Hook' },
                     { id: 'a8_judge', label: 'a8-judge' },
+                    { id: 'repo_lint', label: 'Lint 检测' },
                     { id: 'alerts', label: '仅唤醒与告警' },
                   ] as const
                 ).map((item) => {
@@ -3697,6 +3898,14 @@ export function AgentMindView({
                       const detailParts = [
                         ev.docs_choice ? `docs=${ev.docs_choice}` : '',
                         ev.lesson_choice ? `lesson=${ev.lesson_choice}` : '',
+                        ev.evaluated_ids && ev.evaluated_ids.length > 0
+                          ? `检=${ev.evaluated_ids.length}`
+                          : '',
+                        ev.violated_ids && ev.violated_ids.length > 0
+                          ? `违=${ev.violated_ids.slice(0, 2).join(',')}${
+                              ev.violated_ids.length > 2 ? `(+${ev.violated_ids.length - 2})` : ''
+                            }`
+                          : '',
                       ].filter(Boolean);
                       return (
                         <tr
@@ -3747,6 +3956,117 @@ export function AgentMindView({
                         </tr>
                       );
                     })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {/* 3b. Decision & Lint 检查器命中追踪与退役治理 */}
+          <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-[12.5px] font-semibold text-foreground">
+                  检查器效能追踪 (Decision & Lint 命中排行)
+                </h3>
+                <span className="text-[10.5px] text-muted">
+                  长期 0 拦截的 Decision 可一键退役（保留 JSON 归档与历史，停止进入裁判配额）
+                </span>
+              </div>
+              <span className="text-[10.5px] font-mono text-muted">
+                共 {checkerPerfRows.length} 项
+              </span>
+            </div>
+
+            {checkerPerfRows.length === 0 ? (
+              <div className="py-10 text-center text-[11.5px] text-muted">
+                暂无可追踪的 Decision 或 Lint 检查器
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-[11.5px]">
+                  <thead>
+                    <tr className="bg-zinc-50/85 dark:bg-surface-secondary/40 border-b border-zinc-200/80 dark:border-border/60 text-[10.5px] text-muted">
+                      <th className="px-4 py-2 font-medium whitespace-nowrap">类型</th>
+                      <th className="px-3 py-2 font-medium whitespace-nowrap">检查器</th>
+                      <th className="px-3 py-2 font-medium whitespace-nowrap">归属</th>
+                      <th className="px-3 py-2 font-medium whitespace-nowrap">状态</th>
+                      <th className="px-3 py-2 font-medium whitespace-nowrap">评估 / 检测</th>
+                      <th className="px-3 py-2 font-medium whitespace-nowrap">拦截命中</th>
+                      <th className="px-4 py-2 font-medium text-right whitespace-nowrap">治理操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-200/65 dark:divide-border/50">
+                    {checkerPerfRows.map((row) => (
+                      <tr
+                        key={row.key}
+                        className="hover:bg-zinc-50/70 dark:hover:bg-surface-secondary/30 transition-colors"
+                      >
+                        <td className="px-4 py-2 whitespace-nowrap">
+                          <span className="px-1.5 py-0.5 rounded bg-surface-secondary/75 border border-zinc-200/75 dark:border-border/60 font-mono text-[10px] text-foreground">
+                            {row.kind === 'decision' ? 'Decision' : 'Lint'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 max-w-[280px]">
+                          <div className="text-[11.5px] font-medium text-foreground truncate">
+                            {row.name}
+                          </div>
+                          <div className="text-[10px] font-mono text-muted truncate">{row.id}</div>
+                        </td>
+                        <td className="px-3 py-2 font-mono text-[10.5px] text-muted whitespace-nowrap">
+                          {row.scopeLabel}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {row.kind === 'lint' ? (
+                            <span className="text-[10.5px] text-emerald-600 dark:text-emerald-400">
+                              机械常驻
+                            </span>
+                          ) : row.enabled ? (
+                            <span className="text-[10.5px] text-emerald-600 dark:text-emerald-400">
+                              使用中
+                            </span>
+                          ) : (
+                            <span className="text-[10.5px] text-muted">
+                              已退役{row.retired_at ? ` · ${row.retired_at}` : ''}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-[11px] text-foreground whitespace-nowrap">
+                          {row.eval_count}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-[11px] whitespace-nowrap">
+                          <span
+                            className={
+                              row.hit_count > 0
+                                ? 'font-semibold text-amber-600 dark:text-amber-400'
+                                : 'text-muted'
+                            }
+                          >
+                            {row.hit_count}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                          {row.decision && row.decision.editable && !row.decision.parse_error ? (
+                            <button
+                              onClick={() => void handleToggleDecisionEnabled(row.decision!)}
+                              className="px-2 py-0.5 rounded-md text-[10.5px] font-medium border border-zinc-200 dark:border-border/70 bg-white dark:bg-surface hover:bg-zinc-100 dark:hover:bg-surface-secondary text-foreground transition-colors cursor-pointer"
+                            >
+                              {row.enabled ? '退役' : '恢复'}
+                            </button>
+                          ) : row.lint ? (
+                            <button
+                              disabled={Boolean(runningLintRepo)}
+                              onClick={() => void handleRunRepoLints(row.lint!.repo)}
+                              className="px-2 py-0.5 rounded-md text-[10.5px] font-medium border border-zinc-200 dark:border-border/70 bg-white dark:bg-surface hover:bg-zinc-100 dark:hover:bg-surface-secondary text-foreground transition-colors cursor-pointer disabled:opacity-45"
+                            >
+                              {runningLintRepo === row.lint.repo ? '运行中...' : '运行检测'}
+                            </button>
+                          ) : (
+                            <span className="text-[10.5px] text-muted">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>

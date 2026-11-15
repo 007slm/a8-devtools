@@ -261,13 +261,145 @@ function Resolve-DshModelConfig {
     return @{ Provider = $provider; Model = $model }
 }
 
+function Get-DshDocumentedContext {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspacePath,
+        [string[]]$ChangedFiles = @()
+    )
+    $agentsPath = Join-Path $WorkspacePath "AGENTS.md"
+    if (-not (Test-Path $agentsPath)) {
+        return ""
+    }
+    $lines = [System.IO.File]::ReadAllLines($agentsPath, $Utf8NoBom)
+    $entries = New-Object System.Collections.Generic.List[object]
+    foreach ($raw in $lines) {
+        $line = $raw.Trim()
+        if (-not $line.StartsWith("|") -or $line -notmatch "docs/") {
+            continue
+        }
+        $cells = $line.Trim("|") -split "\|"
+        if ($cells.Count -lt 5) {
+            continue
+        }
+        $first = $cells[0].Trim()
+        if ($first -match "^[-:]+$") {
+            continue
+        }
+        $m = [regex]::Match($first, "(docs/[^\s`\)\]]+?\.md)", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if (-not $m.Success) {
+            continue
+        }
+        $relDoc = $m.Groups[1].Value -replace "\\", "/"
+        $docType = $cells[1].Trim('`', '*', ' ')
+        $status = $cells[3].Trim('`', '*', ' ')
+        $summary = ([regex]::Replace($cells[4], '`([^`]*)`', '$1')).Trim()
+        $assoc = if ($cells.Count -gt 5) { $cells[5] } else { "" }
+        $assocPaths = @()
+        foreach ($pm in [regex]::Matches($assoc, '`([^`]+)`')) {
+            $cand = $pm.Groups[1].Value.Trim().TrimEnd('/').Replace("\", "/").ToLowerInvariant()
+            if ($cand.Contains("/") -or $cand.Contains(".")) {
+                $assocPaths += $cand
+            }
+        }
+        $entries.Add([PSCustomObject]@{
+            RelPath = $relDoc
+            DocType = $docType
+            Status = $status
+            Summary = $summary
+            AssocPaths = $assocPaths
+        })
+    }
+    if ($entries.Count -eq 0) {
+        return ""
+    }
+
+    $normChanged = @()
+    foreach ($cf in $ChangedFiles) {
+        if (-not [string]::IsNullOrWhiteSpace($cf)) {
+            $normChanged += $cf.Trim().Replace("\", "/").TrimStart('.', '/').ToLowerInvariant()
+        }
+    }
+
+    $scored = New-Object System.Collections.Generic.List[object]
+    for ($idx = 0; $idx -lt $entries.Count; $idx++) {
+        $ent = $entries[$idx]
+        $score = 0
+        $docLower = $ent.RelPath.ToLowerInvariant()
+        foreach ($cf in $normChanged) {
+            if ($cf -eq $docLower) {
+                $score += 10
+            }
+            foreach ($ap in $ent.AssocPaths) {
+                $apClean = $ap.TrimStart('.', '/')
+                if ($cf -eq $apClean -or $cf.StartsWith($apClean + "/") -or $cf.Contains($apClean)) {
+                    $score += 5
+                }
+            }
+        }
+        if ($score -eq 0 -and ($ent.DocType -match "^(ADR|SPEC)$") -and $idx -lt 2) {
+            $score = 1
+        }
+        if ($score -gt 0) {
+            $scored.Add([PSCustomObject]@{ Score = $score; Entry = $ent })
+        }
+    }
+
+    $buf = New-Object System.Collections.Generic.List[string]
+    $buf.Add("### 已备案架构决策与设计文档（AGENTS.md & docs/，由 review.ps1 自动注入）")
+    $buf.Add("> **审查纪律**：以下设计考量已在仓库 `docs/` 中明确论证并生效；若代码实现与既有决策权衡一致，**严禁重复将既定权衡判为 `VIOLATED`**，仅核查是否真正闭环及是否存在未解决的真实因果链缺陷。")
+    foreach ($ent in ($entries | Select-Object -First 8)) {
+        $buf.Add("- [$($ent.DocType)] ``$($ent.RelPath)`` ($($ent.Status)): $($ent.Summary)")
+    }
+
+    $topMatched = $scored | Sort-Object -Property Score -Descending | Select-Object -First 2
+    foreach ($item in $topMatched) {
+        $docFile = Join-Path $WorkspacePath ($item.Entry.RelPath -replace "/", "\")
+        if (-not (Test-Path $docFile)) {
+            continue
+        }
+        $docLines = [System.IO.File]::ReadAllLines($docFile, $Utf8NoBom)
+        $picked = New-Object System.Collections.Generic.List[string]
+        $inCode = $false
+        $charCount = 0
+        foreach ($dl in $docLines) {
+            $t = $dl.Trim()
+            if ($t.StartsWith('```')) {
+                $inCode = -not $inCode
+                continue
+            }
+            if ($inCode -or [string]::IsNullOrWhiteSpace($t) -or $t -eq "---" -or $t.StartsWith("|")) {
+                continue
+            }
+            $picked.Add($dl)
+            $charCount += $dl.Length + 1
+            if ($charCount -ge 1100) {
+                $picked.Add("... (更多细节可用只读工具查阅 $($item.Entry.RelPath))")
+                break
+            }
+        }
+        if ($picked.Count -gt 0) {
+            $buf.Add("#### 关联设计文档摘录：" + '`' + $item.Entry.RelPath + '`' + "`n" + ($picked -join "`n"))
+        }
+    }
+    return ($buf -join "`n")
+}
+
 function Build-DshPrepackedContext {
     param([Parameter(Mandatory = $true)][string]$WorkspacePath)
     $parts = New-Object System.Collections.Generic.List[string]
+    $changedFiles = New-Object System.Collections.Generic.List[string]
     try {
         $gitCheck = & git -C $WorkspacePath rev-parse --is-inside-work-tree 2>$null
         if ($LASTEXITCODE -eq 0 -and ($gitCheck -join "").Trim() -eq "true") {
-            $statusLines = (& git -C $WorkspacePath -c core.quotepath=false status --short 2>$null) -join "`n"
+            $statusArray = @(& git -C $WorkspacePath -c core.quotepath=false status --short 2>$null)
+            foreach ($sLine in $statusArray) {
+                if ($sLine.Length -gt 3) {
+                    $p = $sLine.Substring(3).Trim().Trim('"')
+                    if ($p -match " -> (.+)$") { $p = $matches[1].Trim().Trim('"') }
+                    if ($p) { $changedFiles.Add($p) }
+                }
+            }
+            $statusLines = $statusArray -join "`n"
             $diffStat = (& git -C $WorkspacePath -c core.quotepath=false diff --stat HEAD 2>$null) -join "`n"
             if (-not [string]::IsNullOrWhiteSpace($statusLines) -or -not [string]::IsNullOrWhiteSpace($diffStat)) {
                 $parts.Add("## 预打包变更上下文（由 review.ps1 注入，避免重复扫描全仓）")
@@ -283,6 +415,10 @@ function Build-DshPrepackedContext {
         }
     } catch {
         # 非 Git 目录忽略
+    }
+    $docCtx = Get-DshDocumentedContext -WorkspacePath $WorkspacePath -ChangedFiles $changedFiles.ToArray()
+    if (-not [string]::IsNullOrWhiteSpace($docCtx)) {
+        $parts.Add($docCtx)
     }
     $lintDir = Join-Path $WorkspacePath "scripts\lints"
     if (Test-Path $lintDir) {

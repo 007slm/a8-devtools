@@ -41,6 +41,11 @@ struct AdvanceProposalPayload {
     prompt: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct RunRepoLintsPayload {
+    repo_code: String,
+}
+
 fn is_allowed_local_origin(origin: &str) -> bool {
     let trimmed = origin.trim();
     if trimmed.eq_ignore_ascii_case("null") {
@@ -325,6 +330,16 @@ fn handle_api(req: &ParsedRequest, stream: &mut TcpStream) {
             };
             match agent_mind::update_grok_proposal_status(payload.file_name, payload.status) {
                 Ok(dto) => send_json(stream, "200 OK", json!({ "ok": true, "data": dto }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
+        ("POST", "/api/agent-mind/lints/run") => {
+            let Ok(payload) = serde_json::from_slice::<RunRepoLintsPayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match agent_mind::run_repo_lints(payload.repo_code) {
+                Ok(res) => send_json(stream, "200 OK", json!({ "ok": true, "data": res }), allowed_origin),
                 Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
             }
         }

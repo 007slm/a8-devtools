@@ -345,6 +345,8 @@ def load_decision_dir(decision_dir: Path, scope: str, repo_name: str = "", base_
                 },
             },
             "why": str(raw.get("why") or "").strip(),
+            "retired_at": str(raw.get("retired_at") or "").strip(),
+            "retired_reason": str(raw.get("retired_reason") or "").strip(),
             "source": src_rel,
         })
 
@@ -660,6 +662,7 @@ def analyze_diff(
     diff_meta: dict = None,
     decisions: list[dict] | None = None,
     decision_errors: list[str] | None = None,
+    workspace_dir: Path | None = None,
 ) -> dict:
     """Matches diff tokens against rules & *.decision.json specifications to activate categories and decisions."""
     activated_categories = set()
@@ -726,8 +729,10 @@ def analyze_diff(
         activated_categories.add("lifecycle_and_evolution")
 
     ordered_activated = [c for c in all_categories if c in activated_categories]
+    doc_guide = get_relevant_docs_for_files(workspace_dir, relevant_files)
     result = {
         "diff_length": len(relevant_diff),
+        "changed_files": relevant_files,
         "activated_categories": ordered_activated,
         "skipped_categories": [c for c in all_categories if c not in activated_categories],
         "matched_rules_count": len(matched_rules),
@@ -736,10 +741,187 @@ def analyze_diff(
         "project_decisions_count": sum(1 for d in loaded_decisions if d.get("scope") == "project" and d.get("enabled", True)),
         "activated_decisions": activated_decisions,
         "decision_load_errors": decision_errors or [],
+        "workspace_docs_count": doc_guide["total_docs"],
+        "relevant_docs": doc_guide["relevant_docs"],
     }
     if diff_meta:
         result.update(diff_meta)
     return result
+
+
+def _parse_agents_doc_registry(agents_md: Path) -> list[dict]:
+    """Extracts structured rows from AGENTS.md documentation registry tables."""
+    if not agents_md.is_file():
+        return []
+    try:
+        lines = agents_md.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+    rows: list[dict] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line.startswith("|") or "docs/" not in line:
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) < 5:
+            continue
+        if cells[0].startswith("---") or cells[0].startswith(":---"):
+            continue
+        path_match = re.search(r"(docs/[^\s`)\]]+?\.md)", cells[0], re.I)
+        if not path_match:
+            continue
+        rel_doc = path_match.group(1).replace("\\", "/")
+        doc_type = cells[1].strip("`* ")
+        module_name = cells[2].strip("`* ")
+        status = cells[3].strip("`* ")
+        summary = re.sub(r"`([^`]*)`", r"\1", cells[4]).strip()
+        assoc_col = cells[5] if len(cells) > 5 else ""
+        assoc_paths = [
+            m.strip().rstrip("/").replace("\\", "/").lower()
+            for m in re.findall(r"`([^`]+)`", assoc_col)
+            if "/" in m or "." in m
+        ]
+        rows.append(
+            {
+                "rel_path": rel_doc,
+                "doc_type": doc_type,
+                "module": module_name,
+                "status": status,
+                "summary": summary,
+                "assoc_paths": assoc_paths,
+            }
+        )
+    return rows
+
+
+def _extract_doc_highlights(doc_path: Path, max_chars: int = 420) -> str:
+    """Extracts concise key decision bullets/sentences from a SPEC/ADR markdown doc."""
+    if not doc_path.is_file():
+        return ""
+    try:
+        text = doc_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+    in_code = False
+    preferred: list[str] = []
+    fallback_lines: list[str] = []
+    in_preferred_section = False
+    for raw in text.splitlines():
+        s = raw.strip()
+        if s.startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code or not s or s == "---":
+            continue
+        if s.startswith("#"):
+            in_preferred_section = bool(
+                re.search(r"决策|权衡|契约|边界|核心架构|Key Decisions|Architecture|Contract", s, re.I)
+            )
+            continue
+        if s.startswith("|"):
+            continue
+        clean = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
+        clean = re.sub(r"\s+", " ", clean).strip()
+        if len(clean) < 12:
+            continue
+        if in_preferred_section:
+            preferred.append(clean)
+        elif len(fallback_lines) < 6:
+            fallback_lines.append(clean)
+        if sum(len(x) + 1 for x in preferred) >= max_chars * 2:
+            break
+
+    chosen = preferred or fallback_lines
+    out = " ".join(chosen)
+    if len(out) > max_chars:
+        out = out[: max_chars - 3].rstrip() + "..."
+    return out
+
+
+def get_relevant_docs_for_files(
+    workspace_dir: Path | None,
+    changed_files: list[str],
+    limit: int = 5,
+) -> dict:
+    """
+    Matches workspace AGENTS.md doc registry entries against changed_files so both
+    arch-judge (full read) and decisions_client.py (compact injection) see relevant docs/.
+    """
+    if not workspace_dir:
+        return {"total_docs": 0, "relevant_docs": []}
+    ws = Path(workspace_dir)
+    rows = _parse_agents_doc_registry(ws / "AGENTS.md")
+    if not rows:
+        return {"total_docs": 0, "relevant_docs": []}
+
+    norm_changed = [f.replace("\\", "/").lstrip("./").lower() for f in (changed_files or []) if f]
+    scored: list[tuple[int, dict, str]] = []
+    for idx, row in enumerate(rows):
+        score = 0
+        reasons: list[str] = []
+        doc_lower = row["rel_path"].lower()
+        for cf in norm_changed:
+            if cf == doc_lower:
+                score += 10
+                reasons.append("doc_modified")
+            for ap in row["assoc_paths"]:
+                ap_clean = ap.lstrip("./")
+                if cf == ap_clean or cf.startswith(ap_clean + "/") or ap_clean in cf:
+                    score += 5
+                    reasons.append(f"module:{ap_clean}")
+        if score == 0 and row["doc_type"].upper() in ("ADR", "SPEC") and idx < 2:
+            score = 1
+            reasons.append("core_spec_baseline")
+        if score > 0:
+            scored.append((score, row, ",".join(dict.fromkeys(reasons))))
+
+    scored.sort(key=lambda pair: -pair[0])
+    out_docs = [
+        {
+            "rel_path": row["rel_path"],
+            "doc_type": row["doc_type"],
+            "status": row["status"],
+            "summary": row["summary"],
+            "match_reason": reason,
+        }
+        for _, row, reason in scored[:limit]
+    ]
+    return {"total_docs": len(rows), "relevant_docs": out_docs}
+
+
+def load_documented_decisions_context(
+    workspace_dir: Path | None,
+    changed_files: list[str],
+    max_chars: int = 1600,
+) -> str:
+    """
+    Loads compact documented design-decision context from workspace AGENTS.md & docs/
+    matching the current diff files so Gemini Decisions API avoids re-flagging approved trade-offs.
+    """
+    if not workspace_dir:
+        return ""
+    ws = Path(workspace_dir)
+    guide = get_relevant_docs_for_files(ws, changed_files, limit=3)
+    if not guide["relevant_docs"]:
+        return ""
+
+    chunks: list[str] = []
+    total_len = 0
+    for row in guide["relevant_docs"]:
+        highlights = _extract_doc_highlights(ws / row["rel_path"], max_chars=360)
+        entry = f"- [{row['doc_type']}] {row['rel_path']} ({row['status']}): {row['summary']}"
+        if highlights:
+            entry += f" | Key points: {highlights}"
+        if total_len + len(entry) + 1 > max_chars:
+            remain = max_chars - total_len - 4
+            if remain > 60:
+                chunks.append(entry[:remain].rstrip() + "...")
+            break
+        chunks.append(entry)
+        total_len += len(entry) + 1
+    return "\n".join(chunks)
 
 
 def main():
@@ -747,6 +929,7 @@ def main():
     cli = parse_judge_cli_args(sys.argv[1:])
     include_last_commit = cli["include_last_commit"]
     working_dir = cli["positional"][0] if cli["positional"] else "."
+    ws_root = resolve_workspace_root(working_dir) or (Path(working_dir).resolve() if Path(working_dir).exists() else None)
 
     diff, diff_meta = get_git_diff(
         working_dir,
@@ -762,6 +945,7 @@ def main():
         diff_meta=diff_meta,
         decisions=decisions,
         decision_errors=decision_errors,
+        workspace_dir=ws_root,
     )
 
     print(json.dumps(result, ensure_ascii=False, indent=2))

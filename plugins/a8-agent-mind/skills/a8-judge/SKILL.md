@@ -1,23 +1,25 @@
 ---
 name: a8-judge
-description: "通用语义架构红线裁判技能。基于语法元特征自适应路由（judge_router.py）与 Google Gemini Decisions API（gemini-decision-1 零输出 Token 概率校准裁决），对当前 Git Diff 及代码变更进行 4 大正交维度毫秒级结构化裁决。依据 mind-rules.md 由 AI 在触及架构红线的代码变更交卷前自主择机调用一次（无需人工触发），亦支持用户通过 /a8-judge 显式发起。"
+description: "通用语义架构红线裁判技能。以 Git Diff 为变更指针，由只读 arch-judge 子代理主动分析目标仓库现状（AGENTS.md、docs/ 设计文档、完整源码与调用链），并辅以 judge_router.py 与 Google Gemini Decisions API 概率初筛雷达完成 4 大正交维度架构裁决。依据 mind-rules.md 由 AI 在触及架构红线的代码变更交卷前自主择机调度一次（无需人工触发），亦支持 /a8-judge。"
 ---
 
 # Semantic Architecture Judge (`a8-judge`)
 
-本技能提供跨仓库通用的语义架构审查能力。结合 **语法元特征自适应路由 (`judge_router.py`)** 与 **Google Gemini Decisions API (`gemini-decision-1` 零输出 Token 概率校准定音)**，确保架构审查既有精准事实支撑，又有毫秒级、0 废话的强类型裁决。
+本技能提供跨仓库通用的语义架构审查能力。核心定位：**Git Diff 只是定位“改了什么”的入口指针；真正的终审裁判是具备全仓只读视野的 `arch-judge`（能够主动阅读 `AGENTS.md`、`docs/` 设计文档、完整代码文件与上下游调用链），而 `judge_router.py` 与 `decisions_client.py` 负责变更/文档路由与零输出 Token 先验概率初筛。**
 
 ## 触发机制：AI 自主择机终审（无需人工调用）
-- **常规自主闭环（遵循 `mind-rules.md`）**：凡涉及代码、接口契约、模块依赖、并发锁或核心生命周期变更且触及 4 大正交维度之一时，AI 应在代码修改与本地编译通过后、正式交卷汇报前**自主择机主动执行一次本技能**（或调度只读 `arch-judge` 子代理）完成红线自检，不依赖用户手动调用；
+- **常规自主闭环（遵循 `mind-rules.md`）**：凡涉及代码、接口契约、模块依赖、并发锁或核心生命周期变更且触及 4 大正交维度之一时，AI 应在代码修改与本地编译通过后、正式交卷汇报前**自主择机主动调度一次 `arch-judge` 只读子代理**完成红线自检（仅局部机械初筛时可先跑脚本；一旦涉及设计意图或脚本初筛存疑，严禁跳过 `docs/` 与全仓核查直接下定论）；
 - **自主免检边界**：纯文档、注释、仓库地图（`AGENTS.md` / `repos.md`）同步或无关轻量文案/样式调整，AI 自主跳过本检查；
 - **显式指令覆盖**：当用户输入 `/a8-judge` 或 `@arch-judge` 时，无论变更大小立即强制执行完整裁决。
 
 ## 核心设计哲学
 
-1. **告别死板枚举与机械匹配 (No AST Regex Guessing)**：
-   不搞类名包含 `Compat` 等形式主义关键字匹配；基于代码改动的真实物理意图、调用拓扑与设计生命周期进行语义判断。
-2. **语法元特征自适应路由 + Google Gemini Decisions API 零输出 Token 定音**：
-   先由 `judge_router.py` 毫秒级识别变更触及的正交维度，再由 `decisions_client.py` 调用 Google Gemini Decisions API (`gemini-decision-1`) 直接输出校准先验概率与布尔判定，必要时结合只读上下文核查调用链与 ADR 凭据。
+1. **Diff 只是指针，项目现状 + `docs/` 才是裁决依据**：
+   - 不只盯着几行 Git Diff 下结论；`arch-judge` 必须先读 `AGENTS.md` 与命中的 `docs/*.md`（SPEC/ADR/BUG），理解为什么这样设计、哪些边界刻意保留、哪些旧逻辑应清缴；
+   - **已在 `docs/` 中明确论证的设计权衡不得反复报错**；真正要抓的是“未闭环的隐蔽破坏链”或“代码与 `docs/` 约定矛盾”。
+2. **变更与文档路由 (`judge_router.py`) + 概率初筛雷达 (`decisions_client.py`)**：
+   - `judge_router.py` 毫秒级提取变更文件、触发规则与**推荐必读文档清单 `relevant_docs`**；
+   - `decisions_client.py` 调用 `gemini-decision-1` 对局部 Diff（自动附带轻量 `Documented Design Context`）给出先验风险初筛，供 `arch-judge` 参考或快速定位嫌疑块，而非无条件一票否决。
 3. **4 大正交维度动态路由 (Orthogonal Categories)**：
    - `lifecycle_and_evolution`: 演化契约、零擅自向后兼容、旧模型破坏权剥离；
    - `topology_and_boundaries`: 客户端 SDK 纯净隔离、模块单向分层；
@@ -26,33 +28,24 @@ description: "通用语义架构红线裁判技能。基于语法元特征自适
 
 ---
 
+- **核心职责分明**：`arch-judge` 具备完整的 `run_command` / `read_file` / `search_web` 等工具自由（不设只读工具阉割限制），可自主运行路由脚本、检索调用链与通读 `docs/`；`judge_router.py` 与 `decisions_client.py` 仅作为辅助初筛工具。
+
 ## 执行协议与指引
 
-### 步骤 1：捕获变动与正交分类自适应路由
-运行插件内置路由工具分析当前变更：
+### 步骤 1（首选路径）：调度具备完整工具自由的 `arch-judge` 子代理终审
+调用 `invoke_subagent(TypeName="arch-judge", ...)`，让其自主完成：
+1. 运行 `py -3 <plugin_dir>/skills/a8-judge/scripts/judge_router.py <workspace_dir>`（可带 `--paths`），拿到 `changed_files` 与 `relevant_docs`；
+2. 通读 `AGENTS.md`、`relevant_docs` 指向的 `docs/*.md`、相关完整源码文件与调用链（自由使用 `read_file` / `run_command` 搜索求证）；
+3. 自主运行 `decisions_client.py` 作为先验概率参考；若其与 `docs/` 或代码全貌存在认知偏差，以 `docs/` 与调用链物理事实为准独立裁决。
+
+### 步骤 2（底层脚本参考）：路由与 Decisions API 初筛命令
 ```bash
 py -3 <plugin_dir>/skills/a8-judge/scripts/judge_router.py <workspace_dir>
-```
-获取激活的 `activated_categories` 与跳过的维度，避免不必要的上下文浪费。
-
-### 步骤 2：调用 Google Gemini Decisions API 执行校准概率裁决并核实物理现场
-针对激活维度，调用插件内置的 Google Gemini Decisions API (`gemini-decision-1`) 客户端执行零输出 Token 概率校准定音：
-```bash
 py -3 <plugin_dir>/skills/a8-judge/scripts/decisions_client.py <workspace_dir> <activated_categories>
 ```
-（支持 `<workspace_dir>` 目录自动提取 Git Diff、单文件路径或 `--stdin`；支持 `--paths <path1,path2>` 聚焦局部改动子路径；自动默认过滤 UI 编译产物、SVG/字体/二进制媒体与纯锁文件；工作区无变更且需审上一次提交时可追加 `--last-commit`。）
-
-脚本自动读取插件配置 `config.json` 并展开 `${GEMINI_API_KEY}` 环境变量，同时加载：
-- **全局 Decision 规范**：`<plugin_dir>/decisions/*.decision.json`（含四大正交架构红线与通用语义决策）
-- **项目 Decision 规范**：`<workspace>/scripts/lints/*.decision.json`（与项目 Lint 同目录并列）
-- **增量规则正文**：`<plugin_dir>/rules/*.md` 与 `<workspace>/.agents/rules/*.md`
-
-所有 Diff 与 Decision 均采用**按文件/hunk 无损分片 + 问题自动分批多请求调用**（不受单次 6,000 / 30,000 字符上限截断或丢弃），再结合以下只读上下文查证要点给出裁决报告：
-- 被修改的方法是否还有历史下游系统在调用？
-- 删除或保留的接口，在 `docs/` 或提交信息中是否存在明确的 ADR 批准记录？
-- 驱动或 SDK 是否悄悄引入了服务端的重型类库？
+（支持 `<workspace_dir>` 目录、单文件路径、`--stdin`、`--paths <path1,path2>` 及 `--last-commit`；自动从 `AGENTS.md` + `docs/` 注入有界 `Documented Design Context` 并按 hunk 无损分片，同时加载 `<plugin_dir>/decisions/*.decision.json`、`<workspace>/scripts/lints/*.decision.json` 与规则文件。）
 
 结果处理原则：
-- 若所有激活维度均合规且置信度达标，返回 `PASSED`，输出 calibrated probabilities；
-- 若存在确凿红线破坏，返回 `VIOLATED`，核实物理文件路径、行号与因果事实后输出 `actionable_fix`（可直接执行的代码级修正或删除指引）；
-- 若存在 API 缺失、Diff 截断、置信度低于阈值或无法求证的推测边界，返回 `REQUIRES_APPROVAL` 请求人工确认，严禁私自加复杂度。
+- 若基于项目现状 + `docs/` 核查合规，返回 `PASSED`（列出实际核验的 `docs/` 与文件）；
+- 若存在确凿红线破坏或违背 `docs/` 约定，返回 `VIOLATED` 与精确 `file_path` / `actionable_fix`；
+- 若存在 API 缺失或无法从现状求证的待定边界，返回 `REQUIRES_APPROVAL` 请求人工拍板。

@@ -107,6 +107,7 @@ const SIDECAR_HTTP_ROUTES: Record<string, { path: string; method: 'GET' | 'POST'
   open_grok_proposals_dir: { path: '/api/agent-mind/proposal/open-dir', method: 'POST' },
   advance_proposal_in_antigravity: { path: '/api/agent-mind/proposal/advance', method: 'POST' },
   update_grok_proposal_status: { path: '/api/agent-mind/proposal/status', method: 'POST' },
+  run_repo_lints: { path: '/api/agent-mind/lints/run', method: 'POST' },
 };
 
 async function callTauri<T = any>(command: string, args: Record<string, any> = {}): Promise<T | null> {

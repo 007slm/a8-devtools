@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import {
   existsSync,
@@ -365,7 +365,24 @@ function toCnYmd(unixSecs) {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 
-function parseHarnessTelemetry(threshold = 0.85) {
+function normStrArray(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((x) => String(x || '').trim()).filter(Boolean);
+}
+
+function bumpCheckerStat(map, key, ts, isHit) {
+  const cur = map.get(key) || { eval_count: 0, hit_count: 0, last_eval_ts: 0, last_hit_ts: 0 };
+  if (isHit) {
+    cur.hit_count += 1;
+    if (ts > cur.last_hit_ts) cur.last_hit_ts = ts;
+  } else {
+    cur.eval_count += 1;
+    if (ts > cur.last_eval_ts) cur.last_eval_ts = ts;
+  }
+  map.set(key, cur);
+}
+
+function parseHarnessTelemetryWithStats(threshold = 0.85) {
   const metricsPath = locateHarnessMetricsPath();
   const events = [];
   if (existsSync(metricsPath) && statSync(metricsPath).isFile()) {
@@ -388,6 +405,8 @@ function parseHarnessTelemetry(threshold = 0.85) {
             confidence: Number(v?.confidence || 0),
             docs_choice: String(v?.docs_choice || ''),
             lesson_choice: String(v?.lesson_choice || ''),
+            evaluated_ids: normStrArray(v?.evaluated_ids),
+            violated_ids: normStrArray(v?.violated_ids),
           });
         } catch {
           // skip malformed jsonl row
@@ -399,6 +418,12 @@ function parseHarnessTelemetry(threshold = 0.85) {
   }
 
   const dayBuckets = new Map();
+  const stats = {
+    decisionGlobal: new Map(),
+    decisionByRepo: new Map(),
+    lintGlobal: new Map(),
+    lintByRepo: new Map(),
+  };
   let stop_hook_events = 0;
   let judge_events = 0;
   let docs_gate_triggered = 0;
@@ -415,6 +440,30 @@ function parseHarnessTelemetry(threshold = 0.85) {
       confSum += ev.confidence;
       confCnt += 1;
     }
+
+    const repoLower = ev.repo.toLowerCase();
+    if (ev.source === 'a8_judge') {
+      for (const id of ev.evaluated_ids) {
+        bumpCheckerStat(stats.decisionGlobal, id, ev.ts, false);
+        if (repoLower) bumpCheckerStat(stats.decisionByRepo, `${repoLower}::${id}`, ev.ts, false);
+      }
+      for (const id of ev.violated_ids) {
+        bumpCheckerStat(stats.decisionGlobal, id, ev.ts, true);
+        if (repoLower) bumpCheckerStat(stats.decisionByRepo, `${repoLower}::${id}`, ev.ts, true);
+      }
+    } else if (ev.source === 'repo_lint') {
+      for (const id of ev.evaluated_ids) {
+        const up = id.toUpperCase();
+        bumpCheckerStat(stats.lintGlobal, up, ev.ts, false);
+        if (repoLower) bumpCheckerStat(stats.lintByRepo, `${repoLower}::${up}`, ev.ts, false);
+      }
+      for (const id of ev.violated_ids) {
+        const up = id.toUpperCase();
+        bumpCheckerStat(stats.lintGlobal, up, ev.ts, true);
+        if (repoLower) bumpCheckerStat(stats.lintByRepo, `${repoLower}::${up}`, ev.ts, true);
+      }
+    }
+
     if (ev.date) {
       const cur = dayBuckets.get(ev.date) || [0, 0, 0];
       const isErrOrViolated =
@@ -442,16 +491,19 @@ function parseHarnessTelemetry(threshold = 0.85) {
   const recent_events = events.slice(0, 60);
 
   return {
-    metrics_path: metricsPath,
-    total_events: recent_events.length,
-    stop_hook_events,
-    judge_events,
-    docs_gate_triggered,
-    auto_lint_triggered,
-    avg_confidence: confCnt > 0 ? Math.round((confSum / confCnt) * 10000) / 10000 : 0,
-    threshold,
-    daily_trends,
-    recent_events,
+    telemetry: {
+      metrics_path: metricsPath,
+      total_events: recent_events.length,
+      stop_hook_events,
+      judge_events,
+      docs_gate_triggered,
+      auto_lint_triggered,
+      avg_confidence: confCnt > 0 ? Math.round((confSum / confCnt) * 10000) / 10000 : 0,
+      threshold,
+      daily_trends,
+      recent_events,
+    },
+    stats,
   };
 }
 
@@ -805,7 +857,19 @@ function collectRuleEntriesInDir(baseRoot, rulesDir, scope, repo, editable, out)
   }
 }
 
-function collectDecisionEntriesInDir(baseRoot, decisionDir, scope, repo, editable, out) {
+function lookupCheckerStat(stats, kind, scope, repo, id) {
+  const empty = { eval_count: 0, hit_count: 0, last_eval_ts: 0, last_hit_ts: 0 };
+  if (!stats) return empty;
+  if (kind === 'decision') {
+    if (scope === 'global') return stats.decisionGlobal.get(id) || empty;
+    return stats.decisionByRepo.get(`${String(repo || '').toLowerCase()}::${id}`) || empty;
+  }
+  const up = String(id || '').toUpperCase();
+  if (scope === 'global') return stats.lintGlobal.get(up) || empty;
+  return stats.lintByRepo.get(`${String(repo || '').toLowerCase()}::${up}`) || empty;
+}
+
+function collectDecisionEntriesInDir(baseRoot, decisionDir, scope, repo, editable, stats, out) {
   if (!existsSync(decisionDir) || !statSync(decisionDir).isDirectory()) return;
   const files = readdirSync(decisionDir)
     .filter((n) => n.toLowerCase().endsWith('.decision.json'))
@@ -824,6 +888,7 @@ function collectDecisionEntriesInDir(baseRoot, decisionDir, scope, repo, editabl
       const passed = String(criteria.passed || '').trim();
       const violated = String(criteria.violated || '').trim();
       const id = String(parsed.id || fallbackId).trim() || fallbackId;
+      const hitStat = lookupCheckerStat(stats, 'decision', scope, repo, id);
       out.push({
         id,
         name: String(parsed.name || id).trim() || id,
@@ -831,6 +896,12 @@ function collectDecisionEntriesInDir(baseRoot, decisionDir, scope, repo, editabl
         repo,
         category: String(parsed.category || 'implementation_hygiene').trim(),
         enabled: parsed.enabled !== false,
+        retired_at: String(parsed.retired_at || '').trim(),
+        retired_reason: String(parsed.retired_reason || '').trim(),
+        eval_count: hitStat.eval_count,
+        hit_count: hitStat.hit_count,
+        last_eval_ts: hitStat.last_eval_ts,
+        last_hit_ts: hitStat.last_hit_ts,
         triggers: Array.isArray(parsed.triggers) ? parsed.triggers.map((x) => String(x).trim()).filter(Boolean) : [],
         file_patterns: Array.isArray(parsed.file_patterns)
           ? parsed.file_patterns.map((x) => String(x).trim().replace(/\\/g, '/')).filter(Boolean)
@@ -848,6 +919,7 @@ function collectDecisionEntriesInDir(baseRoot, decisionDir, scope, repo, editabl
         modified_ts: Math.floor(st.mtimeMs / 1000),
       });
     } catch (err) {
+      const hitStat = lookupCheckerStat(stats, 'decision', scope, repo, fallbackId);
       out.push({
         id: fallbackId,
         name: fallbackId,
@@ -855,6 +927,12 @@ function collectDecisionEntriesInDir(baseRoot, decisionDir, scope, repo, editabl
         repo,
         category: 'implementation_hygiene',
         enabled: false,
+        retired_at: '',
+        retired_reason: '',
+        eval_count: hitStat.eval_count,
+        hit_count: hitStat.hit_count,
+        last_eval_ts: hitStat.last_eval_ts,
+        last_hit_ts: hitStat.last_hit_ts,
         triggers: [],
         file_patterns: [],
         instructions: '',
@@ -872,7 +950,7 @@ function collectDecisionEntriesInDir(baseRoot, decisionDir, scope, repo, editabl
   }
 }
 
-function collectLintItemsInDir(baseRoot, lintsDir, scope, repo, out) {
+function collectLintItemsInDir(baseRoot, lintsDir, scope, repo, stats, out) {
   if (!existsSync(lintsDir) || !statSync(lintsDir).isDirectory()) return;
   const files = readdirSync(lintsDir)
     .filter((n) => n.toLowerCase().endsWith('.py') && n !== '__init__.py')
@@ -893,8 +971,10 @@ function collectLintItemsInDir(baseRoot, lintsDir, scope, repo, out) {
       if (nextLine.startsWith('"""')) {
         desc = nextLine.replace(/^"""/, '').replace(/"""$/, '').trim();
       }
+      const id = tail.toUpperCase();
+      const hitStat = lookupCheckerStat(stats, 'lint', scope, repo, id);
       out.push({
-        id: tail.toUpperCase(),
+        id,
         name: `check_${tail}`,
         scope,
         repo,
@@ -903,13 +983,19 @@ function collectLintItemsInDir(baseRoot, lintsDir, scope, repo, out) {
         abs_path: full,
         description: desc || `静态检查函数 check_${tail}`,
         line_number: i + 1,
+        eval_count: hitStat.eval_count,
+        hit_count: hitStat.hit_count,
+        last_eval_ts: hitStat.last_eval_ts,
+        last_hit_ts: hitStat.last_hit_ts,
       });
       found += 1;
     }
     if (found === 0) {
       const stem = fileName.replace(/\.py$/i, '');
+      const id = stem.toUpperCase();
+      const hitStat = lookupCheckerStat(stats, 'lint', scope, repo, id);
       out.push({
-        id: stem.toUpperCase(),
+        id,
         name: fileName,
         scope,
         repo,
@@ -918,27 +1004,31 @@ function collectLintItemsInDir(baseRoot, lintsDir, scope, repo, out) {
         abs_path: full,
         description: '仓库静态检查脚本',
         line_number: 1,
+        eval_count: hitStat.eval_count,
+        hit_count: hitStat.hit_count,
+        last_eval_ts: hitStat.last_eval_ts,
+        last_hit_ts: hitStat.last_hit_ts,
       });
     }
   }
 }
 
-function scanGovernanceAssets(repos) {
+function scanGovernanceAssets(repos, stats) {
   const governance_rules = [];
   const decisions = [];
   const lints = [];
 
   collectRuleEntriesInDir(pluginRoot, join(pluginRoot, 'rules'), 'global', 'a8-agent-mind', true, governance_rules);
-  collectDecisionEntriesInDir(pluginRoot, join(pluginRoot, 'decisions'), 'global', 'a8-agent-mind', true, decisions);
-  collectLintItemsInDir(pluginRoot, join(pluginRoot, 'lints'), 'global', 'a8-agent-mind', lints);
+  collectDecisionEntriesInDir(pluginRoot, join(pluginRoot, 'decisions'), 'global', 'a8-agent-mind', true, stats, decisions);
+  collectLintItemsInDir(pluginRoot, join(pluginRoot, 'lints'), 'global', 'a8-agent-mind', stats, lints);
 
   for (const proj of repos) {
     const phys = String(proj.physical_path || '').trim();
     if (!phys || !existsSync(phys) || !statSync(phys).isDirectory()) continue;
     const editable = String(proj.role || '').toLowerCase() !== 'test-bed';
     collectRuleEntriesInDir(phys, join(phys, '.agents', 'rules'), 'project', proj.code, editable, governance_rules);
-    collectDecisionEntriesInDir(phys, join(phys, 'scripts', 'lints'), 'project', proj.code, editable, decisions);
-    collectLintItemsInDir(phys, join(phys, 'scripts', 'lints'), 'project', proj.code, lints);
+    collectDecisionEntriesInDir(phys, join(phys, 'scripts', 'lints'), 'project', proj.code, editable, stats, decisions);
+    collectLintItemsInDir(phys, join(phys, 'scripts', 'lints'), 'project', proj.code, stats, lints);
   }
 
   governance_rules.sort((a, b) => {
@@ -966,7 +1056,10 @@ function scanGovernanceAssets(repos) {
 function buildOverviewDto() {
   const repos = parseReposMd();
   const reviews = parseReviewsDir();
-  const { governance_rules, decisions, lints, governance_summary } = scanGovernanceAssets(repos);
+  const configJson = maskConfigSecrets(readJsonOrEmpty(join(pluginRoot, 'config.json')));
+  const threshold = Number(configJson?.confidence_threshold ?? 0.85) || 0.85;
+  const { telemetry, stats } = parseHarnessTelemetryWithStats(threshold);
+  const { governance_rules, decisions, lints, governance_summary } = scanGovernanceAssets(repos, stats);
   const files = [];
   for (const [dirName, cat] of [
     ['rules', 'rules'],
@@ -1002,9 +1095,6 @@ function buildOverviewDto() {
 
   const proposalsDir = grokProposalsDir();
   const proposals = parseGrokProposalsDir(proposalsDir);
-  const configJson = maskConfigSecrets(readJsonOrEmpty(join(pluginRoot, 'config.json')));
-  const threshold = Number(configJson?.confidence_threshold ?? 0.85) || 0.85;
-  const telemetry = parseHarnessTelemetry(threshold);
 
   return {
     plugin_root: pluginRoot,
@@ -1388,6 +1478,29 @@ const server = createServer(async (req, res) => {
       const record = updatedList.find((p) => p.file_name.toLowerCase() === fileNameLower);
       if (!record) throw new Error('更新后未读取到提案记录');
       sendJson(res, 200, { ok: true, data: record }, headers);
+      return;
+    }
+
+    if (method === 'POST' && urlPath === '/api/agent-mind/lints/run') {
+      const body = await readJsonBody(req);
+      const repoCode = String(body.repo_code || '').trim();
+      if (!repoCode) throw new Error('缺少目标仓库代号 repo_code');
+      const repos = parseReposMd();
+      const proj = repos.find((p) => String(p.code || '').toLowerCase() === repoCode.toLowerCase());
+      if (!proj || !proj.physical_path) throw new Error(`未在仓库地图找到项目: ${repoCode}`);
+      const runner = join(pluginRoot, 'scripts', 'run_repo_lints.py');
+      if (!existsSync(runner)) throw new Error(`缺失插件 Lint 运行器: ${runner}`);
+      const exe = process.platform === 'win32' ? 'py' : 'python3';
+      const args = process.platform === 'win32' ? ['-3', runner, proj.physical_path] : [runner, proj.physical_path];
+      let out = spawnSync(exe, args, { encoding: 'utf-8', windowsHide: true });
+      if (out.error) {
+        out = spawnSync('python', [runner, proj.physical_path], { encoding: 'utf-8', windowsHide: true });
+      }
+      if (out.error) throw out.error;
+      const stdout = String(out.stdout || '').trim();
+      if (!stdout) throw new Error(String(out.stderr || 'Lint 运行器未输出有效结果').trim());
+      const parsed = JSON.parse(stdout);
+      sendJson(res, 200, { ok: true, data: parsed }, headers);
       return;
     }
 

@@ -870,6 +870,7 @@ fn main() {
             agent_mind::open_grok_proposals_dir,
             agent_mind::advance_proposal_in_antigravity,
             agent_mind::update_grok_proposal_status,
+            agent_mind::run_repo_lints,
         ]);
 
     let app_built = app

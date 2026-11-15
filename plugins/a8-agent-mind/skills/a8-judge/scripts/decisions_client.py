@@ -24,6 +24,7 @@ from judge_router import (
     extract_diff_file_paths,
     get_git_diff,
     load_all_decisions,
+    load_documented_decisions_context,
     load_rules,
     parse_judge_cli_args,
     resolve_workspace_root,
@@ -82,6 +83,19 @@ def resolve_plugin_data_dir() -> Path:
     return root
 
 
+def _normalize_id_list(raw_ids) -> list[str]:
+    if not isinstance(raw_ids, (list, tuple)):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw_ids:
+        val = str(item or "").strip()
+        if val and val not in seen:
+            seen.add(val)
+            out.append(val)
+    return out
+
+
 def append_harness_metric(event: dict, max_entries: int = 200) -> None:
     """Appends a bounded observability record to harness_metrics.jsonl."""
     try:
@@ -98,6 +112,12 @@ def append_harness_metric(event: dict, max_entries: int = 200) -> None:
             "docs_choice": str(event.get("docs_choice") or ""),
             "lesson_choice": str(event.get("lesson_choice") or ""),
         }
+        evaluated_ids = _normalize_id_list(event.get("evaluated_ids"))
+        violated_ids = _normalize_id_list(event.get("violated_ids"))
+        if evaluated_ids:
+            record["evaluated_ids"] = evaluated_ids
+        if violated_ids:
+            record["violated_ids"] = violated_ids
         existing: list[str] = []
         if metrics_file.is_file():
             existing = [
@@ -580,11 +600,18 @@ def evaluate_decisions(
                         "violations": [],
                     }
 
+        doc_context = load_documented_decisions_context(workspace_dir, chunk["files"])
+        doc_prefix = (
+            f"Documented Design Context (approved in AGENTS.md / docs/; do NOT flag intentional trade-offs explained here unless implementation contradicts them):\n"
+            f"{doc_context}\n\n"
+            if doc_context
+            else ""
+        )
         for batch in _pack_question_batches(chunk_questions):
             api_tasks.append({
                 "chunk": chunk,
                 "questions": batch,
-                "input_text": f"Code Diff to review (chunk {chunk['chunk_index'] + 1}/{len(diff_chunks)}):\n\n{chunk['text']}",
+                "input_text": f"{doc_prefix}Code Diff to review (chunk {chunk['chunk_index'] + 1}/{len(diff_chunks)}):\n\n{chunk['text']}",
             })
 
     if not api_tasks:
@@ -735,6 +762,9 @@ def evaluate_decisions(
         "evaluated_categories": evaluated_categories,
         "violations": all_violations,
     }
+    evaluated_ids = [rec["id"] for rec in evaluated_decisions_list if rec.get("evaluated")]
+    violated_ids = [rec["id"] for rec in decision_records.values() if rec.get("violations")]
+
     schema_errors = validate_verdict_schema(verdict_obj)
     if schema_errors:
         append_harness_metric(
@@ -744,6 +774,8 @@ def evaluate_decisions(
                 "repo": repo_label,
                 "verdict": "REQUIRES_APPROVAL",
                 "confidence": 0.0,
+                "evaluated_ids": evaluated_ids,
+                "violated_ids": violated_ids,
             }
         )
         return fail_closed_verdict(
@@ -758,6 +790,8 @@ def evaluate_decisions(
             "repo": repo_label,
             "verdict": verdict_str,
             "confidence": round(overall_confidence, 4),
+            "evaluated_ids": evaluated_ids,
+            "violated_ids": violated_ids,
         }
     )
     return verdict_obj

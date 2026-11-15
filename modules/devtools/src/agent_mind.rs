@@ -86,6 +86,18 @@ pub struct DecisionEntryDto {
     pub repo: String,
     pub category: String,
     pub enabled: bool,
+    #[serde(default)]
+    pub retired_at: String,
+    #[serde(default)]
+    pub retired_reason: String,
+    #[serde(default)]
+    pub eval_count: u32,
+    #[serde(default)]
+    pub hit_count: u32,
+    #[serde(default)]
+    pub last_eval_ts: u64,
+    #[serde(default)]
+    pub last_hit_ts: u64,
     pub triggers: Vec<String>,
     pub file_patterns: Vec<String>,
     pub instructions: String,
@@ -111,6 +123,14 @@ pub struct LintItemDto {
     pub abs_path: String,
     pub description: String,
     pub line_number: u32,
+    #[serde(default)]
+    pub eval_count: u32,
+    #[serde(default)]
+    pub hit_count: u32,
+    #[serde(default)]
+    pub last_eval_ts: u64,
+    #[serde(default)]
+    pub last_hit_ts: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -137,6 +157,51 @@ pub struct HarnessMetricEventDto {
     pub confidence: f64,
     pub docs_choice: String,
     pub lesson_choice: String,
+    #[serde(default)]
+    pub evaluated_ids: Vec<String>,
+    #[serde(default)]
+    pub violated_ids: Vec<String>,
+}
+
+#[derive(Default, Clone, Copy)]
+pub(crate) struct CheckerHitStats {
+    pub eval_count: u32,
+    pub hit_count: u32,
+    pub last_eval_ts: u64,
+    pub last_hit_ts: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct CheckerStatsIndex {
+    pub decision_global: std::collections::HashMap<String, CheckerHitStats>,
+    pub decision_by_repo: std::collections::HashMap<(String, String), CheckerHitStats>,
+    pub lint_global: std::collections::HashMap<String, CheckerHitStats>,
+    pub lint_by_repo: std::collections::HashMap<(String, String), CheckerHitStats>,
+}
+
+impl CheckerStatsIndex {
+    fn lookup_decision(&self, scope: &str, repo: &str, id: &str) -> CheckerHitStats {
+        if scope == "global" {
+            self.decision_global.get(id).copied().unwrap_or_default()
+        } else {
+            self.decision_by_repo
+                .get(&(repo.to_lowercase(), id.to_string()))
+                .copied()
+                .unwrap_or_default()
+        }
+    }
+
+    fn lookup_lint(&self, scope: &str, repo: &str, id: &str) -> CheckerHitStats {
+        let up = id.to_ascii_uppercase();
+        if scope == "global" {
+            self.lint_global.get(&up).copied().unwrap_or_default()
+        } else {
+            self.lint_by_repo
+                .get(&(repo.to_lowercase(), up))
+                .copied()
+                .unwrap_or_default()
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1128,6 +1193,7 @@ fn collect_decision_entries_in_dir(
     scope: &str,
     repo: &str,
     editable: bool,
+    stats: &CheckerStatsIndex,
     out: &mut Vec<DecisionEntryDto>,
 ) {
     if !decision_dir.is_dir() {
@@ -1167,6 +1233,7 @@ fn collect_decision_entries_in_dir(
         let raw = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) => {
+                let st = stats.lookup_decision(scope, repo, &fallback_id);
                 out.push(DecisionEntryDto {
                     id: fallback_id.clone(),
                     name: fallback_id,
@@ -1174,6 +1241,12 @@ fn collect_decision_entries_in_dir(
                     repo: repo.to_string(),
                     category: "implementation_hygiene".to_string(),
                     enabled: false,
+                    retired_at: String::new(),
+                    retired_reason: String::new(),
+                    eval_count: st.eval_count,
+                    hit_count: st.hit_count,
+                    last_eval_ts: st.last_eval_ts,
+                    last_hit_ts: st.last_hit_ts,
                     triggers: Vec::new(),
                     file_patterns: Vec::new(),
                     instructions: String::new(),
@@ -1194,6 +1267,7 @@ fn collect_decision_entries_in_dir(
         let parsed: Value = match serde_json::from_str(&raw) {
             Ok(v) => v,
             Err(e) => {
+                let st = stats.lookup_decision(scope, repo, &fallback_id);
                 out.push(DecisionEntryDto {
                     id: fallback_id.clone(),
                     name: fallback_id,
@@ -1201,6 +1275,12 @@ fn collect_decision_entries_in_dir(
                     repo: repo.to_string(),
                     category: "implementation_hygiene".to_string(),
                     enabled: false,
+                    retired_at: String::new(),
+                    retired_reason: String::new(),
+                    eval_count: st.eval_count,
+                    hit_count: st.hit_count,
+                    last_eval_ts: st.last_eval_ts,
+                    last_hit_ts: st.last_hit_ts,
                     triggers: Vec::new(),
                     file_patterns: Vec::new(),
                     instructions: String::new(),
@@ -1237,6 +1317,18 @@ fn collect_decision_entries_in_dir(
             .trim()
             .to_string();
         let enabled = parsed.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+        let retired_at = parsed
+            .get("retired_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let retired_reason = parsed
+            .get("retired_reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
         let triggers = parsed
             .get("triggers")
             .and_then(|v| v.as_array())
@@ -1289,6 +1381,7 @@ fn collect_decision_entries_in_dir(
         } else {
             None
         };
+        let st = stats.lookup_decision(scope, repo, &id);
 
         out.push(DecisionEntryDto {
             id,
@@ -1297,6 +1390,12 @@ fn collect_decision_entries_in_dir(
             repo: repo.to_string(),
             category,
             enabled,
+            retired_at,
+            retired_reason,
+            eval_count: st.eval_count,
+            hit_count: st.hit_count,
+            last_eval_ts: st.last_eval_ts,
+            last_hit_ts: st.last_hit_ts,
             triggers,
             file_patterns,
             instructions,
@@ -1318,6 +1417,7 @@ fn collect_lint_items_in_dir(
     lints_dir: &Path,
     scope: &str,
     repo: &str,
+    stats: &CheckerStatsIndex,
     out: &mut Vec<LintItemDto>,
 ) {
     if !lints_dir.is_dir() {
@@ -1374,6 +1474,7 @@ fn collect_lint_items_in_dir(
                     }
                 }
                 let id = fn_tail.to_ascii_uppercase();
+                let st = stats.lookup_lint(scope, repo, &id);
                 out.push(LintItemDto {
                     id,
                     name: format!("check_{}", fn_tail),
@@ -1388,6 +1489,10 @@ fn collect_lint_items_in_dir(
                         desc
                     },
                     line_number: (idx + 1) as u32,
+                    eval_count: st.eval_count,
+                    hit_count: st.hit_count,
+                    last_eval_ts: st.last_eval_ts,
+                    last_hit_ts: st.last_hit_ts,
                 });
                 found_for_file += 1;
             }
@@ -1395,8 +1500,10 @@ fn collect_lint_items_in_dir(
 
         if found_for_file == 0 {
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("lint");
+            let id = stem.to_ascii_uppercase();
+            let st = stats.lookup_lint(scope, repo, &id);
             out.push(LintItemDto {
-                id: stem.to_ascii_uppercase(),
+                id,
                 name: file_name.clone(),
                 scope: scope.to_string(),
                 repo: repo.to_string(),
@@ -1405,6 +1512,10 @@ fn collect_lint_items_in_dir(
                 abs_path: clean_display_path(&path),
                 description: "仓库静态检查脚本".to_string(),
                 line_number: 1,
+                eval_count: st.eval_count,
+                hit_count: st.hit_count,
+                last_eval_ts: st.last_eval_ts,
+                last_hit_ts: st.last_hit_ts,
             });
         }
     }
@@ -1413,6 +1524,7 @@ fn collect_lint_items_in_dir(
 pub(crate) fn scan_governance_assets(
     plugin_root: &Path,
     projects: &[HostProjectCardDto],
+    stats: &CheckerStatsIndex,
 ) -> (
     Vec<GovernanceRuleEntryDto>,
     Vec<DecisionEntryDto>,
@@ -1438,6 +1550,7 @@ pub(crate) fn scan_governance_assets(
         "global",
         "a8-agent-mind",
         true,
+        stats,
         &mut decisions,
     );
     collect_lint_items_in_dir(
@@ -1445,6 +1558,7 @@ pub(crate) fn scan_governance_assets(
         &plugin_root.join("lints"),
         "global",
         "a8-agent-mind",
+        stats,
         &mut lints,
     );
 
@@ -1473,6 +1587,7 @@ pub(crate) fn scan_governance_assets(
             "project",
             &proj.code,
             editable,
+            stats,
             &mut decisions,
         );
         collect_lint_items_in_dir(
@@ -1480,6 +1595,7 @@ pub(crate) fn scan_governance_assets(
             &repo_root.join("scripts").join("lints"),
             "project",
             &proj.code,
+            stats,
             &mut lints,
         );
     }
@@ -1533,8 +1649,20 @@ pub fn get_agent_mind_overview() -> Result<AgentMindOverviewDto, String> {
         .map(clean_display_path)
         .unwrap_or_default();
 
+    let threshold = config_json
+        .get("confidence_threshold")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.85);
+    let metrics_path_opt = locate_harness_metrics_path();
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (telemetry, checker_stats) =
+        parse_harness_telemetry_with_stats(metrics_path_opt.as_deref(), threshold, now_secs);
+
     let (governance_rules, decisions, lints, governance_summary) =
-        scan_governance_assets(&root, &projects);
+        scan_governance_assets(&root, &projects, &checker_stats);
 
     let mut files = Vec::new();
     for (dir_name, category) in [
@@ -1587,12 +1715,6 @@ pub fn get_agent_mind_overview() -> Result<AgentMindOverviewDto, String> {
 
     let port = sidecar_port();
     let sidecar_running = crate::sidecar::is_running();
-    let threshold = config_json
-        .get("confidence_threshold")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.85);
-    let metrics_path_opt = locate_harness_metrics_path();
-    let telemetry = parse_harness_telemetry(metrics_path_opt.as_deref(), threshold);
 
     Ok(AgentMindOverviewDto {
         plugin_root: clean_display_path(&root),
@@ -1982,11 +2104,58 @@ fn locate_harness_metrics_path() -> Option<PathBuf> {
     )
 }
 
-pub(crate) fn parse_harness_telemetry_at(
+fn parse_string_array_field(v: &Value, key: &str) -> Vec<String> {
+    v.get(key)
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn bump_checker_stat(
+    map: &mut std::collections::HashMap<String, CheckerHitStats>,
+    id: &str,
+    ts: u64,
+    is_hit: bool,
+) {
+    let entry = map.entry(id.to_string()).or_default();
+    if is_hit {
+        entry.hit_count = entry.hit_count.saturating_add(1);
+        entry.last_hit_ts = entry.last_hit_ts.max(ts);
+    } else {
+        entry.eval_count = entry.eval_count.saturating_add(1);
+        entry.last_eval_ts = entry.last_eval_ts.max(ts);
+    }
+}
+
+fn bump_repo_checker_stat(
+    map: &mut std::collections::HashMap<(String, String), CheckerHitStats>,
+    repo_lower: &str,
+    id: &str,
+    ts: u64,
+    is_hit: bool,
+) {
+    let entry = map
+        .entry((repo_lower.to_string(), id.to_string()))
+        .or_default();
+    if is_hit {
+        entry.hit_count = entry.hit_count.saturating_add(1);
+        entry.last_hit_ts = entry.last_hit_ts.max(ts);
+    } else {
+        entry.eval_count = entry.eval_count.saturating_add(1);
+        entry.last_eval_ts = entry.last_eval_ts.max(ts);
+    }
+}
+
+pub(crate) fn parse_harness_telemetry_with_stats(
     metrics_path: Option<&Path>,
     threshold: f64,
     now_secs: u64,
-) -> HarnessTelemetryDto {
+) -> (HarnessTelemetryDto, CheckerStatsIndex) {
     let mut events: Vec<HarnessMetricEventDto> = Vec::new();
     let display_path = metrics_path.map(clean_display_path).unwrap_or_default();
 
@@ -2048,6 +2217,8 @@ pub(crate) fn parse_harness_telemetry_at(
                             .and_then(|x| x.as_str())
                             .unwrap_or("")
                             .to_string(),
+                        evaluated_ids: parse_string_array_field(&v, "evaluated_ids"),
+                        violated_ids: parse_string_array_field(&v, "violated_ids"),
                     });
                 }
             }
@@ -2056,6 +2227,7 @@ pub(crate) fn parse_harness_telemetry_at(
 
     let mut day_buckets: std::collections::HashMap<String, (u32, u32, u32)> =
         std::collections::HashMap::new();
+    let mut stats_index = CheckerStatsIndex::default();
     let mut stop_hook_events = 0usize;
     let mut judge_events = 0usize;
     let mut docs_gate_triggered = 0usize;
@@ -2079,6 +2251,62 @@ pub(crate) fn parse_harness_telemetry_at(
             conf_sum += ev.confidence;
             conf_cnt += 1;
         }
+
+        let repo_lower = ev.repo.to_lowercase();
+        if ev.source == "a8_judge" {
+            for id in &ev.evaluated_ids {
+                bump_checker_stat(&mut stats_index.decision_global, id, ev.ts, false);
+                if !repo_lower.is_empty() {
+                    bump_repo_checker_stat(
+                        &mut stats_index.decision_by_repo,
+                        &repo_lower,
+                        id,
+                        ev.ts,
+                        false,
+                    );
+                }
+            }
+            for id in &ev.violated_ids {
+                bump_checker_stat(&mut stats_index.decision_global, id, ev.ts, true);
+                if !repo_lower.is_empty() {
+                    bump_repo_checker_stat(
+                        &mut stats_index.decision_by_repo,
+                        &repo_lower,
+                        id,
+                        ev.ts,
+                        true,
+                    );
+                }
+            }
+        } else if ev.source == "repo_lint" {
+            for id in &ev.evaluated_ids {
+                let up = id.to_ascii_uppercase();
+                bump_checker_stat(&mut stats_index.lint_global, &up, ev.ts, false);
+                if !repo_lower.is_empty() {
+                    bump_repo_checker_stat(
+                        &mut stats_index.lint_by_repo,
+                        &repo_lower,
+                        &up,
+                        ev.ts,
+                        false,
+                    );
+                }
+            }
+            for id in &ev.violated_ids {
+                let up = id.to_ascii_uppercase();
+                bump_checker_stat(&mut stats_index.lint_global, &up, ev.ts, true);
+                if !repo_lower.is_empty() {
+                    bump_repo_checker_stat(
+                        &mut stats_index.lint_by_repo,
+                        &repo_lower,
+                        &up,
+                        ev.ts,
+                        true,
+                    );
+                }
+            }
+        }
+
         if !ev.date.is_empty() {
             let entry = day_buckets.entry(ev.date.clone()).or_insert((0, 0, 0));
             let is_err_or_violated = matches!(
@@ -2113,7 +2341,7 @@ pub(crate) fn parse_harness_telemetry_at(
     events.sort_by(|a, b| b.ts.cmp(&a.ts));
     events.truncate(60);
 
-    HarnessTelemetryDto {
+    let dto = HarnessTelemetryDto {
         metrics_path: display_path,
         total_events: events.len(),
         stop_hook_events,
@@ -2128,18 +2356,17 @@ pub(crate) fn parse_harness_telemetry_at(
         threshold,
         daily_trends,
         recent_events: events,
-    }
+    };
+    (dto, stats_index)
 }
 
-pub(crate) fn parse_harness_telemetry(
+#[allow(dead_code)]
+pub(crate) fn parse_harness_telemetry_at(
     metrics_path: Option<&Path>,
     threshold: f64,
+    now_secs: u64,
 ) -> HarnessTelemetryDto {
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    parse_harness_telemetry_at(metrics_path, threshold, now_secs)
+    parse_harness_telemetry_with_stats(metrics_path, threshold, now_secs).0
 }
 
 pub(crate) fn update_proposal_status_in_dir(
@@ -2552,6 +2779,67 @@ pub fn advance_proposal_in_antigravity(
     })
 }
 
+/// 运行指定仓库下的 scripts/lints/ 机械检查并记录命中统计到 harness_metrics.jsonl。
+#[tauri::command]
+pub fn run_repo_lints(repo_code: String) -> Result<Value, String> {
+    let clean_code = repo_code.trim();
+    if clean_code.is_empty() {
+        return Err("缺少目标仓库代号 repo_code".to_string());
+    }
+    let (plugin_root, _, _) = detect_plugin_location()?;
+    let projects = parse_projects_index(&plugin_root);
+    let proj = projects
+        .into_iter()
+        .find(|p| p.code.eq_ignore_ascii_case(clean_code))
+        .ok_or_else(|| format!("未在仓库地图找到项目: {}", clean_code))?;
+    let repo_root = PathBuf::from(proj.physical_path.trim());
+    if !repo_root.is_dir() {
+        return Err(format!("项目目录不存在: {}", clean_display_path(&repo_root)));
+    }
+    let runner = plugin_root.join("scripts").join("run_repo_lints.py");
+    if !runner.is_file() {
+        return Err(format!("缺失插件 Lint 运行器: {}", clean_display_path(&runner)));
+    }
+
+    let (exe, prefix_args): (&str, Vec<&str>) = if cfg!(windows) {
+        ("py", vec!["-3"])
+    } else {
+        ("python3", vec![])
+    };
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(&prefix_args).arg(&runner).arg(&repo_root);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let output = cmd
+        .output()
+        .or_else(|_| {
+            let mut fallback = std::process::Command::new("python");
+            fallback.arg(&runner).arg(&repo_root);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                fallback.creation_flags(0x08000000);
+            }
+            fallback.output()
+        })
+        .map_err(|e| format!("启动 Python Lint 运行器失败: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stdout.is_empty() {
+        return Err(if stderr.is_empty() {
+            "Lint 运行器未输出有效结果".to_string()
+        } else {
+            stderr
+        });
+    }
+    serde_json::from_str::<Value>(&stdout)
+        .map_err(|e| format!("解析 Lint 运行结果失败: {} ({})", e, stdout))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2837,7 +3125,8 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         std::fs::write(tmp.0.join("repos.md"), repos_md).unwrap();
 
         let projects = parse_projects_index(&tmp.0);
-        let (rules, decisions, lints, summary) = scan_governance_assets(&tmp.0, &projects);
+        let empty_stats = CheckerStatsIndex::default();
+        let (rules, decisions, lints, summary) = scan_governance_assets(&tmp.0, &projects, &empty_stats);
         assert_eq!(summary.rule_files_count, 3); // mind-rules.md, custom.md, sample-repo/redline.md
         assert_eq!(summary.rule_clauses_count, 3);
         assert_eq!(summary.decisions_count, 2);
@@ -2926,5 +3215,73 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         let updated = update_proposal_status_in_dir(&pdir, "2026-11-15.md", "adopted").unwrap();
         assert_eq!(updated.status, "adopted");
         assert!(update_proposal_status_in_dir(&pdir, "2026-11-15.md", "bad").is_err());
+    }
+
+    #[test]
+    fn test_checker_hit_tracking_and_decision_retirement() {
+        let tmp = TempPluginDir::new();
+        let metrics = tmp.0.join("harness_metrics.jsonl");
+        let now_secs = 1_794_726_200u64;
+        let today = unix_secs_to_ymd_cn(now_secs);
+        let content = format!(
+            "{{\"ts\":{},\"date\":\"{}\",\"source\":\"a8_judge\",\"mode\":\"VIOLATED\",\"repo\":\"sample-repo\",\"verdict\":\"VIOLATED\",\"confidence\":0.95,\"evaluated_ids\":[\"LIFECYCLE_GUARD\",\"OLD_RULE\"],\"violated_ids\":[\"LIFECYCLE_GUARD\"]}}\n\
+             {{\"ts\":{},\"date\":\"{}\",\"source\":\"a8_judge\",\"mode\":\"PASSED\",\"repo\":\"sample-repo\",\"verdict\":\"PASSED\",\"confidence\":0.91,\"evaluated_ids\":[\"LIFECYCLE_GUARD\",\"OLD_RULE\"],\"violated_ids\":[]}}\n\
+             {{\"ts\":{},\"date\":\"{}\",\"source\":\"repo_lint\",\"mode\":\"VIOLATED\",\"repo\":\"sample-repo\",\"verdict\":\"VIOLATED\",\"confidence\":1.0,\"evaluated_ids\":[\"CLIENT_SDK_ISOLATION\"],\"violated_ids\":[\"CLIENT_SDK_ISOLATION\"]}}\n",
+            now_secs - 200,
+            today,
+            now_secs - 100,
+            today,
+            now_secs - 50,
+            today
+        );
+        std::fs::write(&metrics, content).unwrap();
+
+        let (tel, stats) = parse_harness_telemetry_with_stats(Some(&metrics), 0.85, now_secs);
+        assert_eq!(tel.total_events, 3);
+        assert_eq!(tel.recent_events[0].source, "repo_lint");
+        assert_eq!(tel.recent_events[0].violated_ids, vec!["CLIENT_SDK_ISOLATION"]);
+
+        let dec_dir = tmp.0.join("decisions");
+        std::fs::create_dir_all(&dec_dir).unwrap();
+        std::fs::write(
+            dec_dir.join("lifecycle.decision.json"),
+            r#"{"id":"LIFECYCLE_GUARD","name":"Lifecycle Guard","enabled":true,"triggers":[],"file_patterns":[],"instructions":"check"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dec_dir.join("old.decision.json"),
+            r#"{"id":"OLD_RULE","name":"Old Rule","enabled":false,"retired_at":"2026-11-15","retired_reason":"看板一键退役","triggers":[],"file_patterns":[],"instructions":"old"}"#,
+        )
+        .unwrap();
+
+        let mut decisions = Vec::new();
+        collect_decision_entries_in_dir(&tmp.0, &dec_dir, "global", "a8-agent-mind", true, &stats, &mut decisions);
+        assert_eq!(decisions.len(), 2);
+        let life = decisions.iter().find(|d| d.id == "LIFECYCLE_GUARD").unwrap();
+        assert_eq!(life.eval_count, 2);
+        assert_eq!(life.hit_count, 1);
+        assert_eq!(life.last_hit_ts, now_secs - 200);
+        let old = decisions.iter().find(|d| d.id == "OLD_RULE").unwrap();
+        assert!(!old.enabled);
+        assert_eq!(old.retired_at, "2026-11-15");
+        assert_eq!(old.retired_reason, "看板一键退役");
+        assert_eq!(old.eval_count, 2);
+        assert_eq!(old.hit_count, 0);
+
+        let repo_root = tmp.0.join("sample-repo");
+        let lints_dir = repo_root.join("scripts").join("lints");
+        std::fs::create_dir_all(&lints_dir).unwrap();
+        std::fs::write(
+            lints_dir.join("run_lints.py"),
+            "def check_client_sdk_isolation():\n    \"\"\"禁止客户端引入重型容器\"\"\"\n    pass\n",
+        )
+        .unwrap();
+        let mut lints = Vec::new();
+        collect_lint_items_in_dir(&repo_root, &lints_dir, "project", "sample-repo", &stats, &mut lints);
+        assert_eq!(lints.len(), 1);
+        assert_eq!(lints[0].id, "CLIENT_SDK_ISOLATION");
+        assert_eq!(lints[0].eval_count, 1);
+        assert_eq!(lints[0].hit_count, 1);
+        assert_eq!(lints[0].last_hit_ts, now_secs - 50);
     }
 }
