@@ -1,0 +1,20 @@
+{
+  "command": "node",
+  "args": [
+    "main.mjs"
+  ],
+  "restart_policy": "always",
+  "display_name": "A8 Agent Mind Dashboard",
+  "description": "宿主机全局仓库地图、架构根本红线与文档治理仪表盘",
+  "has_web_ui": true,
+  "ui_config": {
+    "display_name": "A8 Agent Mind Dashboard",
+    "views": [
+      {
+        "path": "/",
+        "entrypoint": "SIDECAR_UI_ENTRYPOINT_AUX_PANE",
+        "title": "A8 Agent Mind Dashboard"
+      }
+    ]
+  }
+}

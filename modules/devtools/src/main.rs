@@ -865,6 +865,11 @@ fn main() {
             agent_mind::delete_agent_mind_file,
             agent_mind::open_agent_mind_dir,
             agent_mind::launch_agent_mind_sidecar,
+            agent_mind::read_grok_proposal,
+            agent_mind::delete_grok_proposal,
+            agent_mind::open_grok_proposals_dir,
+            agent_mind::advance_proposal_in_antigravity,
+            agent_mind::update_grok_proposal_status,
         ]);
 
     let app_built = app

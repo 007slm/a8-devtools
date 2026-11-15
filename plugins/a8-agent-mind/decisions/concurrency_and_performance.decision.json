@@ -1,0 +1,24 @@
+{
+  "id": "concurrency_and_performance",
+  "name": "并发安全与热路径性能",
+  "category": "concurrency_and_performance",
+  "enabled": true,
+  "triggers": [
+    "synchronized",
+    "Lock",
+    "Mutex",
+    "volatile",
+    "Thread.sleep",
+    "time.Sleep"
+  ],
+  "file_patterns": [],
+  "question": {
+    "type": "choice",
+    "instructions": "Evaluate Concurrency and Performance: no coarse-grained method-level synchronized locks on hot read paths, zero phantom polling.",
+    "criteria": {
+      "passed": "No coarse-grained method-level synchronized locks on hot read paths; uses fine-grained or lock-free mechanisms; zero phantom polling/probing.",
+      "violated": "Method-level synchronized lock used on hot data read path, or phantom polling/probing introduced."
+    }
+  },
+  "why": "核心正交架构红线：高并发读取热路径禁止方法级大粒度排他锁，禁止跨线程/跨数据源的幽灵轮询与反查探测。"
+}

@@ -102,6 +102,11 @@ const SIDECAR_HTTP_ROUTES: Record<string, { path: string; method: 'GET' | 'POST'
   create_agent_mind_rule: { path: '/api/agent-mind/create', method: 'POST' },
   delete_agent_mind_file: { path: '/api/agent-mind/delete', method: 'POST' },
   open_agent_mind_dir: { path: '/api/agent-mind/open-dir', method: 'POST' },
+  read_grok_proposal: { path: '/api/agent-mind/proposal/read', method: 'POST' },
+  delete_grok_proposal: { path: '/api/agent-mind/proposal/delete', method: 'POST' },
+  open_grok_proposals_dir: { path: '/api/agent-mind/proposal/open-dir', method: 'POST' },
+  advance_proposal_in_antigravity: { path: '/api/agent-mind/proposal/advance', method: 'POST' },
+  update_grok_proposal_status: { path: '/api/agent-mind/proposal/status', method: 'POST' },
 };
 
 async function callTauri<T = any>(command: string, args: Record<string, any> = {}): Promise<T | null> {
@@ -120,7 +125,11 @@ async function callTauri<T = any>(command: string, args: Record<string, any> = {
       route.method === 'POST'
         ? JSON.stringify({
             rel_path: args.relPath ?? args.rel_path,
+            repo_code: args.repoCode ?? args.repo_code,
             content: args.content,
+            file_name: args.fileName ?? args.file_name,
+            title: args.title,
+            prompt: args.prompt,
           })
         : undefined;
     const sidecarBridge = (window as any).sidecar;
@@ -169,11 +178,9 @@ function PathSegment({ path }: { path: string }) {
 }
 
 const NAV_ITEMS = [
+  { id: 'agent-mind' as const, group: '核心特性', label: '心智治理', icon: BrainCircuit, badge: '规则' },
   { id: 'mappings' as const, group: '核心特性', label: '虚拟镜像映射', icon: FolderGit2 },
   { id: 'hosts' as const, group: '核心特性', label: 'Hosts 维护', icon: Globe, badge: 'DNS' },
-  { id: 'agent-mind' as const, group: '核心特性', label: 'Agent Mind', icon: BrainCircuit, badge: 'RULES' },
-  { id: 'doctor' as const, group: '系统运维', label: '内核与驱动', icon: Activity },
-  { id: 'settings' as const, group: '系统运维', label: '偏好设置', icon: Settings },
 ];
 
 export default function App() {
@@ -184,7 +191,8 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('a8-devtools-sidebar-collapsed') === 'true';
   });
-  const [activeTab, setActiveTab] = useState<'mappings' | 'hosts' | 'agent-mind' | 'doctor' | 'settings'>('mappings');
+  const [activeTab, setActiveTab] = useState<'agent-mind' | 'mappings' | 'hosts' | 'settings'>('agent-mind');
+  const [settingsSection, setSettingsSection] = useState<'prefs' | 'doctor'>('prefs');
   const [inspectorTab, setInspectorTab] = useState<'topology' | 'diff'>('topology');
   const [workspaces, setWorkspaces] = useState<WorkspaceCard[]>([]);
   const [selectedWsIdx, setSelectedWsIdx] = useState<number>(0);
@@ -413,11 +421,12 @@ export default function App() {
       ws.source_path.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const switchTab = (tab: typeof activeTab) => {
+  const switchTab = (tab: typeof activeTab, section?: 'prefs' | 'doctor') => {
     setActiveTab(tab);
     if (tab === 'hosts') {
       callTauri<string>('get_hosts_content').then((txt) => txt && setHostsContent(txt));
     } else if (tab === 'settings') {
+      if (section) setSettingsSection(section);
       callTauri<AppSettings>('get_app_settings').then((s) => s && setAppSettings(s));
     }
   };
@@ -436,13 +445,13 @@ export default function App() {
       { id: 'new', title: '新建虚拟镜像映射', hint: '挂载新工作区', action: () => setIsCreateOpen(true) },
       { id: 'sidebar', title: sidebarCollapsed ? '展开左侧导航栏' : '收起左侧导航栏', hint: 'Ctrl+B', action: () => setSidebarCollapsed((v) => !v) },
       { id: 'theme', title: theme === 'light' ? '切换为 Obsidian 暗夜工作台' : '切换为 Porcelain 极光亮色', hint: '切换主题皮肤', action: () => setTheme((t) => (t === 'light' ? 'dark' : 'light')) },
+      { id: 'tab-agent-mind', title: '前往：心智治理规则中心', hint: '直编 rules 与仓库地图', action: () => switchTab('agent-mind') },
       { id: 'tab-mappings', title: '前往：虚拟镜像映射', hint: '工作区总览', action: () => switchTab('mappings') },
       { id: 'tab-hosts', title: '前往：Hosts 维护', hint: '编辑系统 DNS', action: () => switchTab('hosts') },
-      { id: 'tab-agent-mind', title: '前往：Agent Mind 规则中心', hint: '直编 rules 与仓库地图', action: () => switchTab('agent-mind') },
-      { id: 'tab-doctor', title: '前往：内核与驱动诊断', hint: 'WinFsp 健康检查', action: () => switchTab('doctor') },
-      { id: 'tab-settings', title: '前往：偏好设置', hint: '任务栏与自启', action: () => switchTab('settings') },
+      { id: 'tab-settings', title: '前往：系统设置 · 偏好设置', hint: '任务栏与自启', action: () => switchTab('settings', 'prefs') },
+      { id: 'tab-doctor', title: '前往：系统设置 · 内核与驱动诊断', hint: 'WinFsp 健康检查', action: () => switchTab('settings', 'doctor') },
       { id: 'dir', title: '打开全局配置目录', hint: 'Explorer', action: () => callTauri('open_global_dir') },
-      { id: 'quit', title: '退出 a8-devtools', hint: '关闭工作台与托盘常驻', action: () => callTauri('app_quit') },
+      { id: 'quit', title: '退出 A8 开发工具', hint: '关闭工作台与托盘常驻', action: () => callTauri('app_quit') },
     ];
     return base.filter((c) =>
       c.title.toLowerCase().includes(paletteQuery.toLowerCase()) ||
@@ -615,9 +624,9 @@ export default function App() {
       <div className="relative h-screen w-screen overflow-hidden flex flex-col bg-white dark:bg-[#09090B] text-foreground text-[12px] antialiased">
         <header className="h-10 px-4 border-b border-zinc-200/85 dark:border-border/70 flex items-center justify-between shrink-0 bg-white dark:bg-[#09090B]">
           <div className="flex items-center gap-2 min-w-0">
-            <img src="./app-icon.png" alt="DevTools" className="w-5 h-5 rounded-md shrink-0" />
+            <img src="./app-icon.png" alt="A8 开发工具" className="w-5 h-5 rounded-md shrink-0" />
             <span className="text-[12.5px] font-semibold tracking-tight text-foreground truncate">
-              Agent Mind
+              A8 心智治理
             </span>
           </div>
 
@@ -640,7 +649,7 @@ export default function App() {
 
         <main className="flex-1 overflow-y-auto px-4 py-3 bg-white dark:bg-[#09090B]">
           <div className="max-w-[1440px] mx-auto">
-            <AgentMindView callTauri={callTauri} pushToast={pushToast} isStandalone />
+            <AgentMindView callTauri={callTauri} pushToast={pushToast} isStandalone theme={theme} />
           </div>
         </main>
 
@@ -669,15 +678,15 @@ export default function App() {
           >
             <img
               src="./app-icon.png"
-              alt="A8 DevTools"
+              alt="A8 开发工具"
               className="w-6 h-6 rounded-lg shadow-[0_2px_8px_rgba(37,99,235,0.22)] shrink-0 object-cover pointer-events-none"
             />
             {!sidebarCollapsed && (
               <div className="flex flex-col leading-tight min-w-0 pointer-events-none">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[12.5px] font-semibold text-foreground tracking-tight">DevTools</span>
-                  <Chip size="sm" variant="soft" color="accent" className="h-4 px-1.5 text-[8.5px] font-mono">
-                    <Chip.Label>PRO</Chip.Label>
+                  <span className="text-[12.5px] font-semibold text-foreground tracking-tight whitespace-nowrap">A8 开发工具</span>
+                  <Chip size="sm" variant="soft" color="accent" className="h-4 px-1.5 text-[9.5px] font-medium whitespace-nowrap shrink-0">
+                    <Chip.Label>专业版</Chip.Label>
                   </Chip>
                 </div>
               </div>
@@ -686,7 +695,7 @@ export default function App() {
 
           {/* 分组导航 */}
           <div className={`${sidebarCollapsed ? 'px-1.5 space-y-1.5 mt-2' : 'px-2 space-y-2.5 mt-2'}`}>
-            {(['核心特性', '系统运维'] as const).map((group) => (
+            {(['核心特性'] as const).map((group) => (
               <div key={group}>
                 {!sidebarCollapsed ? (
                   <div className="px-2 pb-1 text-[9px] font-mono font-semibold tracking-[0.1em] text-muted/70">
@@ -730,14 +739,7 @@ export default function App() {
                               </span>
                             )}
                             {item.badge && (
-                              <span className="text-[8.5px] font-mono text-muted/80">{item.badge}</span>
-                            )}
-                            {item.id === 'doctor' && (
-                              <span className={`w-1.5 h-1.5 rounded-full ${
-                                systemStatus?.winfsp_driver_running
-                                  ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.75)]'
-                                  : 'bg-rose-500'
-                              }`} />
+                              <span className="text-[9.5px] font-medium text-muted/80 shrink-0">{item.badge}</span>
                             )}
                           </span>
                         )}
@@ -855,7 +857,9 @@ export default function App() {
               <span className="text-[11px] text-muted">工作台</span>
               <span className="text-border">/</span>
               <span className="text-[11.5px] font-semibold text-foreground">
-                {NAV_ITEMS.find((n) => n.id === activeTab)?.label}
+                {activeTab === 'settings'
+                  ? `系统设置 · ${settingsSection === 'doctor' ? '内核与驱动' : '偏好设置'}`
+                  : NAV_ITEMS.find((n) => n.id === activeTab)?.label}
               </span>
               <span className="hidden sm:inline-flex items-center gap-1 text-[9.5px] font-mono text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2 py-[1px]">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -876,6 +880,33 @@ export default function App() {
                 <Kbd.Content>Ctrl+K</Kbd.Content>
               </Kbd>
             </button>
+
+            {/* 系统设置入口按钮（收口偏好设置 + 内核与驱动） */}
+            <Tooltip delay={200}>
+              <Tooltip.Trigger>
+                <button
+                  onClick={() => switchTab('settings')}
+                  className={`h-7 px-2.5 rounded-lg border flex items-center gap-1.5 text-[11px] transition-colors cursor-pointer ${
+                    activeTab === 'settings'
+                      ? 'border-blue-500/45 bg-blue-500/10 text-foreground font-semibold'
+                      : 'border-border/80 bg-surface-secondary/70 hover:bg-surface-secondary text-muted hover:text-foreground'
+                  }`}
+                >
+                  <Settings className={`w-3.5 h-3.5 ${activeTab === 'settings' ? 'text-blue-500' : ''}`} />
+                  <span>设置</span>
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      systemStatus?.winfsp_driver_running
+                        ? 'bg-emerald-500'
+                        : 'bg-rose-500'
+                    }`}
+                  />
+                </button>
+              </Tooltip.Trigger>
+              <Tooltip.Content className="text-[10.5px] px-2 py-1 rounded-lg">
+                系统设置（偏好设置 · 内核与驱动）
+              </Tooltip.Content>
+            </Tooltip>
 
             {/* 一键 Porcelain Light / Obsidian Dark 切换 */}
             <Tooltip delay={200}>
@@ -1409,7 +1440,7 @@ export default function App() {
               </motion.div>
             )}
 
-            {/* 视图 3：Agent Mind 插件能力与规则维护 */}
+            {/* 视图 3：A8 Agent Mind 插件能力与规则维护 */}
             {activeTab === 'agent-mind' && (
               <motion.div
                 key="agent-mind"
@@ -1418,103 +1449,11 @@ export default function App() {
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.16 }}
               >
-                <AgentMindView callTauri={callTauri} pushToast={pushToast} />
+                <AgentMindView callTauri={callTauri} pushToast={pushToast} theme={theme} />
               </motion.div>
             )}
 
-            {/* 视图 4：内核与驱动 */}
-            {activeTab === 'doctor' && (
-              <motion.div
-                key="doctor"
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.16 }}
-                className="flex flex-col max-w-[1440px] mx-auto"
-              >
-                <div className="flex items-center justify-between pb-2.5 border-b border-border/60">
-                  <div>
-                    <h2 className="text-[15px] font-semibold text-foreground">内核与驱动环境体检</h2>
-                    <p className="text-[11px] text-muted mt-0.5">验证 WinFsp 虚拟文件系统、Windows BindFlt 透明桥接服务与权限状态</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-3 rounded-lg text-[11px]"
-                      onPress={async () => {
-                        try {
-                          const msg = await callTauri<string>('setup_kernel_environment');
-                          pushToast(msg || '内核桥接服务安装成功', 'success');
-                          await loadData(true);
-                        } catch (e: any) {
-                          pushToast(`初始化失败: ${e}`, 'danger');
-                        }
-                      }}
-                    >
-                      <ShieldCheck className="w-3.5 h-3.5" />
-                      <span>一键安装/启动内核服务</span>
-                    </Button>
-                    <Button size="sm" variant="primary" className="h-7 px-3 rounded-lg text-[11px]" onPress={() => loadData(false)}>
-                      <RotateCw className="w-3.5 h-3.5" />
-                      <span>立即体检</span>
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 mt-3">
-                  <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface p-3.5 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-mono font-semibold text-muted uppercase tracking-wider">WinFsp Kernel Service</span>
-                      <Chip size="sm" variant="soft" color="default" className="h-5 text-[9.5px] font-mono">
-                        <Chip.Label>winfsp.sys</Chip.Label>
-                      </Chip>
-                    </div>
-                    <div className="flex items-center gap-2.5">
-                      <span className={`w-2.5 h-2.5 rounded-full ${
-                        systemStatus?.winfsp_driver_running
-                          ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.75)]'
-                          : 'bg-rose-500'
-                      }`} />
-                      <span className={`text-[15px] font-semibold ${
-                        systemStatus?.winfsp_driver_running ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'
-                      }`}>
-                        {systemStatus?.winfsp_driver_running ? '驱动在线 · 响应正常' : '未检测到驱动'}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-muted leading-relaxed">
-                      负责写时复制 (CoW) 虚拟卷的增量拦截与白障隔离，保护物理源仓零修改。
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface p-3.5 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-mono font-semibold text-muted uppercase tracking-wider">BindFlt Bridge Service</span>
-                      <Chip size="sm" variant="soft" color="accent" className="h-5 text-[9.5px] font-mono">
-                        <Chip.Label>CowFsBindService</Chip.Label>
-                      </Chip>
-                    </div>
-                    <div className="flex items-center gap-2.5">
-                      <span className={`w-2.5 h-2.5 rounded-full ${
-                        systemStatus?.bindflt_service_running
-                          ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.75)]'
-                          : 'bg-rose-500'
-                      }`} />
-                      <span className={`text-[15px] font-semibold ${
-                        systemStatus?.bindflt_service_running ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'
-                      }`}>
-                        {systemStatus?.bindflt_service_running ? '内核桥接在线 · 0x10 无感目录' : '服务未安装 / 未启动'}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-muted leading-relaxed">
-                      以系统服务代调 Windows 原生 bindflt.sys (CreateBindLink)，使目标目录无 ReparsePoint、对 Go 及所有工具完全透明。
-                    </p>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* 视图 4：偏好设置 */}
+            {/* 视图 4：系统设置（收口偏好设置 + 内核与驱动） */}
             {activeTab === 'settings' && (
               <motion.div
                 key="settings"
@@ -1522,87 +1461,214 @@ export default function App() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.16 }}
-                className="flex flex-col max-w-3xl"
+                className="flex flex-col gap-3 max-w-[1440px] mx-auto"
               >
-                <div className="flex items-center justify-between pb-2.5 border-b border-border/60">
-                  <div>
-                    <h2 className="text-[15px] font-semibold text-foreground">偏好设置</h2>
-                    <p className="text-[11px] text-muted mt-0.5">定制任务栏网速指示条与工作区守护策略</p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    className="h-7 px-3 rounded-lg text-[11px]"
-                    onPress={async () => {
-                      try {
-                        await callTauri('save_app_settings', { newSettings: appSettings });
-                        pushToast('偏好设置已持久化保存', 'success');
-                      } catch (e: any) {
-                        pushToast(`保存失败: ${e}`, 'danger');
-                      }
-                    }}
-                  >
-                    保存设置
-                  </Button>
-                </div>
-
-                <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface mt-3 divide-y divide-zinc-200/75 dark:divide-border/50">
-                  <div className="px-3.5 py-2.5 flex items-center justify-between">
-                    <div>
-                      <span className="font-semibold text-foreground block text-[12px]">任务栏原生网速指示条</span>
-                      <span className="text-muted mt-0.5 block text-[10.5px]">在 Windows 任务栏系统托盘左侧实时绘制上下行网速</span>
+                <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 px-4 pt-3 pb-0 flex flex-col gap-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-7 h-7 rounded-lg bg-zinc-100 dark:bg-surface-secondary border border-zinc-200/80 dark:border-border/70 flex items-center justify-center shrink-0">
+                        <Settings className="w-3.5 h-3.5 text-foreground" />
+                      </div>
+                      <div className="min-w-0">
+                        <h2 className="text-[13.5px] font-semibold tracking-tight text-foreground">
+                          系统设置与内核运维
+                        </h2>
+                        <p className="text-[10.5px] text-muted mt-0.5">
+                          集中管理工作台偏好配置，以及 WinFsp / Windows BindFlt 内核与驱动健康诊断
+                        </p>
+                      </div>
                     </div>
-                    <Switch
-                      size="sm"
-                      isSelected={appSettings.taskbar_speed_enabled}
-                      onChange={(v) => setAppSettings({ ...appSettings, taskbar_speed_enabled: v })}
+
+                    {settingsSection === 'prefs' ? (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        className="h-7 px-3 rounded-lg text-[11px]"
+                        onPress={async () => {
+                          try {
+                            await callTauri('save_app_settings', { newSettings: appSettings });
+                            pushToast('偏好设置已持久化保存', 'success');
+                          } catch (e: any) {
+                            pushToast(`保存失败: ${e}`, 'danger');
+                          }
+                        }}
+                      >
+                        保存设置
+                      </Button>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-3 rounded-lg text-[11px]"
+                          onPress={async () => {
+                            try {
+                              const msg = await callTauri<string>('setup_kernel_environment');
+                              pushToast(msg || '内核桥接服务安装成功', 'success');
+                              await loadData(true);
+                            } catch (e: any) {
+                              pushToast(`初始化失败: ${e}`, 'danger');
+                            }
+                          }}
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          <span>一键安装/启动内核服务</span>
+                        </Button>
+                        <Button size="sm" variant="primary" className="h-7 px-3 rounded-lg text-[11px]" onPress={() => loadData(false)}>
+                          <RotateCw className="w-3.5 h-3.5" />
+                          <span>立即体检</span>
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  <nav aria-label="系统设置子视图" className="flex items-center gap-6">
+                    <button
+                      onClick={() => setSettingsSection('prefs')}
+                      className={`relative pb-2.5 text-[12px] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                        settingsSection === 'prefs'
+                          ? 'font-semibold text-foreground'
+                          : 'font-medium text-muted hover:text-foreground'
+                      }`}
                     >
-                      <Switch.Content>
-                        <Switch.Control>
-                          <Switch.Thumb />
-                        </Switch.Control>
-                      </Switch.Content>
-                    </Switch>
-                  </div>
+                      <Settings className="w-3.5 h-3.5" />
+                      <span>偏好设置</span>
+                      {settingsSection === 'prefs' && (
+                        <span className="absolute left-0 right-0 bottom-0 h-[2px] bg-foreground rounded-full" />
+                      )}
+                    </button>
 
-                  <div className="px-3.5 py-2.5 flex items-center justify-between">
-                    <div>
-                      <span className="font-semibold text-foreground block text-[12px]">登录 Windows 时自动启动</span>
-                      <span className="text-muted mt-0.5 block text-[10.5px]">静默驻留后台并自动恢复全部持久化映射</span>
-                    </div>
-                    <Switch
-                      size="sm"
-                      isSelected={appSettings.autostart}
-                      onChange={(v) => setAppSettings({ ...appSettings, autostart: v })}
+                    <button
+                      onClick={() => setSettingsSection('doctor')}
+                      className={`relative pb-2.5 text-[12px] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                        settingsSection === 'doctor'
+                          ? 'font-semibold text-foreground'
+                          : 'font-medium text-muted hover:text-foreground'
+                      }`}
                     >
-                      <Switch.Content>
-                        <Switch.Control>
-                          <Switch.Thumb />
-                        </Switch.Control>
-                      </Switch.Content>
-                    </Switch>
-                  </div>
+                      <Activity className="w-3.5 h-3.5" />
+                      <span>内核与驱动</span>
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          systemStatus?.winfsp_driver_running ? 'bg-emerald-500' : 'bg-rose-500'
+                        }`}
+                      />
+                      {settingsSection === 'doctor' && (
+                        <span className="absolute left-0 right-0 bottom-0 h-[2px] bg-foreground rounded-full" />
+                      )}
+                    </button>
+                  </nav>
+                </section>
 
-                  <div className="px-3.5 py-2.5 flex items-center justify-between">
-                    <div>
-                      <span className="font-semibold text-foreground block text-[12px]">遥测采样间隔 (秒)</span>
-                      <span className="text-muted mt-0.5 block text-[10.5px]">控制带宽统计与任务栏文字刷新频率</span>
+                {settingsSection === 'prefs' ? (
+                  <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface max-w-3xl divide-y divide-zinc-200/75 dark:divide-border/50">
+                    <div className="px-3.5 py-2.5 flex items-center justify-between">
+                      <div>
+                        <span className="font-semibold text-foreground block text-[12px]">任务栏原生网速指示条</span>
+                        <span className="text-muted mt-0.5 block text-[10.5px]">在 Windows 任务栏系统托盘左侧实时绘制上下行网速</span>
+                      </div>
+                      <Switch
+                        size="sm"
+                        isSelected={appSettings.taskbar_speed_enabled}
+                        onChange={(v) => setAppSettings({ ...appSettings, taskbar_speed_enabled: v })}
+                      >
+                        <Switch.Content>
+                          <Switch.Control>
+                            <Switch.Thumb />
+                          </Switch.Control>
+                        </Switch.Content>
+                      </Switch>
                     </div>
-                    <input
-                      type="number"
-                      min={1}
-                      max={60}
-                      value={appSettings.sample_interval_secs}
-                      onChange={(e) =>
-                        setAppSettings({
-                          ...appSettings,
-                          sample_interval_secs: parseInt(e.target.value, 10) || 5,
-                        })
-                      }
-                      className="w-16 h-8 px-2 rounded-xl bg-surface-secondary border border-border text-center font-mono font-semibold text-[11.5px] text-foreground outline-none focus:border-blue-500"
-                    />
+
+                    <div className="px-3.5 py-2.5 flex items-center justify-between">
+                      <div>
+                        <span className="font-semibold text-foreground block text-[12px]">登录 Windows 时自动启动</span>
+                        <span className="text-muted mt-0.5 block text-[10.5px]">静默驻留后台并自动恢复全部持久化映射</span>
+                      </div>
+                      <Switch
+                        size="sm"
+                        isSelected={appSettings.autostart}
+                        onChange={(v) => setAppSettings({ ...appSettings, autostart: v })}
+                      >
+                        <Switch.Content>
+                          <Switch.Control>
+                            <Switch.Thumb />
+                          </Switch.Control>
+                        </Switch.Content>
+                      </Switch>
+                    </div>
+
+                    <div className="px-3.5 py-2.5 flex items-center justify-between">
+                      <div>
+                        <span className="font-semibold text-foreground block text-[12px]">遥测采样间隔 (秒)</span>
+                        <span className="text-muted mt-0.5 block text-[10.5px]">控制带宽统计与任务栏文字刷新频率</span>
+                      </div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={60}
+                        value={appSettings.sample_interval_secs}
+                        onChange={(e) =>
+                          setAppSettings({
+                            ...appSettings,
+                            sample_interval_secs: parseInt(e.target.value, 10) || 5,
+                          })
+                        }
+                        className="w-16 h-8 px-2 rounded-xl bg-surface-secondary border border-border text-center font-mono font-semibold text-[11.5px] text-foreground outline-none focus:border-blue-500"
+                      />
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface p-3.5 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono font-semibold text-muted uppercase tracking-wider">WinFsp Kernel Service</span>
+                        <Chip size="sm" variant="soft" color="default" className="h-5 text-[9.5px] font-mono">
+                          <Chip.Label>winfsp.sys</Chip.Label>
+                        </Chip>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <span className={`w-2.5 h-2.5 rounded-full ${
+                          systemStatus?.winfsp_driver_running
+                            ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.75)]'
+                            : 'bg-rose-500'
+                        }`} />
+                        <span className={`text-[15px] font-semibold ${
+                          systemStatus?.winfsp_driver_running ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'
+                        }`}>
+                          {systemStatus?.winfsp_driver_running ? '驱动在线 · 响应正常' : '未检测到驱动'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted leading-relaxed">
+                        负责写时复制 (CoW) 虚拟卷的增量拦截与白障隔离，保护物理源仓零修改。
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface p-3.5 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono font-semibold text-muted uppercase tracking-wider">BindFlt Bridge Service</span>
+                        <Chip size="sm" variant="soft" color="accent" className="h-5 text-[9.5px] font-mono">
+                          <Chip.Label>CowFsBindService</Chip.Label>
+                        </Chip>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <span className={`w-2.5 h-2.5 rounded-full ${
+                          systemStatus?.bindflt_service_running
+                            ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.75)]'
+                            : 'bg-rose-500'
+                        }`} />
+                        <span className={`text-[15px] font-semibold ${
+                          systemStatus?.bindflt_service_running ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'
+                        }`}>
+                          {systemStatus?.bindflt_service_running ? '内核桥接在线 · 0x10 无感目录' : '服务未安装 / 未启动'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted leading-relaxed">
+                        以系统服务代调 Windows 原生 bindflt.sys (CreateBindLink)，使目标目录无 ReparsePoint、对 Go 及所有工具完全透明。
+                      </p>
+                    </div>
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>

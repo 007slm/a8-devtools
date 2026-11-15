@@ -1,0 +1,23 @@
+{
+  "id": "implementation_hygiene",
+  "name": "实现规范与单一路径",
+  "category": "implementation_hygiene",
+  "enabled": true,
+  "triggers": [
+    "catch",
+    "except",
+    "System.out",
+    "console.log",
+    "print("
+  ],
+  "file_patterns": [],
+  "question": {
+    "type": "choice",
+    "instructions": "Evaluate Implementation Hygiene: single implementation path for core capabilities, no swallowed exceptions, standardized logging.",
+    "criteria": {
+      "passed": "Single implementation path for core domain logic; exceptions retain original cause without being swallowed; clean error handling.",
+      "violated": "Dual-track parser or converter introduced, swallowed exceptions ignoring error context, or broken logging standards."
+    }
+  },
+  "why": "核心正交架构红线：同一核心领域能力全工程保持唯一实现路径，禁止吞异常用空值掩盖故障第一现场。"
+}

@@ -13,12 +13,32 @@ include!(concat!(env!("OUT_DIR"), "/sidecar_ui_assets.rs"));
 #[derive(Deserialize)]
 struct RelPathPayload {
     rel_path: String,
+    repo_code: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct SaveFilePayload {
     rel_path: String,
     content: String,
+    repo_code: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ProposalFilePayload {
+    file_name: String,
+}
+
+#[derive(Deserialize)]
+struct ProposalStatusPayload {
+    file_name: String,
+    status: String,
+}
+
+#[derive(Deserialize)]
+struct AdvanceProposalPayload {
+    file_name: String,
+    title: Option<String>,
+    prompt: Option<String>,
 }
 
 fn is_allowed_local_origin(origin: &str) -> bool {
@@ -225,7 +245,7 @@ fn handle_api(req: &ParsedRequest, stream: &mut TcpStream) {
                 send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
                 return;
             };
-            match agent_mind::read_agent_mind_file(payload.rel_path) {
+            match agent_mind::read_agent_mind_file(payload.rel_path, payload.repo_code) {
                 Ok(content) => send_json(stream, "200 OK", json!({ "ok": true, "data": content }), allowed_origin),
                 Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
             }
@@ -235,7 +255,7 @@ fn handle_api(req: &ParsedRequest, stream: &mut TcpStream) {
                 send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
                 return;
             };
-            match agent_mind::save_agent_mind_file(payload.rel_path, payload.content) {
+            match agent_mind::save_agent_mind_file(payload.rel_path, payload.content, payload.repo_code) {
                 Ok(()) => send_json(stream, "200 OK", json!({ "ok": true, "data": null }), allowed_origin),
                 Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
             }
@@ -245,7 +265,7 @@ fn handle_api(req: &ParsedRequest, stream: &mut TcpStream) {
                 send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
                 return;
             };
-            match agent_mind::create_agent_mind_rule(payload.rel_path, payload.content) {
+            match agent_mind::create_agent_mind_rule(payload.rel_path, payload.content, payload.repo_code) {
                 Ok(created) => send_json(stream, "200 OK", json!({ "ok": true, "data": created }), allowed_origin),
                 Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
             }
@@ -255,7 +275,7 @@ fn handle_api(req: &ParsedRequest, stream: &mut TcpStream) {
                 send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
                 return;
             };
-            match agent_mind::delete_agent_mind_file(payload.rel_path) {
+            match agent_mind::delete_agent_mind_file(payload.rel_path, payload.repo_code) {
                 Ok(()) => send_json(stream, "200 OK", json!({ "ok": true, "data": null }), allowed_origin),
                 Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
             }
@@ -264,6 +284,50 @@ fn handle_api(req: &ParsedRequest, stream: &mut TcpStream) {
             Ok(()) => send_json(stream, "200 OK", json!({ "ok": true, "data": null }), allowed_origin),
             Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
         },
+        ("POST", "/api/agent-mind/proposal/read") => {
+            let Ok(payload) = serde_json::from_slice::<ProposalFilePayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match agent_mind::read_grok_proposal(payload.file_name) {
+                Ok(content) => send_json(stream, "200 OK", json!({ "ok": true, "data": content }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
+        ("POST", "/api/agent-mind/proposal/delete") => {
+            let Ok(payload) = serde_json::from_slice::<ProposalFilePayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match agent_mind::delete_grok_proposal(payload.file_name) {
+                Ok(()) => send_json(stream, "200 OK", json!({ "ok": true, "data": null }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
+        ("POST", "/api/agent-mind/proposal/open-dir") => match agent_mind::open_grok_proposals_dir() {
+            Ok(()) => send_json(stream, "200 OK", json!({ "ok": true, "data": null }), allowed_origin),
+            Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+        },
+        ("POST", "/api/agent-mind/proposal/advance") => {
+            let Ok(payload) = serde_json::from_slice::<AdvanceProposalPayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match agent_mind::advance_proposal_in_antigravity(payload.file_name, payload.title, payload.prompt) {
+                Ok(res) => send_json(stream, "200 OK", json!({ "ok": true, "data": res }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
+        ("POST", "/api/agent-mind/proposal/status") => {
+            let Ok(payload) = serde_json::from_slice::<ProposalStatusPayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match agent_mind::update_grok_proposal_status(payload.file_name, payload.status) {
+                Ok(dto) => send_json(stream, "200 OK", json!({ "ok": true, "data": dto }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
         _ => send_json(
             stream,
             "404 Not Found",
@@ -358,12 +422,12 @@ pub fn run() {
     let listener = match TcpListener::bind(&addr) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[agent-mind sidecar] 绑定端口 {} 失败: {}", addr, e);
+            eprintln!("[a8-agent-mind sidecar] 绑定端口 {} 失败: {}", addr, e);
             return;
         }
     };
 
-    println!("[agent-mind sidecar] Rust 统一看板服务已就绪，监听于 http://{}", addr);
+    println!("[a8-agent-mind sidecar] Rust 统一看板服务已就绪，监听于 http://{}", addr);
     SIDECAR_RUNNING.store(true, Ordering::Release);
     serve_listener(listener);
     SIDECAR_RUNNING.store(false, Ordering::Release);
@@ -379,10 +443,10 @@ mod tests {
         assert!(is_allowed_local_origin("http://localhost:1420"));
         assert!(is_allowed_local_origin("https://tauri.localhost"));
         assert!(is_allowed_local_origin("tauri://localhost"));
-        assert!(is_allowed_local_origin("plugin://agent-mind"));
+        assert!(is_allowed_local_origin("plugin://a8-agent-mind"));
         assert!(is_allowed_local_origin("vscode-webview://12345"));
         assert!(is_allowed_local_origin("antigravity://panel"));
-        assert!(is_allowed_local_origin("antigravity-sidecar://agent-mind"));
+        assert!(is_allowed_local_origin("antigravity-sidecar://a8-agent-mind"));
         assert!(is_allowed_local_origin("file://"));
         assert!(is_allowed_local_origin("null"));
         assert!(is_allowed_local_origin("http://[::1]:18765"));

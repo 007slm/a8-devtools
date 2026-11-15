@@ -1,0 +1,24 @@
+{
+  "id": "topology_and_boundaries",
+  "name": "系统边界与拓扑隔离",
+  "category": "topology_and_boundaries",
+  "enabled": true,
+  "triggers": [
+    "import ",
+    "package ",
+    "pom.xml",
+    "package.json",
+    "go.mod",
+    "Cargo.toml"
+  ],
+  "file_patterns": [],
+  "question": {
+    "type": "choice",
+    "instructions": "Evaluate compliance with System Boundaries: client SDK zero heavy server container dependencies, strict unidirectional dependencies.",
+    "criteria": {
+      "passed": "Clean dependency hierarchy. Pure client SDK/driver has zero heavy server container libraries (Spring, Netty, Jackson, HikariCP), modules follow strict unidirectional flow.",
+      "violated": "Violates boundary: heavy server container dependencies leaking into client SDK, or circular module dependencies."
+    }
+  },
+  "why": "核心正交架构红线：客户端驱动严禁引入服务端重型容器依赖，模块依赖保持严格单向且职责边界自闭环。"
+}

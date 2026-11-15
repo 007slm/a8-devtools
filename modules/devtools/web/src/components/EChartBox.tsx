@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts/core';
 import { PieChart, BarChart } from 'echarts/charts';
-import { TooltipComponent, GridComponent } from 'echarts/components';
+import { TooltipComponent, GridComponent, LegendComponent, MarkLineComponent } from 'echarts/components';
 import { SVGRenderer } from 'echarts/renderers';
 import type { EChartsCoreOption } from 'echarts/core';
 
-echarts.use([PieChart, BarChart, TooltipComponent, GridComponent, SVGRenderer]);
+echarts.use([PieChart, BarChart, TooltipComponent, GridComponent, LegendComponent, MarkLineComponent, SVGRenderer]);
 
 interface EChartBoxProps {
   option: EChartsCoreOption;
