@@ -794,6 +794,7 @@ function resolveTargetScope(repoCode, writable) {
 
 function isAllowedRepoGovernanceRel(cleanRel, writable) {
   const lower = cleanRel.toLowerCase();
+  if (lower === 'agents.md' || lower === 'gemini.md') return true;
   if (lower.startsWith('.agents/rules/') && lower.endsWith('.md')) return true;
   if (lower.startsWith('scripts/lints/')) {
     if (lower.endsWith('.decision.json')) return true;
@@ -832,28 +833,48 @@ function extractRuleTitleAndClauses(content, fallbackName) {
   };
 }
 
+function estimateMarkdownTokens(raw) {
+  let ascii = 0;
+  let nonAscii = 0;
+  let chars = 0;
+  for (const ch of String(raw || '')) {
+    chars += 1;
+    if (ch.codePointAt(0) <= 127) ascii += 1;
+    else nonAscii += 1;
+  }
+  const estimated_tokens = Math.ceil(ascii / 4 + nonAscii / 1.2);
+  return { char_count: chars, estimated_tokens };
+}
+
+function pushRuleEntryFromPath(baseRoot, full, scope, repo, editable, out) {
+  if (!existsSync(full) || !statSync(full).isFile()) return;
+  const st = statSync(full);
+  const rel = full.slice(baseRoot.length + 1).replace(/\\/g, '/');
+  const name = basename(full);
+  const raw = readFileSync(full, 'utf-8');
+  const { title, clause_count } = extractRuleTitleAndClauses(raw, name);
+  const { char_count, estimated_tokens } = estimateMarkdownTokens(raw);
+  out.push({
+    rel_path: rel,
+    abs_path: full,
+    name,
+    scope,
+    repo,
+    title,
+    clause_count,
+    char_count,
+    estimated_tokens,
+    editable,
+    size_bytes: st.size,
+    modified_ts: Math.floor(st.mtimeMs / 1000),
+  });
+}
+
 function collectRuleEntriesInDir(baseRoot, rulesDir, scope, repo, editable, out) {
   if (!existsSync(rulesDir) || !statSync(rulesDir).isDirectory()) return;
   const files = readdirSync(rulesDir).filter((n) => n.toLowerCase().endsWith('.md')).sort();
   for (const name of files) {
-    const full = join(rulesDir, name);
-    if (!statSync(full).isFile()) continue;
-    const st = statSync(full);
-    const rel = full.slice(baseRoot.length + 1).replace(/\\/g, '/');
-    const raw = readFileSync(full, 'utf-8');
-    const { title, clause_count } = extractRuleTitleAndClauses(raw, name);
-    out.push({
-      rel_path: rel,
-      abs_path: full,
-      name,
-      scope,
-      repo,
-      title,
-      clause_count,
-      editable,
-      size_bytes: st.size,
-      modified_ts: Math.floor(st.mtimeMs / 1000),
-    });
+    pushRuleEntryFromPath(baseRoot, join(rulesDir, name), scope, repo, editable, out);
   }
 }
 
@@ -1027,6 +1048,9 @@ function scanGovernanceAssets(repos, stats) {
     if (!phys || !existsSync(phys) || !statSync(phys).isDirectory()) continue;
     const editable = String(proj.role || '').toLowerCase() !== 'test-bed';
     collectRuleEntriesInDir(phys, join(phys, '.agents', 'rules'), 'project', proj.code, editable, governance_rules);
+    for (const mapName of ['AGENTS.md', 'GEMINI.md']) {
+      pushRuleEntryFromPath(phys, join(phys, mapName), 'project', proj.code, editable, governance_rules);
+    }
     collectDecisionEntriesInDir(phys, join(phys, 'scripts', 'lints'), 'project', proj.code, editable, stats, decisions);
     collectLintItemsInDir(phys, join(phys, 'scripts', 'lints'), 'project', proj.code, stats, lints);
   }
@@ -1038,9 +1062,19 @@ function scanGovernanceAssets(repos, stats) {
   });
   decisions.sort((a, b) => a.scope.localeCompare(b.scope) || a.repo.localeCompare(b.repo) || a.id.localeCompare(b.id));
 
+  const global_rule_tokens = governance_rules
+    .filter((r) => r.scope === 'global')
+    .reduce((acc, r) => acc + (r.estimated_tokens || 0), 0);
+  const project_rule_tokens = governance_rules
+    .filter((r) => r.scope === 'project')
+    .reduce((acc, r) => acc + (r.estimated_tokens || 0), 0);
+
   const governance_summary = {
     rule_files_count: governance_rules.length,
     rule_clauses_count: governance_rules.reduce((acc, r) => acc + (r.clause_count || 0), 0),
+    rule_total_tokens: global_rule_tokens + project_rule_tokens,
+    global_rule_tokens,
+    project_rule_tokens,
     global_rule_files_count: governance_rules.filter((r) => r.scope === 'global').length,
     project_rule_files_count: governance_rules.filter((r) => r.scope === 'project').length,
     decisions_count: decisions.length,
@@ -1114,6 +1148,268 @@ function buildOverviewDto() {
     lints,
     governance_summary,
     telemetry,
+  };
+}
+
+const MAX_DIFF_FILE_BYTES = 300 * 1024;
+const MAX_UNTRACKED_BYTES = 256 * 1024;
+const MAX_UNTRACKED_LINES = 2500;
+
+function runGitSync(repoRoot, args, { allowFail = false } = {}) {
+  const res = spawnSync('git', ['-C', repoRoot, '-c', 'core.quotePath=false', ...args], {
+    encoding: null,
+    maxBuffer: 32 * 1024 * 1024,
+    windowsHide: true,
+  });
+  if (res.error) {
+    throw new Error(`执行 git 命令失败（请确认已安装 git 并加入 PATH）: ${res.error.message}`);
+  }
+  const stdout = Buffer.isBuffer(res.stdout) ? res.stdout.toString('utf8') : String(res.stdout || '');
+  const stderr = Buffer.isBuffer(res.stderr) ? res.stderr.toString('utf8') : String(res.stderr || '');
+  if (res.status !== 0 && !allowFail) {
+    throw new Error(stderr.trim() || `git ${args.join(' ')} 退出码 ${res.status}`);
+  }
+  return { ok: res.status === 0, stdout, stderr };
+}
+
+function truncateUtf8OnLine(text, maxBytes) {
+  const buf = Buffer.from(text, 'utf8');
+  if (buf.length <= maxBytes) return { text, truncated: false };
+  const sliced = buf.subarray(0, maxBytes).toString('utf8');
+  const lastNl = sliced.lastIndexOf('\n');
+  const cut = lastNl >= 0 ? sliced.slice(0, lastNl + 1) : sliced;
+  return { text: cut, truncated: true };
+}
+
+function stripAbPrefix(raw) {
+  const trimmed = String(raw || '').trim();
+  const unquoted =
+    trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2
+      ? trimmed.slice(1, -1)
+      : trimmed;
+  if (unquoted.startsWith('a/') || unquoted.startsWith('b/')) {
+    return unquoted.slice(2);
+  }
+  return unquoted;
+}
+
+function parseDiffGitHeaderPaths(headerLine) {
+  const rest = headerLine.startsWith('diff --git ') ? headerLine.slice(11).trim() : '';
+  const bIdx = rest.indexOf(' b/');
+  if (bIdx >= 0) {
+    return [stripAbPrefix(rest.slice(0, bIdx)), stripAbPrefix(rest.slice(bIdx + 1))];
+  }
+  const parts = rest.split(/\s+/);
+  if (parts.length >= 2) {
+    return [stripAbPrefix(parts[0]), stripAbPrefix(parts[1])];
+  }
+  return ['', ''];
+}
+
+function parseGitDiffBlocks(raw) {
+  const normalized = String(raw || '').replace(/\r\n/g, '\n');
+  if (!normalized.trim()) return [];
+  const blocks = [];
+  let start = -1;
+  let offset = 0;
+  for (const line of normalized.split(/(?<=\n)/)) {
+    if (line.startsWith('diff --git ')) {
+      if (start >= 0) blocks.push(normalized.slice(start, offset));
+      start = offset;
+    }
+    offset += line.length;
+  }
+  if (start >= 0) blocks.push(normalized.slice(start));
+
+  const files = [];
+  for (const block of blocks) {
+    const trimmedBlock = block.replace(/\n+$/, '');
+    const lines = trimmedBlock.split('\n');
+    const firstLine = lines[0];
+    if (!firstLine) continue;
+    const [hdrOld, hdrNew] = parseDiffGitHeaderPaths(firstLine);
+
+    let status = 'M';
+    let oldPath = '';
+    let newPath = hdrNew;
+    let renameFrom = '';
+    let renameTo = '';
+    let isBinary = false;
+    let inHunk = false;
+    let additions = 0;
+    let deletions = 0;
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (!inHunk) {
+        if (line.startsWith('new file mode ')) status = 'A';
+        else if (line.startsWith('deleted file mode ')) status = 'D';
+        else if (line.startsWith('rename from ')) {
+          status = 'R';
+          renameFrom = line.slice(12).trim();
+        } else if (line.startsWith('rename to ')) {
+          status = 'R';
+          renameTo = line.slice(10).trim();
+        } else if (line.startsWith('Binary files ') || line === 'GIT binary patch') {
+          isBinary = true;
+        } else if (line.startsWith('--- ')) {
+          const p = line.slice(4).trim();
+          if (p !== '/dev/null') oldPath = stripAbPrefix(p);
+        } else if (line.startsWith('+++ ')) {
+          const p = line.slice(4).trim();
+          if (p !== '/dev/null') newPath = stripAbPrefix(p);
+        } else if (line.startsWith('@@ ')) {
+          inHunk = true;
+        }
+      } else if (line.startsWith('@@ ')) {
+        inHunk = true;
+      } else if (line.startsWith('+') && !line.startsWith('+++ ')) {
+        additions += 1;
+      } else if (line.startsWith('-') && !line.startsWith('--- ')) {
+        deletions += 1;
+      }
+    }
+
+    const displayPath =
+      renameTo || (status === 'D' ? oldPath || hdrOld : newPath || hdrOld);
+    const displayOld = status === 'R' ? renameFrom || hdrOld : '';
+    const capped = truncateUtf8OnLine(trimmedBlock, MAX_DIFF_FILE_BYTES);
+    files.push({
+      path: displayPath,
+      old_path: displayOld,
+      status,
+      additions,
+      deletions,
+      is_binary: isBinary,
+      truncated: capped.truncated,
+      diff_text: isBinary ? '' : capped.text,
+    });
+  }
+  return files;
+}
+
+function buildUntrackedFileDiff(repoRoot, relPath) {
+  const cleanRel = String(relPath || '').trim().replace(/\\/g, '/');
+  const full = join(repoRoot, cleanRel);
+  if (!existsSync(full)) {
+    return {
+      path: cleanRel,
+      old_path: '',
+      status: 'U',
+      additions: 0,
+      deletions: 0,
+      is_binary: true,
+      truncated: false,
+      diff_text: '',
+    };
+  }
+  const buf = readFileSync(full);
+  const probe = buf.subarray(0, Math.min(buf.length, 8192));
+  if (probe.includes(0)) {
+    return {
+      path: cleanRel,
+      old_path: '',
+      status: 'U',
+      additions: 0,
+      deletions: 0,
+      is_binary: true,
+      truncated: false,
+      diff_text: '',
+    };
+  }
+  const fullText = buf.toString('utf8').replace(/\r\n/g, '\n');
+  const capped = truncateUtf8OnLine(fullText, MAX_UNTRACKED_BYTES);
+  const lines = capped.text.split('\n');
+  if (capped.text.endsWith('\n') && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+  const lineTruncated = lines.length > MAX_UNTRACKED_LINES;
+  if (lineTruncated) lines.length = MAX_UNTRACKED_LINES;
+
+  const header = `diff --git a/${cleanRel} b/${cleanRel}\nnew file mode 100644\n--- /dev/null\n+++ b/${cleanRel}`;
+  const body =
+    lines.length > 0
+      ? `\n@@ -0,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join('\n')}`
+      : '';
+  return {
+    path: cleanRel,
+    old_path: '',
+    status: 'U',
+    additions: lines.length,
+    deletions: 0,
+    is_binary: false,
+    truncated: capped.truncated || lineTruncated,
+    diff_text: `${header}${body}`,
+  };
+}
+
+function getRepoGitDiff(repoCode, scope) {
+  const cleanCode = String(repoCode || '').trim();
+  if (!cleanCode) throw new Error('缺少目标仓库代号 repo_code');
+  const repos = parseReposMd();
+  const proj = repos.find((p) => String(p.code || '').toLowerCase() === cleanCode.toLowerCase());
+  if (!proj || !proj.physical_path) throw new Error(`未在仓库地图找到项目: ${cleanCode}`);
+  const repoRoot = proj.physical_path.trim();
+  if (!existsSync(repoRoot)) throw new Error(`项目目录不存在: ${repoRoot}`);
+
+  const inside = runGitSync(repoRoot, ['rev-parse', '--is-inside-work-tree']);
+  if (inside.stdout.trim() !== 'true') {
+    throw new Error(`目录不是有效的 Git 仓库: ${repoRoot}`);
+  }
+
+  const rawScope = String(scope || '').trim().toLowerCase();
+  const normScope = rawScope === 'staged' || rawScope === 'unstaged' ? rawScope : 'all';
+  const hasHead = runGitSync(repoRoot, ['rev-parse', '--verify', 'HEAD'], { allowFail: true }).ok;
+
+  const branch = hasHead
+    ? runGitSync(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFail: true }).stdout.trim() || 'HEAD'
+    : 'HEAD (尚无提交)';
+  const headSummary = hasHead
+    ? runGitSync(repoRoot, ['log', '-1', '--pretty=%h %s'], { allowFail: true }).stdout.trim()
+    : '';
+
+  let files = [];
+  if (normScope === 'staged') {
+    const res = runGitSync(repoRoot, ['diff', '--no-color', '--unified=3', '--find-renames', '--cached']);
+    files = parseGitDiffBlocks(res.stdout);
+  } else if (normScope === 'unstaged') {
+    const res = runGitSync(repoRoot, ['diff', '--no-color', '--unified=3', '--find-renames']);
+    files = parseGitDiffBlocks(res.stdout);
+  } else if (hasHead) {
+    const res = runGitSync(repoRoot, ['diff', '--no-color', '--unified=3', '--find-renames', 'HEAD']);
+    files = parseGitDiffBlocks(res.stdout);
+  } else {
+    const staged = runGitSync(repoRoot, ['diff', '--no-color', '--unified=3', '--find-renames', '--cached']);
+    const unstaged = runGitSync(repoRoot, ['diff', '--no-color', '--unified=3', '--find-renames']);
+    files = [...parseGitDiffBlocks(staged.stdout), ...parseGitDiffBlocks(unstaged.stdout)];
+  }
+
+  if (normScope !== 'staged') {
+    const untracked = runGitSync(repoRoot, ['ls-files', '--others', '--exclude-standard']);
+    const seen = new Set(files.map((f) => f.path.toLowerCase()));
+    for (const rel of untracked.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)) {
+      const key = rel.replace(/\\/g, '/').toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        files.push(buildUntrackedFileDiff(repoRoot, rel));
+      }
+    }
+  }
+
+  files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const totalAdditions = files.reduce((acc, f) => acc + f.additions, 0);
+  const totalDeletions = files.reduce((acc, f) => acc + f.deletions, 0);
+
+  return {
+    repo_code: cleanCode,
+    repo_path: repoRoot.replace(/\\/g, '/'),
+    branch,
+    head_summary: headSummary,
+    scope: normScope,
+    has_head: hasHead,
+    total_additions: totalAdditions,
+    total_deletions: totalDeletions,
+    files,
   };
 }
 
@@ -1351,6 +1647,9 @@ const server = createServer(async (req, res) => {
       const { cleanRel, target } = resolveSafePathInRoot(targetRoot, body.rel_path);
       const lower = cleanRel.toLowerCase();
       if (isRepo) {
+        if (lower === 'agents.md' || lower === 'gemini.md') {
+          throw new Error('仓库根地图 (AGENTS.md / GEMINI.md) 受保护，禁止删除');
+        }
         if (!isAllowedRepoGovernanceRel(cleanRel, true)) {
           throw new Error('仓库作用域仅允许删除 .agents/rules/*.md 或 scripts/lints/*.decision.json');
         }
@@ -1501,6 +1800,13 @@ const server = createServer(async (req, res) => {
       if (!stdout) throw new Error(String(out.stderr || 'Lint 运行器未输出有效结果').trim());
       const parsed = JSON.parse(stdout);
       sendJson(res, 200, { ok: true, data: parsed }, headers);
+      return;
+    }
+
+    if (method === 'POST' && urlPath === '/api/agent-mind/git/diff') {
+      const body = await readJsonBody(req);
+      const result = getRepoGitDiff(body.repo_code, body.scope);
+      sendJson(res, 200, { ok: true, data: result }, headers);
       return;
     }
 

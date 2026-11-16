@@ -1,24 +1,34 @@
 {
   "id": "concurrency_and_performance",
-  "name": "并发安全与热路径性能",
+  "name": "并发安全、热路径与事件驱动",
   "category": "concurrency_and_performance",
   "enabled": true,
   "triggers": [
     "synchronized",
     "Lock",
     "Mutex",
+    "RwLock",
+    "Semaphore",
+    "AtomicInteger",
+    "AtomicLong",
+    "AtomicBoolean",
+    "tryAcquire",
+    "permit",
+    "borrow",
     "volatile",
     "Thread.sleep",
-    "time.Sleep"
+    "time.Sleep",
+    "setInterval",
+    "tokio::time::sleep"
   ],
   "file_patterns": [],
   "question": {
     "type": "choice",
-    "instructions": "Evaluate Concurrency and Performance: no coarse-grained method-level synchronized locks on hot read paths, zero phantom polling.",
+    "instructions": "Evaluate Concurrency, Hot Path Performance, Event-Driven Scheduling, and Resource Invariants: (1) no coarse-grained method-level exclusive locks on hot read paths; (2) no blocking I/O, external DB probing, or sleep inside held locks, critical hot paths, or lightweight heartbeats; (3) async coordination must be driven by explicit completion signals or event streams rather than speculative busy/sleep polling (periodic checks/debounces when needed must be explicitly bounded and idle-silent); (4) slot/permit/resource invariants must hold: acquired permits must be released symmetrically back to the exact pool/owner they came from, without guessing ownership from global counters or skipping release on disabled/exception paths.",
     "criteria": {
-      "passed": "No coarse-grained method-level synchronized locks on hot read paths; uses fine-grained or lock-free mechanisms; zero phantom polling/probing.",
-      "violated": "Method-level synchronized lock used on hot data read path, or phantom polling/probing introduced."
+      "passed": "Uses fine-grained locking or lock-free structures on hot paths; keeps critical sections and heartbeats non-blocking over local in-memory state; drives async completion via explicit events/signals (bounded and idle-silent if polling/debounce is needed); preserves resource/permit conservation with exact acquire/release pairing across all exit and toggle paths.",
+      "violated": "Coarse method-level exclusive lock on hot read path, blocking I/O or external sync probe inside lock/heartbeat/hot path, speculative unbounded sleep/timer polling replacing completion events, or broken resource/permit conservation (e.g., guessing release target from global counters or leaking acquired permits when disabled/throwing)."
     }
   },
-  "why": "核心正交架构红线：高并发读取热路径禁止方法级大粒度排他锁，禁止跨线程/跨数据源的幽灵轮询与反查探测。"
+  "why": "核心正交架构红线：高并发热路径无大锁且临界区禁阻塞外查；异步协作优先事件/信号驱动；并发资源与信号量借还必须守恒且精确配对归还。"
 }

@@ -13,11 +13,11 @@
   "file_patterns": [],
   "question": {
     "type": "choice",
-    "instructions": "Evaluate Implementation Hygiene: single implementation path for core capabilities, no swallowed exceptions, standardized logging.",
+    "instructions": "Evaluate Implementation Hygiene: single implementation path for core capabilities, propagate unhandleable exceptions cleanly without useless try/catch wrappers, never swallow exceptions in catch blocks with only a log/print statement, and use standardized logging.",
     "criteria": {
-      "passed": "Single implementation path for core domain logic; exceptions retain original cause without being swallowed; clean error handling.",
-      "violated": "Dual-track parser or converter introduced, swallowed exceptions ignoring error context, or broken logging standards."
+      "passed": "Single implementation path for core domain logic; exceptions propagate cleanly when unhandleable or retain original cause with explicit recovery/failure handling; no useless try/catch or log-only swallowed catch blocks.",
+      "violated": "Dual-track parser or converter introduced, redundant try/catch that merely catches and rethrows or swallows exceptions with only a log/null return, or broken logging standards."
     }
   },
-  "why": "核心正交架构红线：同一核心领域能力全工程保持唯一实现路径，禁止吞异常用空值掩盖故障第一现场。"
+  "why": "核心正交架构红线：同一核心领域能力全工程保持唯一实现路径；不加无用 try/catch，严禁 catch 后仅打日志就把异常吃掉掩盖第一现场。"
 }

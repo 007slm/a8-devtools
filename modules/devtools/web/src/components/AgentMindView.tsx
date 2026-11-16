@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button,
   InputGroup,
@@ -10,8 +10,8 @@ import {
   Activity,
   ArrowLeft,
   Check,
+  ChevronDown,
   Clock,
-  Code2,
   Copy,
   Edit3,
   ExternalLink,
@@ -28,12 +28,12 @@ import {
   Search,
   Send,
   ShieldAlert,
-  ShieldCheck,
   Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
 import { EChartBox } from './EChartBox';
+import { MermaidBlock } from './MermaidBlock';
 
 export interface AgentMindFileEntry {
   rel_path: string;
@@ -52,6 +52,8 @@ export interface GovernanceRuleEntry {
   repo: string;
   title: string;
   clause_count: number;
+  char_count?: number;
+  estimated_tokens?: number;
   editable: boolean;
   size_bytes: number;
   modified_ts: number;
@@ -103,6 +105,9 @@ export interface LintItem {
 export interface GovernanceSummary {
   rule_files_count: number;
   rule_clauses_count: number;
+  rule_total_tokens?: number;
+  global_rule_tokens?: number;
+  project_rule_tokens?: number;
   global_rule_files_count: number;
   project_rule_files_count: number;
   decisions_count: number;
@@ -252,6 +257,104 @@ const DECISION_CATEGORY_LABELS: Record<string, string> = {
   white_label: '白标与品牌脱敏',
   custom: '自定义规则',
 };
+
+// Antigravity 官方规则限制（内置 docs/rules.md §Size Limits and Context Budget）：
+// 1. 单文件（含 AGENTS.md / GEMINI.md / rules/*.md）物理硬上限：24,000 bytes（超出按行截断）；
+// 2. 全部常驻/全局规则共享总预算：20,000 tokens（超预算后最大文件降级为路径指针）。
+const ANTIGRAVITY_FILE_BYTES_WARN = 18000;
+const ANTIGRAVITY_FILE_BYTES_CAP = 24000;
+const ANTIGRAVITY_TOTAL_TOKENS_WARN = 14000;
+const ANTIGRAVITY_TOTAL_TOKENS_BUDGET = 20000;
+const utf8Encoder = new TextEncoder();
+
+function estimateMarkdownTokens(raw: string): {
+  char_count: number;
+  byte_count: number;
+  estimated_tokens: number;
+} {
+  let ascii = 0;
+  let nonAscii = 0;
+  let chars = 0;
+  for (const ch of raw || '') {
+    chars += 1;
+    if ((ch.codePointAt(0) ?? 0) <= 127) ascii += 1;
+    else nonAscii += 1;
+  }
+  return {
+    char_count: chars,
+    byte_count: utf8Encoder.encode(raw || '').length,
+    estimated_tokens: Math.ceil(ascii / 4 + nonAscii / 1.2),
+  };
+}
+
+function getFileSizeStatus(bytes: number) {
+  if (bytes >= ANTIGRAVITY_FILE_BYTES_CAP) {
+    return {
+      level: 'danger' as const,
+      label: '已超 24 KB 截断线',
+      colorHex: '#F43F5E',
+      pillClass: 'bg-rose-500/12 text-rose-600 dark:text-rose-400 border-rose-500/30',
+      dotClass: 'bg-rose-500',
+    };
+  }
+  if (bytes >= ANTIGRAVITY_FILE_BYTES_WARN) {
+    return {
+      level: 'warn' as const,
+      label: '接近 24 KB 上限',
+      colorHex: '#F59E0B',
+      pillClass: 'bg-amber-500/12 text-amber-700 dark:text-amber-400 border-amber-500/30',
+      dotClass: 'bg-amber-500',
+    };
+  }
+  return {
+    level: 'ok' as const,
+    label: '未超截断线',
+    colorHex: '#10B981',
+    pillClass: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/25',
+    dotClass: 'bg-emerald-500',
+  };
+}
+
+function getAggregateTokenStatus(tokens: number, overCapCount: number) {
+  if (tokens >= ANTIGRAVITY_TOTAL_TOKENS_BUDGET) {
+    return {
+      level: 'danger' as const,
+      label: '已超 20k 总预算',
+      hint: '全部常驻规则超出官方 20,000 tokens 预算（defaultRulesBudget），大规则将被降级为路径指针按需读取',
+      colorHex: '#F43F5E',
+      pillClass: 'bg-rose-500/12 text-rose-600 dark:text-rose-400 border-rose-500/30',
+      dotClass: 'bg-rose-500',
+    };
+  }
+  if (overCapCount > 0) {
+    return {
+      level: 'danger' as const,
+      label: `${overCapCount} 份超 24 KB 已截断`,
+      hint: '存在超过 Antigravity 单文件 24,000 bytes（24 KB）硬限制的文件，后半段已在注入上下文前被按行截断；建议把索引表格拆入 docs/ 目录',
+      colorHex: '#F43F5E',
+      pillClass: 'bg-rose-500/12 text-rose-600 dark:text-rose-400 border-rose-500/30',
+      dotClass: 'bg-rose-500',
+    };
+  }
+  if (tokens >= ANTIGRAVITY_TOTAL_TOKENS_WARN) {
+    return {
+      level: 'warn' as const,
+      label: '接近 20k 总预算',
+      hint: '全局+项目常驻规则已用官方总预算 70% 以上，建议将具体检查下沉至 scripts/lints/ 或 *.decision.json',
+      colorHex: '#F59E0B',
+      pillClass: 'bg-amber-500/12 text-amber-700 dark:text-amber-400 border-amber-500/30',
+      dotClass: 'bg-amber-500',
+    };
+  }
+  return {
+    level: 'ok' as const,
+    label: '预算充足',
+    hint: '均位于 Antigravity 官方单文件 24 KB 与总计 20,000 tokens 预算健康区间内',
+    colorHex: '#10B981',
+    pillClass: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/25',
+    dotClass: 'bg-emerald-500',
+  };
+}
 
 const ROLE_LABELS: Record<string, string> = {
   core: 'CORE',
@@ -405,6 +508,11 @@ function MarkdownArticle({ content }: { content: string }) {
         i += 1;
       }
       i += 1;
+      const codeStr = codeLines.join('\n');
+      if (lang.toLowerCase() === 'mermaid') {
+        blocks.push(<MermaidBlock key={`mmd-${i}`} code={codeStr} />);
+        continue;
+      }
       blocks.push(
         <div
           key={`code-${i}`}
@@ -416,7 +524,7 @@ function MarkdownArticle({ content }: { content: string }) {
             </div>
           )}
           <pre className="p-3 overflow-x-auto font-mono text-[11.5px] leading-relaxed text-zinc-800 dark:text-zinc-200 select-text">
-            {codeLines.join('\n')}
+            {codeStr}
           </pre>
         </div>
       );
@@ -521,16 +629,33 @@ function MarkdownArticle({ content }: { content: string }) {
       }
       blocks.push(
         <ul key={`list-${i}`} className="my-2 space-y-1.5">
-          {items.map((it, idx) => (
-            <li
-              key={idx}
-              style={{ paddingLeft: `${Math.min(it.indent, 6) * 8}px` }}
-              className="flex items-start gap-2 text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300"
-            >
-              <span className="text-muted font-mono text-[11px] shrink-0 mt-[1px]">{it.marker}</span>
-              <span className="min-w-0 flex-1">{renderInlineMd(it.text)}</span>
-            </li>
-          ))}
+          {items.map((it, idx) => {
+            const taskMatch = it.text.match(/^\[( |x|X)\]\s+([\s\S]+)$/);
+            const checked = taskMatch ? taskMatch[1].toLowerCase() === 'x' : false;
+            const bodyText = taskMatch ? taskMatch[2] : it.text;
+            return (
+              <li
+                key={idx}
+                style={{ paddingLeft: `${Math.min(it.indent, 6) * 8}px` }}
+                className="flex items-start gap-2 text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300"
+              >
+                {taskMatch ? (
+                  <span
+                    className={`w-3.5 h-3.5 mt-[3px] rounded border inline-flex items-center justify-center shrink-0 ${
+                      checked
+                        ? 'bg-emerald-500 border-emerald-500 text-white'
+                        : 'border-zinc-300 dark:border-zinc-600'
+                    }`}
+                  >
+                    {checked && <Check className="w-2.5 h-2.5" />}
+                  </span>
+                ) : (
+                  <span className="text-muted font-mono text-[11px] shrink-0 mt-[1px]">{it.marker}</span>
+                )}
+                <span className="min-w-0 flex-1">{renderInlineMd(bodyText)}</span>
+              </li>
+            );
+          })}
         </ul>
       );
       continue;
@@ -664,7 +789,10 @@ export function AgentMindView({
 
   // Tab 1 (默认首页): 三层治理资产 (Markdown 规则 / Decision 决策 / Lint 检查)
   const [govLayer, setGovLayer] = useState<'rules' | 'decisions' | 'lints'>('rules');
-  const [govScope, setGovScope] = useState<string>('ALL');
+  const [govScope, setGovScope] = useState<string>('global');
+  const [scopePickerOpen, setScopePickerOpen] = useState<boolean>(false);
+  const [scopeSearch, setScopeSearch] = useState<string>('');
+  const scopePickerRef = useRef<HTMLDivElement | null>(null);
 
   // Layer 1: Rules state - 默认直接展示主规则 rules/mind-rules.md
   const [selectedRulePath, setSelectedRulePath] = useState<string>('rules/mind-rules.md');
@@ -1219,6 +1347,39 @@ export function AgentMindView({
     setProjectDocPath('');
   };
 
+  const handleSelectGovScope = (nextScope: string) => {
+    if (nextScope === govScope) {
+      setScopePickerOpen(false);
+      setScopeSearch('');
+      return;
+    }
+    if (isRuleDirty || isDecisionDirty) {
+      pushToast('当前规则或 Decision 有未保存修改，请先保存后再切换作用域', 'danger');
+      return;
+    }
+    setGovScope(nextScope);
+    setScopePickerOpen(false);
+    setScopeSearch('');
+  };
+
+  useEffect(() => {
+    if (!scopePickerOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (scopePickerRef.current && !scopePickerRef.current.contains(e.target as Node)) {
+        setScopePickerOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setScopePickerOpen(false);
+    };
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [scopePickerOpen]);
+
   // Ctrl+S inside active editors
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1343,6 +1504,8 @@ export function AgentMindView({
         repo: 'global',
         title: f.rel_path === 'rules/mind-rules.md' ? 'A8 Agent Mind 通用架构与文档治理总则' : f.name.replace(/\.md$/i, ''),
         clause_count: 0,
+        char_count: f.size_bytes,
+        estimated_tokens: Math.ceil(f.size_bytes / 3),
         editable: true,
         size_bytes: f.size_bytes,
         modified_ts: f.modified_ts,
@@ -1352,27 +1515,117 @@ export function AgentMindView({
   const allDecisions = useMemo<DecisionEntry[]>(() => overview?.decisions || [], [overview]);
   const allLints = useMemo<LintItem[]>(() => overview?.lints || [], [overview]);
 
-  const writableRepos = useMemo(
-    () => (overview?.projects || []).filter((p) => p.role !== 'test-bed' && p.code !== 'global'),
-    [overview]
-  );
-
-  const availableGovScopes = useMemo(() => {
-    const repoSet = new Set<string>();
+  const scopeOptions = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        code: string;
+        label: string;
+        role: string;
+        summary: string;
+        physicalPath: string;
+        rulesCount: number;
+        decisionsCount: number;
+        lintsCount: number;
+        totalTokens: number;
+        maxBytes: number;
+      }
+    >();
+    map.set('global', {
+      code: 'global',
+      label: '全局通用 (a8-agent-mind)',
+      role: 'global',
+      summary: '跨仓库生效的通用工程规范与架构红线决策',
+      physicalPath: overview?.plugin_root || 'a8-agent-mind',
+      rulesCount: 0,
+      decisionsCount: 0,
+      lintsCount: 0,
+      totalTokens: 0,
+      maxBytes: 0,
+    });
+    for (const p of overview?.projects || []) {
+      map.set(p.code, {
+        code: p.code,
+        label: p.code,
+        role: p.role,
+        summary: p.summary,
+        physicalPath: p.physical_path,
+        rulesCount: 0,
+        decisionsCount: 0,
+        lintsCount: 0,
+        totalTokens: 0,
+        maxBytes: 0,
+      });
+    }
+    const ensure = (code: string) => {
+      let cur = map.get(code);
+      if (!cur) {
+        cur = {
+          code,
+          label: code,
+          role: 'project',
+          summary: '',
+          physicalPath: '',
+          rulesCount: 0,
+          decisionsCount: 0,
+          lintsCount: 0,
+          totalTokens: 0,
+          maxBytes: 0,
+        };
+        map.set(code, cur);
+      }
+      return cur;
+    };
     for (const r of governanceRules) {
-      if (r.scope === 'project' && r.repo) repoSet.add(r.repo);
+      const key = r.scope === 'global' ? 'global' : r.repo;
+      if (!key) continue;
+      const item = ensure(key);
+      item.rulesCount += 1;
+      item.totalTokens += r.estimated_tokens ?? Math.ceil((r.size_bytes || 0) / 3);
+      item.maxBytes = Math.max(item.maxBytes, r.size_bytes || 0);
     }
     for (const d of allDecisions) {
-      if (d.scope === 'project' && d.repo) repoSet.add(d.repo);
+      const key = d.scope === 'global' ? 'global' : d.repo;
+      if (!key) continue;
+      ensure(key).decisionsCount += 1;
     }
     for (const l of allLints) {
-      if (l.scope === 'project' && l.repo) repoSet.add(l.repo);
+      const key = l.scope === 'global' ? 'global' : l.repo;
+      if (!key) continue;
+      ensure(key).lintsCount += 1;
     }
-    return ['global', ...Array.from(repoSet).sort()];
-  }, [governanceRules, allDecisions, allLints]);
+    const globalItem = map.get('global')!;
+    const projectItems = Array.from(map.values())
+      .filter((x) => x.code !== 'global')
+      .sort((a, b) => {
+        const aTotal = a.rulesCount + a.decisionsCount + a.lintsCount;
+        const bTotal = b.rulesCount + b.decisionsCount + b.lintsCount;
+        return (bTotal > 0 ? 1 : 0) - (aTotal > 0 ? 1 : 0) || a.code.localeCompare(b.code);
+      });
+    return [globalItem, ...projectItems];
+  }, [overview, governanceRules, allDecisions, allLints]);
+
+  const activeScopeOption = useMemo(
+    () => scopeOptions.find((o) => o.code === govScope) || scopeOptions[0],
+    [scopeOptions, govScope]
+  );
+
+  const filteredScopeOptions = useMemo(() => {
+    const kw = scopeSearch.trim().toLowerCase();
+    if (!kw) return scopeOptions;
+    return scopeOptions.filter(
+      (o) =>
+        o.code.toLowerCase().includes(kw) ||
+        o.label.toLowerCase().includes(kw) ||
+        o.summary.toLowerCase().includes(kw) ||
+        o.physicalPath.toLowerCase().includes(kw) ||
+        (ROLE_LABELS[o.role] || o.role).toLowerCase().includes(kw)
+    );
+  }, [scopeOptions, scopeSearch]);
+
+  const isGovScopeReadOnly = activeScopeOption?.role === 'test-bed';
 
   const filteredRules = useMemo(() => {
-    if (govScope === 'ALL') return governanceRules;
     if (govScope === 'global') return governanceRules.filter((r) => r.scope === 'global');
     return governanceRules.filter((r) => r.scope === 'project' && r.repo === govScope);
   }, [governanceRules, govScope]);
@@ -1381,7 +1634,9 @@ export function AgentMindView({
     const kw = decisionSearch.trim().toLowerCase();
     return allDecisions.filter((d) => {
       if (govScope === 'global' && d.scope !== 'global') return false;
-      if (govScope !== 'ALL' && govScope !== 'global' && d.repo !== govScope) return false;
+      if (govScope !== 'global' && (d.scope !== 'project' || d.repo !== govScope)) {
+        return false;
+      }
       if (!kw) return true;
       return (
         d.name.toLowerCase().includes(kw) ||
@@ -1394,7 +1649,6 @@ export function AgentMindView({
   }, [allDecisions, govScope, decisionSearch]);
 
   const filteredLints = useMemo(() => {
-    if (govScope === 'ALL') return allLints;
     if (govScope === 'global') return allLints.filter((l) => l.scope === 'global');
     return allLints.filter((l) => l.scope === 'project' && l.repo === govScope);
   }, [allLints, govScope]);
@@ -1409,6 +1663,16 @@ export function AgentMindView({
     [governanceRules, selectedRulePath, selectedRuleRepo]
   );
 
+  const scopedActiveRuleEntry = useMemo(() => {
+    if (!activeRuleEntry) return null;
+    const match = filteredRules.some(
+      (r) =>
+        r.rel_path === activeRuleEntry.rel_path &&
+        (r.scope === 'global' ? '' : r.repo) === (activeRuleEntry.scope === 'global' ? '' : activeRuleEntry.repo)
+    );
+    return match ? activeRuleEntry : null;
+  }, [activeRuleEntry, filteredRules]);
+
   const activeDecisionEntry = useMemo(
     () =>
       selectedDecisionKey
@@ -1420,6 +1684,16 @@ export function AgentMindView({
         : null,
     [allDecisions, selectedDecisionKey]
   );
+
+  const scopedActiveDecisionEntry = useMemo(() => {
+    if (!activeDecisionEntry) return null;
+    const match = filteredDecisions.some(
+      (d) =>
+        d.rel_path === activeDecisionEntry.rel_path &&
+        (d.scope === 'global' ? '' : d.repo) === (activeDecisionEntry.scope === 'global' ? '' : activeDecisionEntry.repo)
+    );
+    return match ? activeDecisionEntry : null;
+  }, [activeDecisionEntry, filteredDecisions]);
 
   // 切换层级或范围时，若当前列表非空且无对应选中项（且未脏），自动加载第一项
   useEffect(() => {
@@ -1446,14 +1720,21 @@ export function AgentMindView({
         const first = filteredDecisions[0];
         loadDecisionDirect(first.rel_path, first.scope === 'global' ? '' : first.repo);
       }
-    } else if (govLayer === 'lints' && filteredLints.length > 0) {
-      const stillVisible =
-        selectedLint &&
-        filteredLints.some(
-          (l) => l.id === selectedLint.id && l.repo === selectedLint.repo && l.rel_path === selectedLint.rel_path
-        );
-      if (!stillVisible) {
-        loadLintSourceDirect(filteredLints[0]);
+    } else if (govLayer === 'lints') {
+      if (filteredLints.length === 0) {
+        if (selectedLint !== null) {
+          setSelectedLint(null);
+          setLintSourceText('');
+        }
+      } else {
+        const stillVisible =
+          selectedLint &&
+          filteredLints.some(
+            (l) => l.id === selectedLint.id && l.repo === selectedLint.repo && l.rel_path === selectedLint.rel_path
+          );
+        if (!stillVisible) {
+          loadLintSourceDirect(filteredLints[0]);
+        }
       }
     }
   }, [
@@ -1837,6 +2118,170 @@ export function AgentMindView({
     [isDark]
   );
 
+  // ---------------- Markdown 规则上下文官方预算监控 ----------------
+  const liveRuleMetrics = useMemo(() => estimateMarkdownTokens(editorContent), [editorContent]);
+
+  const ruleTokenStats = useMemo(() => {
+    const toMetricRow = (r: GovernanceRuleEntry) => {
+      const repoCode = r.scope === 'global' ? '' : r.repo;
+      const isSelected = r.rel_path === selectedRulePath && repoCode === selectedRuleRepo;
+      const est =
+        isSelected && editorContent.length > 0
+          ? liveRuleMetrics.estimated_tokens
+          : r.estimated_tokens ?? Math.ceil((r.size_bytes || 0) / 3);
+      const chars =
+        isSelected && editorContent.length > 0
+          ? liveRuleMetrics.char_count
+          : r.char_count ?? r.size_bytes ?? 0;
+      const bytes =
+        isSelected && editorContent.length > 0
+          ? liveRuleMetrics.byte_count
+          : r.size_bytes ?? 0;
+      const isMapFile =
+        r.rel_path.toLowerCase() === 'agents.md' || r.rel_path.toLowerCase() === 'gemini.md';
+      const displayLabel =
+        r.scope === 'global' && r.rel_path === 'rules/mind-rules.md'
+          ? '全局总则 (mind-rules)'
+          : isMapFile
+            ? `${r.repo}/${r.name}`
+            : `${r.scope === 'global' ? '全局' : r.repo}/${r.name.replace(/\.md$/i, '')}`;
+      return {
+        ...r,
+        isMapFile,
+        displayLabel,
+        liveTokens: est,
+        liveChars: chars,
+        liveBytes: bytes,
+        fileStatus: getFileSizeStatus(bytes),
+      };
+    };
+
+    const allRows = governanceRules.map(toMetricRow);
+    const globalRows = allRows.filter((r) => r.scope === 'global');
+    const globalTokens = globalRows.reduce((acc, r) => acc + r.liveTokens, 0);
+
+    const scopedRows = filteredRules.map(toMetricRow);
+    const scopedTokens = scopedRows.reduce((acc, r) => acc + r.liveTokens, 0);
+
+    // 切换具体项目时，上下文分布图同步包含该仓实际同时注入的全局公共规则
+    const rows = govScope === 'global' ? [...globalRows] : [...scopedRows, ...globalRows];
+    rows.sort((a, b) => b.liveBytes - a.liveBytes || b.liveTokens - a.liveTokens);
+
+    const sessionBudgetTokens =
+      govScope === 'global' ? globalTokens : globalTokens + scopedTokens;
+    const overCapCount = rows.filter((r) => r.liveBytes >= ANTIGRAVITY_FILE_BYTES_CAP).length;
+    return {
+      rows,
+      scopedTokens,
+      globalTokens,
+      sessionBudgetTokens,
+      overCapCount,
+      aggregateStatus: getAggregateTokenStatus(sessionBudgetTokens, overCapCount),
+    };
+  }, [governanceRules, filteredRules, govScope, selectedRulePath, selectedRuleRepo, editorContent, liveRuleMetrics]);
+
+  const ruleTokenChartOption = useMemo<EChartsCoreOption>(() => {
+    const rows = [...ruleTokenStats.rows].reverse();
+    const axisColor = isDark ? '#A1A1AA' : '#71717A';
+    const splitLineColor = isDark ? 'rgba(63,63,70,0.45)' : '#F4F4F5';
+    const maxBytes = rows.reduce((m, r) => Math.max(m, r.liveBytes), 0);
+    const xMax = Math.max(30000, Math.ceil((maxBytes * 1.18) / 10000) * 10000);
+    return {
+      tooltip: {
+        ...chartTooltipBase,
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: any) => {
+          const item = Array.isArray(params) ? params[0] : params;
+          const row = rows[item?.dataIndex ?? 0];
+          if (!row) return '';
+          const bytePct = ((row.liveBytes / ANTIGRAVITY_FILE_BYTES_CAP) * 100).toFixed(1);
+          const tokPct = ((row.liveTokens / ANTIGRAVITY_TOTAL_TOKENS_BUDGET) * 100).toFixed(1);
+          return [
+            `<div style="font-weight:600;margin-bottom:3px">${row.displayLabel}</div>`,
+            `<div>物理体积：<b>${(row.liveBytes / 1024).toFixed(1)} KB</b> (${row.liveBytes.toLocaleString()} / 24,000 B · 占单文件上限 ${bytePct}%)</div>`,
+            `<div>估算 Token：<b>${row.liveTokens.toLocaleString()}</b> tok (占 20k 总预算 ${tokPct}%)</div>`,
+            `<div>字符数：${row.liveChars.toLocaleString()} · 条款：${row.clause_count} 条</div>`,
+            `<div>状态：<span style="color:${row.fileStatus.colorHex};font-weight:600">${row.fileStatus.label}</span></div>`,
+          ].join('');
+        },
+      },
+      grid: { left: 4, right: 56, top: 20, bottom: 14, containLabel: true },
+      xAxis: {
+        type: 'value',
+        min: 0,
+        max: xMax,
+        splitNumber: 4,
+        axisLabel: {
+          color: axisColor,
+          fontSize: 9.5,
+          formatter: (val: number) => (val === 0 ? '0' : `${Math.round(val / 1000)} KB`),
+        },
+        splitLine: { lineStyle: { color: splitLineColor, width: 1 } },
+      },
+      yAxis: {
+        type: 'category',
+        data: rows.map((r) => r.displayLabel),
+        axisTick: { show: false },
+        axisLine: { show: false },
+        axisLabel: { color: isDark ? '#D4D4D8' : '#3F3F46', fontSize: 10.5 },
+      },
+      series: [
+        {
+          name: '单文件字节体积',
+          type: 'bar',
+          barMaxWidth: 10,
+          data: rows.map((r) => ({
+            value: r.liveBytes,
+            itemStyle: { color: r.fileStatus.colorHex, borderRadius: [0, 3, 3, 0] },
+          })),
+          label: {
+            show: true,
+            position: 'right',
+            fontSize: 9.5,
+            fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+            color: axisColor,
+            formatter: (p: any) => {
+              const row = rows[p.dataIndex];
+              if (!row) return '';
+              return `${(row.liveBytes / 1000).toFixed(1)} KB`;
+            },
+          },
+          markLine: {
+            symbol: 'none',
+            silent: true,
+            data: [
+              {
+                xAxis: ANTIGRAVITY_FILE_BYTES_WARN,
+                lineStyle: { color: '#F59E0B', type: 'dashed', width: 1 },
+                label: {
+                  show: true,
+                  position: 'end',
+                  distance: 3,
+                  fontSize: 9,
+                  color: '#F59E0B',
+                  formatter: '18 KB 预警',
+                },
+              },
+              {
+                xAxis: ANTIGRAVITY_FILE_BYTES_CAP,
+                lineStyle: { color: '#F43F5E', type: 'dashed', width: 1.2 },
+                label: {
+                  show: true,
+                  position: 'end',
+                  distance: 3,
+                  fontSize: 9,
+                  color: '#F43F5E',
+                  formatter: '24 KB 截断',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+  }, [ruleTokenStats, chartTooltipBase, isDark]);
+
   const verdictDonutOption = useMemo<EChartsCoreOption>(() => {
     const hasData = telemetryComputed.totalRecent > 0;
     const seriesData = hasData
@@ -2039,15 +2484,17 @@ export function AgentMindView({
   );
 
   const canDeleteSelectedRule = Boolean(
-    selectedRulePath &&
-      (activeRuleEntry?.editable ?? true) &&
+    scopedActiveRuleEntry &&
+      selectedRulePath &&
+      (scopedActiveRuleEntry.editable ?? true) &&
       !(!selectedRuleRepo && PROTECTED_FILES.has(selectedRulePath)) &&
       (selectedRulePath.startsWith('rules/') || selectedRulePath.startsWith('.agents/rules/'))
   );
 
   const canDeleteSelectedDecision = Boolean(
-    selectedDecisionKey &&
-      (activeDecisionEntry?.editable ?? true) &&
+    scopedActiveDecisionEntry &&
+      selectedDecisionKey &&
+      (scopedActiveDecisionEntry.editable ?? true) &&
       !(!selectedDecisionKey.repoCode && PROTECTED_FILES.has(selectedDecisionKey.relPath))
   );
 
@@ -2064,6 +2511,11 @@ export function AgentMindView({
     { id: 'projects', label: '仓库地图', count: overview?.projects.length || undefined },
     { id: 'config', label: '模型参数' },
   ];
+
+  useEffect(() => {
+    setIsNewRuleOpen(false);
+    setIsNewDecisionOpen(false);
+  }, [govScope]);
 
   return (
     <div className="flex flex-col gap-3 max-w-[1440px] mx-auto">
@@ -2175,236 +2627,379 @@ export function AgentMindView({
       )}
 
       {/* ================================================================= */}
-      {/* Tab 1 (首页): 三层治理体系 — Markdown 规则 / Decision 决策 / Lint 检查 */}
+      {/* Tab 1 (首页): 规则规范 — 三层治理 + 富内容可搜索作用域选择器 */}
       {/* ================================================================= */}
       {subTab === 'rules' && (
-        <div className="flex flex-col gap-3">
-          {/* 顶栏：三层防线切换 + 作用域过滤 + 数量概览 */}
-          <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                onClick={() => setGovLayer('rules')}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11.5px] transition-colors cursor-pointer ${
-                  govLayer === 'rules'
-                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 font-semibold'
-                    : 'bg-zinc-100/80 dark:bg-surface-secondary text-muted hover:text-foreground'
-                }`}
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Markdown 规则</span>
-                <span className="text-[10.5px] font-mono opacity-80">
-                  {govSummary?.rule_files_count ?? governanceRules.length} 篇 ·{' '}
-                  {govSummary?.rule_clauses_count ??
-                    governanceRules.reduce((acc, r) => acc + (r.clause_count || 0), 0)}{' '}
-                  条
-                </span>
-              </button>
-
-              <button
-                onClick={() => setGovLayer('decisions')}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11.5px] transition-colors cursor-pointer ${
-                  govLayer === 'decisions'
-                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 font-semibold'
-                    : 'bg-zinc-100/80 dark:bg-surface-secondary text-muted hover:text-foreground'
-                }`}
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Decision 决策</span>
-                <span className="text-[10.5px] font-mono opacity-80">
-                  {govSummary?.decisions_count ?? allDecisions.length} 项 · 启用{' '}
-                  {govSummary?.enabled_decisions_count ?? allDecisions.filter((d) => d.enabled).length}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setGovLayer('lints')}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11.5px] transition-colors cursor-pointer ${
-                  govLayer === 'lints'
-                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 font-semibold'
-                    : 'bg-zinc-100/80 dark:bg-surface-secondary text-muted hover:text-foreground'
-                }`}
-              >
-                <Code2 className="w-3.5 h-3.5" />
-                <span>Lint 检查</span>
-                <span className="text-[10.5px] font-mono opacity-80">
-                  {govSummary?.lints_count ?? allLints.length} 项
-                </span>
-              </button>
+        <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 flex flex-col">
+          <div className="px-4 pt-2.5 pb-0 border-b border-zinc-200/80 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-5">
+              {[
+                {
+                  id: 'rules' as const,
+                  label: '规则与地图',
+                  count: filteredRules.length,
+                  alertDot: ruleTokenStats.aggregateStatus.level !== 'ok' ? ruleTokenStats.aggregateStatus.dotClass : '',
+                },
+                { id: 'decisions' as const, label: 'Decision 决策', count: filteredDecisions.length, alertDot: '' },
+                { id: 'lints' as const, label: 'Lint 检查', count: filteredLints.length, alertDot: '' },
+              ].map((t) => {
+                const active = govLayer === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setGovLayer(t.id)}
+                    className={`relative pb-2 text-[12px] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                      active
+                        ? 'font-semibold text-foreground'
+                        : 'font-medium text-muted hover:text-foreground'
+                    }`}
+                  >
+                    <span>{t.label}</span>
+                    <span className="text-[10px] font-mono text-muted">{t.count}</span>
+                    {t.alertDot && <span className={`w-1.5 h-1.5 rounded-full ${t.alertDot}`} />}
+                    {active && (
+                      <span className="absolute left-0 right-0 bottom-0 h-[2px] bg-foreground rounded-full" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="flex flex-wrap items-center gap-1">
-              <button
-                onClick={() => setGovScope('ALL')}
-                className={`px-2 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
-                  govScope === 'ALL'
-                    ? 'bg-zinc-100 dark:bg-surface-secondary text-foreground font-semibold border border-zinc-200 dark:border-border/80'
-                    : 'text-muted hover:text-foreground hover:bg-zinc-50 dark:hover:bg-surface-secondary/50'
-                }`}
-              >
-                全部
-              </button>
-              {availableGovScopes.map((sc) => (
+            <div className="flex flex-wrap items-center gap-2 pb-1.5 text-[10.5px]">
+              {/* 富内容可搜索作用域下拉选择器 */}
+              <div ref={scopePickerRef} className="relative">
                 <button
-                  key={sc}
-                  onClick={() => setGovScope(sc)}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-mono transition-colors cursor-pointer ${
-                    govScope === sc
-                      ? 'bg-zinc-100 dark:bg-surface-secondary text-foreground font-semibold border border-zinc-200 dark:border-border/80'
-                      : 'text-muted hover:text-foreground hover:bg-zinc-50 dark:hover:bg-surface-secondary/50'
-                  }`}
+                  type="button"
+                  onClick={() => setScopePickerOpen((v) => !v)}
+                  className="h-7 px-2.5 rounded-lg bg-zinc-50 dark:bg-surface-secondary/70 border border-zinc-200/85 dark:border-border/75 hover:border-zinc-300 dark:hover:border-zinc-600 inline-flex items-center gap-1.5 text-[11px] text-foreground transition-colors cursor-pointer"
                 >
-                  {sc === 'global' ? '全局' : sc}
+                  {activeScopeOption?.maxBytes >= ANTIGRAVITY_FILE_BYTES_WARN && (
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        getFileSizeStatus(activeScopeOption.maxBytes).dotClass
+                      }`}
+                    />
+                  )}
+                  <span className="text-muted">作用域</span>
+                  <span className="font-mono font-semibold">
+                    {govScope === 'global' ? '全局通用' : govScope}
+                  </span>
+                  {isGovScopeReadOnly && <Lock className="w-3 h-3 text-amber-500" />}
+                  <ChevronDown className="w-3.5 h-3.5 text-muted" />
                 </button>
-              ))}
+
+                {scopePickerOpen && (
+                  <div className="absolute right-0 top-full mt-1.5 w-[390px] max-w-[92vw] rounded-xl bg-white dark:bg-surface border border-zinc-200/90 dark:border-border shadow-lg z-40 overflow-hidden flex flex-col">
+                    <div className="p-2 border-b border-zinc-200/75 dark:border-border/60 bg-zinc-50/60 dark:bg-surface-secondary/30">
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          autoFocus
+                          value={scopeSearch}
+                          onChange={(e) => setScopeSearch(e.target.value)}
+                          placeholder="搜索作用域：全局、仓库名、路径或简介..."
+                          className="w-full h-7 pl-8 pr-7 rounded-lg bg-white dark:bg-surface border border-zinc-200/90 dark:border-border/75 text-[11px] text-foreground placeholder-muted outline-none focus:border-zinc-400"
+                        />
+                        {scopeSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setScopeSearch('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-foreground cursor-pointer"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="max-h-[340px] overflow-y-auto divide-y divide-zinc-200/60 dark:divide-border/50">
+                      {filteredScopeOptions.length === 0 ? (
+                        <div className="py-8 text-center text-[11px] text-muted">
+                          未找到匹配的全局或项目作用域
+                        </div>
+                      ) : (
+                        filteredScopeOptions.map((opt) => {
+                          const selected = opt.code === govScope;
+                          const alertStatus =
+                            opt.maxBytes >= ANTIGRAVITY_FILE_BYTES_WARN
+                              ? getFileSizeStatus(opt.maxBytes)
+                              : null;
+                          return (
+                            <button
+                              key={opt.code}
+                              type="button"
+                              onClick={() => handleSelectGovScope(opt.code)}
+                              className={`w-full text-left px-3 py-2.5 transition-colors cursor-pointer flex flex-col gap-1 ${
+                                selected
+                                  ? 'bg-zinc-100/80 dark:bg-surface-secondary/75'
+                                  : 'hover:bg-zinc-50 dark:hover:bg-surface-secondary/40'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  {alertStatus && (
+                                    <span
+                                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${alertStatus.dotClass}`}
+                                      title={alertStatus.label}
+                                    />
+                                  )}
+                                  <span className="text-[12px] font-mono font-semibold text-foreground truncate">
+                                    {opt.code === 'global' ? '全局通用 (a8-agent-mind)' : opt.code}
+                                  </span>
+                                  {opt.role !== 'global' && (
+                                    <span className="text-[9.5px] font-mono px-1.5 py-[1px] rounded bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/70 text-muted shrink-0">
+                                      {ROLE_LABELS[opt.role] || opt.role.toUpperCase()}
+                                    </span>
+                                  )}
+                                  {opt.role === 'test-bed' && (
+                                    <Lock className="w-3 h-3 text-amber-500 shrink-0" />
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-mono text-muted">
+                                  <span>
+                                    规则 {opt.rulesCount} · Decision {opt.decisionsCount} · Lint {opt.lintsCount}
+                                  </span>
+                                  {opt.totalTokens > 0 && (
+                                    <span className="text-foreground/80">· {opt.totalTokens.toLocaleString()}t</span>
+                                  )}
+                                  {selected && <Check className="w-3.5 h-3.5 text-emerald-500" />}
+                                </div>
+                              </div>
+
+                              {(opt.summary || opt.physicalPath) && (
+                                <div className="text-[10.5px] text-muted truncate">
+                                  {opt.summary}
+                                  {opt.summary && opt.physicalPath ? ' · ' : ''}
+                                  {opt.physicalPath && (
+                                    <span className="font-mono opacity-80">{opt.physicalPath}</span>
+                                  )}
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </section>
+          </div>
 
           {/* --------------------------------------------------------------- */}
-          {/* Layer 1: Markdown 规则 (全局 mind-rules.md + 各项目 .agents/rules/) */}
+          {/* Layer 1: Markdown 规则 (单卡扁平内联：常驻融入式预算分布 + 文件) */}
           {/* --------------------------------------------------------------- */}
           {govLayer === 'rules' && (
-            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden flex flex-col">
-              <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-col">
+              <div className="px-4 py-2 border-b border-zinc-200/75 dark:border-border/55 grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+                <div className="lg:col-span-4 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ruleTokenStats.aggregateStatus.dotClass}`} />
+                      <span className="font-medium text-foreground truncate">
+                        {govScope === 'global' ? '全局常驻预算' : `${govScope} 会话注入`}
+                      </span>
+                      <span className="text-[10px] text-muted shrink-0">
+                        · {ruleTokenStats.aggregateStatus.label}
+                      </span>
+                    </div>
+                    <span className="font-mono font-semibold text-foreground shrink-0">
+                      {ruleTokenStats.sessionBudgetTokens.toLocaleString()} /{' '}
+                      {ANTIGRAVITY_TOTAL_TOKENS_BUDGET.toLocaleString()} t
+                    </span>
+                  </div>
+
+                  <div className="relative h-1.5 rounded-full bg-zinc-100 dark:bg-surface-secondary overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{
+                        width: `${Math.min(100, Math.round((ruleTokenStats.sessionBudgetTokens / ANTIGRAVITY_TOTAL_TOKENS_BUDGET) * 100))}%`,
+                        backgroundColor:
+                          ruleTokenStats.sessionBudgetTokens >= ANTIGRAVITY_TOTAL_TOKENS_BUDGET
+                            ? '#F43F5E'
+                            : ruleTokenStats.sessionBudgetTokens >= ANTIGRAVITY_TOTAL_TOKENS_WARN
+                              ? '#F59E0B'
+                              : '#10B981',
+                      }}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-muted">
+                    <span>
+                      {govScope === 'global'
+                        ? `全局 ${filteredRules.length} 篇 (${ruleTokenStats.globalTokens.toLocaleString()}t)`
+                        : `本仓 ${ruleTokenStats.scopedTokens.toLocaleString()}t + 公共全局 ${ruleTokenStats.globalTokens.toLocaleString()}t`}
+                    </span>
+                    <span>单文件上限 24 KB</span>
+                  </div>
+
+                  {ruleTokenStats.aggregateStatus.level !== 'ok' && (
+                    <p className="text-[10.5px] text-amber-700 dark:text-amber-400 leading-snug">
+                      {ruleTokenStats.aggregateStatus.hint}
+                    </p>
+                  )}
+                </div>
+
+                {ruleTokenStats.rows.length > 0 ? (
+                  <div
+                    className="lg:col-span-8 w-full lg:border-l lg:border-zinc-200/70 dark:lg:border-border/50 lg:pl-3"
+                    style={{ height: `${Math.max(76, Math.min(180, ruleTokenStats.rows.length * 24 + 34))}px` }}
+                  >
+                    <EChartBox option={ruleTokenChartOption} className="w-full h-full" />
+                  </div>
+                ) : (
+                  <div className="lg:col-span-8 py-4 text-center text-[11px] text-muted">
+                    暂无规则或大地图文件
+                  </div>
+                )}
+              </div>
+
+              <div className="px-4 py-2 border-b border-zinc-200/80 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                   {filteredRules.map((f) => {
                     const ruleRepoCode = f.scope === 'global' ? '' : f.repo;
                     const active = selectedRulePath === f.rel_path && selectedRuleRepo === ruleRepoCode;
                     const isMaster = f.scope === 'global' && f.rel_path === 'rules/mind-rules.md';
+                    const isMap =
+                      f.rel_path.toLowerCase() === 'agents.md' || f.rel_path.toLowerCase() === 'gemini.md';
+                    const estTokens =
+                      active && editorContent.length > 0
+                        ? liveRuleMetrics.estimated_tokens
+                        : f.estimated_tokens ?? Math.ceil((f.size_bytes || 0) / 3);
+                    const fileBytes =
+                      active && editorContent.length > 0 ? liveRuleMetrics.byte_count : f.size_bytes ?? 0;
+                    const byteStatus = getFileSizeStatus(fileBytes);
+                    const shortLabel = isMaster
+                      ? 'mind-rules.md · 全局总则'
+                      : isMap
+                        ? `${f.name} · 大地图`
+                        : f.name;
                     return (
                       <button
                         key={`${f.repo}::${f.rel_path}`}
                         onClick={() => requestSwitchRule(f.rel_path, ruleRepoCode)}
-                        title={f.abs_path || f.rel_path}
+                        title={`${f.title || f.name} · ${f.abs_path || f.rel_path} · ${(fileBytes / 1000).toFixed(1)} KB · 约 ${estTokens} tok`}
                         className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11.5px] transition-colors cursor-pointer whitespace-nowrap ${
                           active
                             ? 'bg-zinc-100 dark:bg-surface-secondary font-semibold text-foreground'
                             : 'text-muted hover:text-foreground hover:bg-zinc-50 dark:hover:bg-surface-secondary/60'
                         }`}
                       >
-                        <span>
-                          {isMaster ? '全局架构与治理总则' : f.title || f.name.replace(/\.md$/i, '')}
+                        <span className="font-mono">{shortLabel}</span>
+                        <span
+                          className={`text-[9.5px] font-mono px-1.5 py-[1px] rounded border ${byteStatus.pillClass}`}
+                        >
+                          {(fileBytes / 1000).toFixed(1)}KB
                         </span>
-                        <span className="text-[10px] font-mono text-muted/85">{f.name}</span>
-                        <span className="text-[9.5px] font-mono px-1.5 py-[1px] rounded bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/70 text-muted">
-                          {isMaster ? '主规则' : f.scope === 'global' ? '全局' : f.repo}
-                        </span>
-                        {f.clause_count > 0 && (
-                          <span className="text-[9.5px] font-mono text-muted/80">{f.clause_count}条</span>
-                        )}
                       </button>
                     );
                   })}
 
-                  <button
-                    onClick={() => {
-                      if (govScope !== 'ALL' && govScope !== 'global') {
-                        const allowed = writableRepos.some((p) => p.code === govScope);
-                        setNewRuleTargetRepo(allowed ? govScope : '');
-                      } else {
-                        setNewRuleTargetRepo('');
-                      }
-                      setIsNewRuleOpen((v) => !v);
-                    }}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] text-muted hover:text-foreground hover:bg-zinc-50 dark:hover:bg-surface-secondary/60 transition-colors cursor-pointer"
-                  >
-                    {isNewRuleOpen ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
-                    <span>{isNewRuleOpen ? '收起' : '新建规则'}</span>
-                  </button>
+                  {!isGovScopeReadOnly && (
+                    <button
+                      onClick={() => {
+                        setNewRuleTargetRepo(govScope === 'global' ? '' : govScope);
+                        setIsNewRuleOpen((v) => !v);
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] text-muted hover:text-foreground hover:bg-zinc-50 dark:hover:bg-surface-secondary/60 transition-colors cursor-pointer"
+                    >
+                      {isNewRuleOpen ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                      <span>{isNewRuleOpen ? '收起' : '新建规则'}</span>
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {activeRuleEntry && !activeRuleEntry.editable && (
-                    <span className="inline-flex items-center gap-1 text-[10.5px] text-amber-600 dark:text-amber-400 px-1.5">
-                      <Lock className="w-3 h-3" />
-                      只读 (test-bed)
-                    </span>
+                  {filteredRules.length > 0 && scopedActiveRuleEntry && (
+                    <>
+                      <span className="text-[10.5px] font-mono text-muted hidden md:inline pr-1">
+                        {liveRuleMetrics.byte_count.toLocaleString()} / 24,000 B · {liveRuleMetrics.estimated_tokens.toLocaleString()}t · {scopedActiveRuleEntry.clause_count}条
+                      </span>
+                      {!scopedActiveRuleEntry.editable && (
+                        <span className="inline-flex items-center gap-1 text-[10.5px] text-amber-600 dark:text-amber-400 px-1">
+                          <Lock className="w-3 h-3" />
+                          只读
+                        </span>
+                      )}
+                      {isRuleDirty ? (
+                        <span className="text-[10.5px] text-amber-600 dark:text-amber-400 px-1">未保存</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10.5px] text-emerald-600 dark:text-emerald-400 px-1">
+                          <Check className="w-3 h-3" />
+                          已同步
+                        </span>
+                      )}
+
+                      <div className="inline-flex items-center rounded-lg bg-zinc-100 dark:bg-surface-secondary p-0.5 text-[11px]">
+                        <button
+                          onClick={() => setRuleMode('preview')}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                            ruleMode === 'preview'
+                              ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                              : 'text-muted hover:text-foreground'
+                          }`}
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>阅读</span>
+                        </button>
+                        <button
+                          onClick={() => setRuleMode('edit')}
+                          disabled={!scopedActiveRuleEntry.editable}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors disabled:opacity-45 ${
+                            ruleMode === 'edit'
+                              ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                              : 'text-muted hover:text-foreground'
+                          }`}
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          <span>编辑</span>
+                        </button>
+                      </div>
+
+                      {canDeleteSelectedRule && (
+                        <InlineDeleteButton
+                          confirming={confirmDeleteRule}
+                          deleting={deletingFile}
+                          onRequest={() => setConfirmDeleteRule(true)}
+                          onCancel={() => setConfirmDeleteRule(false)}
+                          onConfirm={() => executeDeleteFile(selectedRulePath, 'rule', selectedRuleRepo)}
+                        />
+                      )}
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        isPending={loadingFile}
+                        className="h-7 px-2.5 rounded-lg text-[11px]"
+                        onPress={() => loadRuleFileDirect(selectedRulePath, selectedRuleRepo)}
+                      >
+                        重载
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        isPending={savingFile}
+                        isDisabled={(!isRuleDirty && !savingFile) || !scopedActiveRuleEntry.editable}
+                        className="h-7 px-3 rounded-lg text-[11px]"
+                        onPress={handleSaveCurrentRule}
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>保存</span>
+                      </Button>
+                    </>
                   )}
-                  {isRuleDirty ? (
-                    <span className="text-[10.5px] text-amber-600 dark:text-amber-400 px-1.5">未保存</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-[10.5px] text-emerald-600 dark:text-emerald-400 px-1.5">
-                      <Check className="w-3 h-3" />
-                      已同步
-                    </span>
-                  )}
-
-                  <div className="inline-flex items-center rounded-lg bg-zinc-100 dark:bg-surface-secondary p-0.5 text-[11px]">
-                    <button
-                      onClick={() => setRuleMode('preview')}
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
-                        ruleMode === 'preview'
-                          ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
-                          : 'text-muted hover:text-foreground'
-                      }`}
-                    >
-                      <Eye className="w-3 h-3" />
-                      <span>阅读</span>
-                    </button>
-                    <button
-                      onClick={() => setRuleMode('edit')}
-                      disabled={activeRuleEntry ? !activeRuleEntry.editable : false}
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors disabled:opacity-45 ${
-                        ruleMode === 'edit'
-                          ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
-                          : 'text-muted hover:text-foreground'
-                      }`}
-                    >
-                      <Edit3 className="w-3 h-3" />
-                      <span>编辑</span>
-                    </button>
-                  </div>
-
-                  {canDeleteSelectedRule && (
-                    <InlineDeleteButton
-                      confirming={confirmDeleteRule}
-                      deleting={deletingFile}
-                      onRequest={() => setConfirmDeleteRule(true)}
-                      onCancel={() => setConfirmDeleteRule(false)}
-                      onConfirm={() => executeDeleteFile(selectedRulePath, 'rule', selectedRuleRepo)}
-                    />
-                  )}
-
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    isPending={loadingFile}
-                    className="h-7 px-2.5 rounded-lg text-[11px]"
-                    onPress={() => loadRuleFileDirect(selectedRulePath, selectedRuleRepo)}
-                  >
-                    重载
-                  </Button>
-
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    isPending={savingFile}
-                    isDisabled={
-                      (!isRuleDirty && !savingFile) || (activeRuleEntry ? !activeRuleEntry.editable : false)
-                    }
-                    className="h-7 px-3 rounded-lg text-[11px]"
-                    onPress={handleSaveCurrentRule}
-                  >
-                    <Save className="w-3.5 h-3.5" />
-                    <span>保存 (Ctrl+S)</span>
-                  </Button>
                 </div>
               </div>
 
               {isNewRuleOpen && (
                 <div className="px-4 py-2.5 bg-zinc-50/80 dark:bg-surface-secondary/35 border-b border-zinc-200/80 dark:border-border/60 flex flex-wrap items-center gap-2">
-                  <select
-                    value={newRuleTargetRepo}
-                    onChange={(e) => setNewRuleTargetRepo(e.target.value)}
-                    aria-label="规则归属作用域"
-                    className="h-7 px-2 rounded-lg bg-white dark:bg-surface border border-zinc-200/90 dark:border-border/70 text-[11px] font-mono text-foreground outline-none"
-                  >
-                    <option value="">全局 (a8-agent-mind/rules/)</option>
-                    {writableRepos.map((p) => (
-                      <option key={p.code} value={p.code}>
-                        项目 {p.code} (.agents/rules/)
-                      </option>
-                    ))}
-                  </select>
+                  <span className="h-7 px-2.5 inline-flex items-center rounded-lg bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/70 text-[11px] font-mono text-muted">
+                    {newRuleTargetRepo
+                      ? `项目 ${newRuleTargetRepo} (.agents/rules/)`
+                      : '全局 (a8-agent-mind/rules/)'}
+                  </span>
                   <input
                     value={newRuleName}
                     onChange={(e) => setNewRuleName(e.target.value)}
@@ -2458,37 +3053,37 @@ export function AgentMindView({
                 />
               )}
 
-              <div className="px-4 py-1.5 bg-zinc-50/50 dark:bg-surface-secondary/20 border-b border-zinc-200/60 dark:border-border/40 text-[10.5px] font-mono text-muted flex items-center justify-between gap-2">
-                <span>
-                  {selectedRuleRepo ? `${selectedRuleRepo} / ${selectedRulePath}` : `a8-agent-mind / ${selectedRulePath}`}
-                </span>
-                {activeRuleEntry && <span>条款数：{activeRuleEntry.clause_count}</span>}
-              </div>
-
-              <div className="px-5 py-4">
-                {loadingFile && !editorContent ? (
-                  <div className="py-16 text-center text-[11.5px] text-muted">
-                    正在加载 {selectedRulePath}...
-                  </div>
-                ) : ruleMode === 'preview' ? (
-                  <MarkdownArticle content={stripReviewFrontmatter(editorContent)} />
-                ) : (
-                  <textarea
-                    value={editorContent}
-                    onChange={(e) => setEditorContent(e.target.value)}
-                    spellCheck={false}
-                    className="w-full min-h-[540px] font-mono text-[12px] text-foreground dark:text-slate-100 bg-transparent focus:outline-none resize-y leading-relaxed"
-                  />
-                )}
-              </div>
-            </section>
+              {filteredRules.length === 0 ? (
+                <div className="py-16 px-4 text-center text-[11.5px] text-muted">
+                  {govScope === 'global' ? '全局作用域' : govScope} 暂无 AGENTS.md 或 .agents/rules/*.md 规则文档
+                  {!isGovScopeReadOnly && '，可点击上方「新建规则」创建红线文档'}
+                </div>
+              ) : (
+                <div className="px-5 py-4">
+                  {loadingFile && !editorContent ? (
+                    <div className="py-16 text-center text-[11.5px] text-muted">
+                      正在加载 {selectedRulePath}...
+                    </div>
+                  ) : ruleMode === 'preview' ? (
+                    <MarkdownArticle content={stripReviewFrontmatter(editorContent)} />
+                  ) : (
+                    <textarea
+                      value={editorContent}
+                      onChange={(e) => setEditorContent(e.target.value)}
+                      spellCheck={false}
+                      className="w-full min-h-[540px] font-mono text-[12px] text-foreground dark:text-slate-100 bg-transparent focus:outline-none resize-y leading-relaxed"
+                    />
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           {/* --------------------------------------------------------------- */}
           {/* Layer 2: Decision 决策 (*.decision.json 结构化语义裁决配置)       */}
           {/* --------------------------------------------------------------- */}
           {govLayer === 'decisions' && (
-            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden flex flex-col">
+            <div className="flex flex-col">
               <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <div className="relative">
@@ -2500,21 +3095,18 @@ export function AgentMindView({
                       className="h-7 pl-8 pr-2.5 rounded-lg bg-zinc-50 dark:bg-surface-secondary/50 border border-zinc-200/85 dark:border-border/70 text-[11px] text-foreground placeholder-muted outline-none focus:border-zinc-400 w-64"
                     />
                   </div>
-                  <button
-                    onClick={() => {
-                      if (govScope !== 'ALL' && govScope !== 'global') {
-                        const allowed = writableRepos.some((p) => p.code === govScope);
-                        setNewDecisionTargetRepo(allowed ? govScope : '');
-                      } else {
-                        setNewDecisionTargetRepo('');
-                      }
-                      setIsNewDecisionOpen((v) => !v);
-                    }}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-muted hover:text-foreground hover:bg-zinc-50 dark:hover:bg-surface-secondary/60 border border-zinc-200/75 dark:border-border/60 transition-colors cursor-pointer"
-                  >
-                    {isNewDecisionOpen ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
-                    <span>{isNewDecisionOpen ? '收起' : '新建 Decision'}</span>
-                  </button>
+                  {!isGovScopeReadOnly && (
+                    <button
+                      onClick={() => {
+                        setNewDecisionTargetRepo(govScope === 'global' ? '' : govScope);
+                        setIsNewDecisionOpen((v) => !v);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-muted hover:text-foreground hover:bg-zinc-50 dark:hover:bg-surface-secondary/60 border border-zinc-200/75 dark:border-border/60 transition-colors cursor-pointer"
+                    >
+                      {isNewDecisionOpen ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                      <span>{isNewDecisionOpen ? '收起' : '新建 Decision'}</span>
+                    </button>
+                  )}
                 </div>
 
                 <div className="text-[11px] text-muted">
@@ -2525,19 +3117,11 @@ export function AgentMindView({
 
               {isNewDecisionOpen && (
                 <div className="px-4 py-2.5 bg-zinc-50/80 dark:bg-surface-secondary/35 border-b border-zinc-200/80 dark:border-border/60 flex flex-wrap items-center gap-2">
-                  <select
-                    value={newDecisionTargetRepo}
-                    onChange={(e) => setNewDecisionTargetRepo(e.target.value)}
-                    aria-label="Decision 归属作用域"
-                    className="h-7 px-2 rounded-lg bg-white dark:bg-surface border border-zinc-200/90 dark:border-border/70 text-[11px] font-mono text-foreground outline-none"
-                  >
-                    <option value="">全局 (a8-agent-mind/decisions/)</option>
-                    {writableRepos.map((p) => (
-                      <option key={p.code} value={p.code}>
-                        项目 {p.code} (scripts/lints/)
-                      </option>
-                    ))}
-                  </select>
+                  <span className="h-7 px-2.5 inline-flex items-center rounded-lg bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/70 text-[11px] font-mono text-muted">
+                    {newDecisionTargetRepo
+                      ? `项目 ${newDecisionTargetRepo} (scripts/lints/)`
+                      : '全局 (a8-agent-mind/decisions/)'}
+                  </span>
                   <select
                     value={newDecisionCategory}
                     onChange={(e) => setNewDecisionCategory(e.target.value)}
@@ -2718,21 +3302,23 @@ export function AgentMindView({
 
                 {/* 右侧 Decision 详情 / JSON 编辑器 */}
                 <div className="lg:col-span-7 flex flex-col">
-                  {!activeDecisionEntry ? (
+                  {!scopedActiveDecisionEntry ? (
                     <div className="py-20 text-center text-[11.5px] text-muted">
-                      从左侧选择一条 Decision 决策查看裁决判据或编辑 JSON 定义
+                      {filteredDecisions.length === 0
+                        ? '当前作用域暂无 Decision 决策定义'
+                        : '从左侧选择一条 Decision 决策查看裁决判据或编辑 JSON 定义'}
                     </div>
                   ) : (
                     <>
                       <div className="px-4 py-2.5 border-b border-zinc-200/80 dark:border-border/60 flex flex-wrap items-center justify-between gap-2 bg-zinc-50/40 dark:bg-surface-secondary/20">
                         <div className="min-w-0">
                           <div className="text-[12.5px] font-semibold text-foreground truncate">
-                            {activeDecisionEntry.name}
+                            {scopedActiveDecisionEntry.name}
                           </div>
                           <div className="text-[10.5px] font-mono text-muted truncate">
-                            {activeDecisionEntry.scope === 'global'
-                              ? `a8-agent-mind / ${activeDecisionEntry.rel_path}`
-                              : `${activeDecisionEntry.repo} / ${activeDecisionEntry.rel_path}`}
+                            {scopedActiveDecisionEntry.scope === 'global'
+                              ? `a8-agent-mind / ${scopedActiveDecisionEntry.rel_path}`
+                              : `${scopedActiveDecisionEntry.repo} / ${scopedActiveDecisionEntry.rel_path}`}
                           </div>
                         </div>
 
@@ -2760,7 +3346,7 @@ export function AgentMindView({
                             </button>
                             <button
                               onClick={() => setDecisionMode('raw')}
-                              disabled={!activeDecisionEntry.editable}
+                              disabled={!scopedActiveDecisionEntry.editable}
                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors disabled:opacity-45 ${
                                 decisionMode === 'raw'
                                   ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
@@ -2772,14 +3358,14 @@ export function AgentMindView({
                             </button>
                           </div>
 
-                          {activeDecisionEntry.editable && !activeDecisionEntry.parse_error && (
+                          {scopedActiveDecisionEntry.editable && !scopedActiveDecisionEntry.parse_error && (
                             <Button
                               size="sm"
                               variant="secondary"
                               className="h-7 px-2.5 rounded-lg text-[11px]"
-                              onPress={() => handleToggleDecisionEnabled(activeDecisionEntry)}
+                              onPress={() => handleToggleDecisionEnabled(scopedActiveDecisionEntry)}
                             >
-                              {activeDecisionEntry.enabled ? '退役' : '恢复'}
+                              {scopedActiveDecisionEntry.enabled ? '退役' : '恢复'}
                             </Button>
                           )}
 
@@ -2804,7 +3390,7 @@ export function AgentMindView({
                             variant="primary"
                             isPending={savingDecision}
                             isDisabled={
-                              (!isDecisionDirty && !savingDecision) || !activeDecisionEntry.editable
+                              (!isDecisionDirty && !savingDecision) || !scopedActiveDecisionEntry.editable
                             }
                             className="h-7 px-3 rounded-lg text-[11px]"
                             onPress={handleSaveCurrentDecision}
@@ -2827,21 +3413,21 @@ export function AgentMindView({
                           />
                         ) : (
                           <div className="flex flex-col gap-3 text-[12px]">
-                            {activeDecisionEntry.parse_error && (
+                            {scopedActiveDecisionEntry.parse_error && (
                               <div className="rounded-xl bg-rose-500/8 border border-rose-500/25 px-3 py-2 text-[11.5px] text-rose-600 dark:text-rose-400">
-                                解析错误：{activeDecisionEntry.parse_error}
+                                解析错误：{scopedActiveDecisionEntry.parse_error}
                               </div>
                             )}
 
-                            {!activeDecisionEntry.enabled && (
+                            {!scopedActiveDecisionEntry.enabled && (
                               <div className="rounded-xl bg-zinc-100/90 dark:bg-surface-secondary/50 border border-zinc-200/85 dark:border-border/70 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[11.5px]">
                                 <span className="text-muted">
-                                  已退役{activeDecisionEntry.retired_at ? ` (${activeDecisionEntry.retired_at})` : ''}
-                                  {activeDecisionEntry.retired_reason ? ` · ${activeDecisionEntry.retired_reason}` : ''}
+                                  已退役{scopedActiveDecisionEntry.retired_at ? ` (${scopedActiveDecisionEntry.retired_at})` : ''}
+                                  {scopedActiveDecisionEntry.retired_reason ? ` · ${scopedActiveDecisionEntry.retired_reason}` : ''}
                                 </span>
-                                {activeDecisionEntry.editable && (
+                                {scopedActiveDecisionEntry.editable && (
                                   <button
-                                    onClick={() => handleToggleDecisionEnabled(activeDecisionEntry)}
+                                    onClick={() => handleToggleDecisionEnabled(scopedActiveDecisionEntry)}
                                     className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
                                   >
                                     恢复启用
@@ -2852,13 +3438,13 @@ export function AgentMindView({
 
                             <div className="rounded-xl border border-zinc-200/80 dark:border-border/70 px-3 py-2 bg-zinc-50/40 dark:bg-surface-secondary/15 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                               <span className="font-mono text-muted">
-                                累计评估 {activeDecisionEntry.eval_count ?? 0} 次 · 累计拦截 {activeDecisionEntry.hit_count ?? 0} 次
+                                累计评估 {scopedActiveDecisionEntry.eval_count ?? 0} 次 · 累计拦截 {scopedActiveDecisionEntry.hit_count ?? 0} 次
                               </span>
                               <span className="font-mono text-muted">
-                                {activeDecisionEntry.last_hit_ts
-                                  ? `最近拦截 ${formatReviewTime('', activeDecisionEntry.last_hit_ts)}`
-                                  : activeDecisionEntry.last_eval_ts
-                                    ? `最近评估 ${formatReviewTime('', activeDecisionEntry.last_eval_ts)}`
+                                {scopedActiveDecisionEntry.last_hit_ts
+                                  ? `最近拦截 ${formatReviewTime('', scopedActiveDecisionEntry.last_hit_ts)}`
+                                  : scopedActiveDecisionEntry.last_eval_ts
+                                    ? `最近评估 ${formatReviewTime('', scopedActiveDecisionEntry.last_eval_ts)}`
                                     : '暂无评估记录'}
                               </span>
                             </div>
@@ -2868,7 +3454,7 @@ export function AgentMindView({
                                 触发与范围 (Triggers & File Patterns)
                               </div>
                               <div className="flex flex-wrap gap-1.5">
-                                {activeDecisionEntry.triggers.map((t) => (
+                                {scopedActiveDecisionEntry.triggers.map((t) => (
                                   <span
                                     key={t}
                                     className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-white dark:bg-surface border border-zinc-200/80 dark:border-border/70 text-foreground"
@@ -2876,10 +3462,10 @@ export function AgentMindView({
                                     trigger: {t}
                                   </span>
                                 ))}
-                                {activeDecisionEntry.file_patterns.length === 0 ? (
+                                {scopedActiveDecisionEntry.file_patterns.length === 0 ? (
                                   <span className="text-[11px] text-muted">匹配全部路径</span>
                                 ) : (
-                                  activeDecisionEntry.file_patterns.map((fp) => (
+                                  scopedActiveDecisionEntry.file_patterns.map((fp) => (
                                     <span
                                       key={fp}
                                       className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-700 dark:text-sky-400"
@@ -2891,13 +3477,13 @@ export function AgentMindView({
                               </div>
                             </div>
 
-                            {activeDecisionEntry.why && (
+                            {scopedActiveDecisionEntry.why && (
                               <div className="rounded-xl border border-zinc-200/80 dark:border-border/70 p-3">
                                 <div className="text-[10.5px] font-semibold text-muted mb-1">
                                   工程根因 (Why)
                                 </div>
                                 <p className="text-[12px] text-foreground leading-relaxed whitespace-pre-wrap">
-                                  {activeDecisionEntry.why}
+                                  {scopedActiveDecisionEntry.why}
                                 </p>
                               </div>
                             )}
@@ -2907,7 +3493,7 @@ export function AgentMindView({
                                 裁决指令 (Instructions)
                               </div>
                               <p className="text-[12px] text-foreground leading-relaxed whitespace-pre-wrap">
-                                {activeDecisionEntry.instructions || '-'}
+                                {scopedActiveDecisionEntry.instructions || '-'}
                               </p>
                             </div>
 
@@ -2917,7 +3503,7 @@ export function AgentMindView({
                                   通过判据 (PASSED)
                                 </div>
                                 <p className="text-[11.5px] text-foreground leading-relaxed whitespace-pre-wrap">
-                                  {activeDecisionEntry.passed_criteria || '-'}
+                                  {scopedActiveDecisionEntry.passed_criteria || '-'}
                                 </p>
                               </div>
                               <div className="rounded-xl border border-rose-500/25 bg-rose-500/5 p-3">
@@ -2925,7 +3511,7 @@ export function AgentMindView({
                                   拦截判据 (VIOLATED)
                                 </div>
                                 <p className="text-[11.5px] text-foreground leading-relaxed whitespace-pre-wrap">
-                                  {activeDecisionEntry.violated_criteria || '-'}
+                                  {scopedActiveDecisionEntry.violated_criteria || '-'}
                                 </p>
                               </div>
                             </div>
@@ -2936,14 +3522,14 @@ export function AgentMindView({
                   )}
                 </div>
               </div>
-            </section>
+            </div>
           )}
 
           {/* --------------------------------------------------------------- */}
           {/* Layer 3: Lint 检查 (scripts/lints/*.py 确定性脚本只读浏览)        */}
           {/* --------------------------------------------------------------- */}
           {govLayer === 'lints' && (
-            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden flex flex-col">
+            <div className="flex flex-col">
               <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11.5px] font-medium text-foreground">
                   项目确定性结构检查 ({filteredLints.length} 项 · scripts/lints/*.py)
@@ -2977,8 +3563,10 @@ export function AgentMindView({
               <div className="grid grid-cols-1 lg:grid-cols-12 min-h-[520px]">
                 <div className="lg:col-span-5 border-b lg:border-b-0 lg:border-r border-zinc-200/80 dark:border-border/60 divide-y divide-zinc-200/70 dark:divide-border/50">
                   {filteredLints.length === 0 ? (
-                    <div className="py-16 text-center text-[11.5px] text-muted">
-                      当前筛选范围内暂无 Python Lint 检查项
+                    <div className="py-16 px-4 text-center text-[11.5px] text-muted">
+                      {govScope === 'global'
+                        ? '全局层面不运行单仓静态扫描；请在右上角「作用域」下拉中选择具体项目查看 scripts/lints/*.py'
+                        : `${govScope} 暂无 Python Lint 检查项 (scripts/lints/*.py)`}
                     </div>
                   ) : (
                     filteredLints.map((lint) => {
@@ -3030,9 +3618,11 @@ export function AgentMindView({
                 </div>
 
                 <div className="lg:col-span-7 flex flex-col">
-                  {!selectedLint ? (
+                  {!selectedLint || filteredLints.length === 0 ? (
                     <div className="py-20 text-center text-[11.5px] text-muted">
-                      从左侧选择一条 Lint 检查项查看脚本源码
+                      {filteredLints.length === 0
+                        ? '当前作用域暂无 Lint 脚本可浏览'
+                        : '从左侧选择一条 Lint 检查项查看脚本源码'}
                     </div>
                   ) : (
                     <>
@@ -3060,9 +3650,9 @@ export function AgentMindView({
                   )}
                 </div>
               </div>
-            </section>
+            </div>
           )}
-        </div>
+        </section>
       )}
 
       {/* ================================================================= */}
@@ -4076,7 +4666,7 @@ export function AgentMindView({
       )}
 
       {/* ================================================================= */}
-      {/* Tab 5: 仓库地图 (同款 rounded-2xl + gap-3 卡片与原位阅读编辑) */}
+      {/* Tab 5: 仓库地图 (严格隔离：仅管理仓库拓扑与 repos/*.md 仓库档案) */}
       {/* ================================================================= */}
       {subTab === 'projects' && (
         <>
@@ -4117,7 +4707,7 @@ export function AgentMindView({
                     <h2 className="text-[12.5px] font-semibold text-foreground">已登记仓库</h2>
                     <span className="text-[10.5px] font-mono text-muted">{overview?.projects.length || 0}</span>
                   </div>
-                  <span className="text-[11px] text-muted">点击查看详情卡或复制物理路径</span>
+                  <span className="text-[11px] text-muted">点击查看仓库档案或复制物理路径</span>
                 </div>
 
                 <div className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

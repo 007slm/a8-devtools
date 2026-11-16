@@ -384,6 +384,17 @@ function Get-DshDocumentedContext {
     return ($buf -join "`n")
 }
 
+function Get-DshTriageDisciplinePrompt {
+    return @"
+## 核心审查纪律与缺陷分级红线（由 review.ps1 强制注入）
+1. **两维缺陷评分 (F × S 熔断)**：对识别出的每一个问题，必须分别评估 **发生频率 F (1~10)** 与 **严重程度 S (1~10)**，并在条目中显式标出 ``(F=?, S=?, F×S=?)``。
+2. **乘积低于 10 严禁要求改代码**：凡综合乘积 **F × S < 10** 的发现，必须一律归入「已知非阻塞边界 / 观察项」仅作问题记录，**严禁将其判为阻断项 (`VIOLATED`) 或要求修改代码**。
+3. **践行 YAGNI、严禁过度设计**：**严禁为无人询问的罕见边缘场景、推测性极端并发或假想的未来情况要求追加防御逻辑或超前设计**；仅有 **F × S >= 10** 且具备明确因果链的真实缺陷或架构红线破坏才允许判为不通过。
+4. **状态与并发不变量校验**：涉及状态机、缓存失效或并发资源借还时，先提炼必须恒真的核心不变量（守恒、单调时间戳/Epoch、移除即失效），再沿因果链反证是否存在真实路径击穿（仍受 F × S >= 10 约束）。
+5. **结论格式**：报告末行严格输出 ``【终审通过 (PASSED) / 准予 Commit & Push】``、``【不通过 (VIOLATED)】`` 或 ``【需人工拍板 (REQUIRES_APPROVAL)】``。
+"@
+}
+
 function Build-DshPrepackedContext {
     param([Parameter(Mandatory = $true)][string]$WorkspacePath)
     $parts = New-Object System.Collections.Generic.List[string]
@@ -458,11 +469,15 @@ if ($ArchiveOnly) {
     if ([string]::IsNullOrWhiteSpace($promptText)) {
         throw "Prompt 文件内容为空: $PromptFile"
     }
+    $disciplineBlock = (Get-DshTriageDisciplinePrompt).Trim()
+    $prepacked = ""
     if (-not $NoDiffSummary) {
         $prepacked = Build-DshPrepackedContext -WorkspacePath $resolvedWorkspace
-        if (-not [string]::IsNullOrWhiteSpace($prepacked)) {
-            $promptText = $prepacked + $promptText
-        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($prepacked)) {
+        $promptText = $disciplineBlock + "`n`n---`n`n" + $prepacked + $promptText
+    } else {
+        $promptText = $disciplineBlock + "`n`n---`n`n" + $promptText
     }
 
     if (-not $NewSession -and [string]::IsNullOrWhiteSpace($usedSession)) {

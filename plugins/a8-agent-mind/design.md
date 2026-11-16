@@ -24,12 +24,13 @@
 - **低延迟高确定性**：通过 `skills/a8-judge/scripts/decisions_client.py` 原生对接 `/v1beta/decisions`，毫秒级定音；
 - **严格 Schema 约束**：裁决结果严格映射并校验为 `skills/a8-judge/schemas/verdict.json` 定义的 `ArchitectureVerdict`，杜绝格式幻觉。
 
-### 1.4 语法元特征路由 + Decisions API 极速裁决流水线
-既做到“只评相关维度、节省上下文”，又做到“事实核验准确、裁决毫秒定音”：
-1. **步骤一：语法元特征自适应路由 (`judge_router.py`)**：
-   - 分析当前 Git Diff 语法元特征，识别真正触及的正交关注点 (`activated_categories`)；
-2. **步骤二：Decisions API 概率校准定音 + 只读现场核验**：
-   - 调用 `decisions_client.py` 向 Google Gemini Decisions API (`gemini-decision-1`) 发起判定，并对违规维度结合只读工具追查调用方与 ADR 批准事实，定位精确文件路径、物理行号与修正动作。
+### 1.4 语法元特征与 `docs/` 指针路由 + 全自由度终审流水线
+既做到“只评相关维度、节省上下文”，又做到“结合设计文档避免误报、全仓核验准确定音”：
+1. **步骤一：变更指针与设计文档路由 (`judge_router.py`)**：
+   - 提取当前 Git Diff 语法元特征与真正触及的正交关注点 (`activated_categories`)，并解析目标仓库 `AGENTS.md` 提取命中文档清单 (`relevant_docs`)；
+2. **步骤二：Decisions API 先验初筛 + `arch-judge` 全自由终审**：
+   - 将 Git Diff 仅作为变更指针：`decisions_client.py` 为每个分片前置 `Documented Design Context` 向 `gemini-decision-1` 发起先验初筛，最终由具备完整工具权限的 `arch-judge` 结合项目 `AGENTS.md`、`docs/`、源码全貌与调用链作出终审；
+   - **Antigravity `agents/*.md` 工具下发契约**：插件定义独立执行权子代理时，frontmatter 必须同时显式声明 `subagent: true`、`mainAgent: false` 与单行 `tools: [read_file, edit_file, write_file, run_command, manage_task, search_web]`；缺少 `mainAgent: false` 或使用多行 YAML `tools:` 列表会被运行时静默降级为无 `run_command` 的 9 工具只读集。
 
 ---
 
@@ -45,7 +46,7 @@
 【演化与生命周期契约】          【系统边界与拓扑隔离】          【并发安全与热路径性能】          【实现规范与单一路径】
 • `@Deprecated`, `obsolete`    • `import`, `package`          • `synchronized`, `Lock`       • `catch`, `throw`
 • 公开 API 签名增删            • 构建依赖 (`pom/json/mod`)    • `Thread`, `volatile`         • `System.out`, 日志门面
-• 零擅自向后兼容死代码         • 客户端 SDK 纯净隔离          • 高频热路径无排他锁           • 错误物理第一现场保留
+• 零擅自向后兼容死代码         • 底层模块零重型侵入          • 高频热路径无排他锁           • 错误物理第一现场保留
 ```
 
 - **路由脚本**：`skills/a8-judge/scripts/judge_router.py`（纯 Python 标库，无任何三方依赖，无任何特定项目硬编码，执行耗时 < 50ms）。
@@ -64,9 +65,9 @@
                               │
                               ▼    2. 触及 4 大红线的代码变更交卷前，AI 自主择机调用一次：
         ┌────────────────────────────────────────────┐
-        │         a8-judge (冷酷守门法官)            │  <-- 触发：AI 自主择机（亦支持 /a8-judge 显式调用）
-        │  • 运行方式：只读 Subagent                  │  <-- 权限：只读沙箱 / 上下文防火墙
-        │  • 裁决引擎：judge_router + Decisions API   │  <-- 引擎：gemini-decision-1 (零输出 Token)
+        │         a8-judge (语义架构终审裁判)         │  <-- 触发：AI 自主择机（亦支持 /a8-judge 显式调用）
+        │  • 运行方式：全工具自由 Subagent (上下文隔离)│  <-- 权限：run_command + 全仓读写(默认不改业务码)
+        │  • 裁决引擎：Diff 指针 + docs/ 全貌 + Decisions│  <-- 初筛：gemini-decision-1 雷达；终审：arch-judge
         └─────────────────────┬──────────────────────┘
                               │ (跨文件深层因果链与全生命周期终审)
                               ▼
@@ -105,7 +106,7 @@
 - **痛点根治**：频繁在主会话中运行全量测试套件或静态分析，会导致成百上千行 Traceback 报错与编译器日志直接砸碎上下文，模型注意力陷入“消灭眼前报错”的目标漂移，催生大量拆东墙补西墙的防御性废代码。
 - **开发 / 校验隔离机制**：
   1. **开发主干期测试静音 (Dev Silence)**：编码与调优阶段专注业务主干逻辑、状态机自洽与视觉交互，严禁在主会话反复刷屏跑全量单测；
-  2. **验证收尾期沙箱隔离 (Subagent as Context Firewall)**：需要全量单测或重型静态分析时，统统交由只读 Subagent（如 `arch-judge`）在独立子进程中执行。数千行脏日志在沙箱中“用完即焚”，主会话仅接收结构化的高密度诊断骨架（失败用例、物理行号与因果核心），保证主会话上下文终身纯净。
+  2. **验证收尾期子进程隔离 (Subagent as Context Firewall)**：需要全量单测、调用链检索或重型静态分析时，交由具备 `run_command` 权限的 Subagent（如 `arch-judge`）在独立子会话中执行。数千行脏日志在子会话中“用完即焚”，主会话仅接收结构化的高密度诊断骨架（失败用例、物理行号与因果核心），保证主会话上下文终身纯净。
 
 ---
 

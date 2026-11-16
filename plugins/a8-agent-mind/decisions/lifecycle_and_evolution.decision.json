@@ -12,17 +12,22 @@
     "legacy",
     "compat",
     "deprecated",
+    "invalidate",
+    "evict",
+    "reconcile",
+    "markReady",
+    "markFailed",
     "AGENTS.md",
     "repos.md"
   ],
   "file_patterns": [],
   "question": {
     "type": "choice",
-    "instructions": "Evaluate compliance with Evolution Contract: zero unapproved backward compatibility, removal of dead/deprecated code, clean deprecation, and consistency with any Documented Design Context.",
+    "instructions": "Evaluate compliance with Evolution Contract and State Lifecycle Invariants: (1) zero unapproved backward compatibility, clean deprecation, removal of dead/deprecated code, and consistency with any Documented Design Context; (2) state-machine invariants must stay closed across transitions—removing targets from desired/mirrored sets, disabling features, or entering EXCLUDED/FAILED phases must immediately invalidate downstream readiness and seal stale timestamps/epochs so old evidence cannot resurrect readiness.",
     "criteria": {
-      "passed": "Complies with clean deprecation and documented architecture. Dead code, deprecated endpoints, and legacy fallbacks are deleted rather than preserved silently. Security redaction/sanitization guards, fail-open telemetry preservation, and intentional trade-offs explained in Documented Design Context (AGENTS.md/docs/) are acceptable when they do not add unapproved compatibility layers.",
-      "violated": "Violates rule: unapproved deprecated code, zombie backward-compatible fallback, dual-track compatibility layer, or implementation that contradicts approved architecture in docs/."
+      "passed": "Complies with clean deprecation and documented architecture (dead code and unapproved fallbacks deleted); maintains closed lifecycle invariants across removal, disablement, failure, and recovery transitions so stale or excluded state can never serve as ready. Security redaction guards and intentional trade-offs explained in Documented Design Context (AGENTS.md/docs/) are acceptable.",
+      "violated": "Violates rule: unapproved deprecated code, zombie backward-compatible fallback, dual-track compatibility layer, implementation contradicting docs/, or broken lifecycle invariant (e.g., removed/disabled/excluded targets remaining ready, or stale timestamps/evidence resurrecting invalidated state)."
     }
   },
-  "why": "核心正交架构红线：任何作为向后兼容保留的逻辑必须经用户明确批准后方可保留；旧模型退役必须执行全生命周期逆向清缴。"
+  "why": "核心正交架构红线：未经批准禁留向后兼容与死代码；状态生命周期变更必须保证“移除/停用即失效、历史证据不可回退”等核心不变量闭环。"
 }

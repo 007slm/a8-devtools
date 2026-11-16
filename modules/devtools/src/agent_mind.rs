@@ -73,6 +73,10 @@ pub struct GovernanceRuleEntryDto {
     pub repo: String,
     pub title: String,
     pub clause_count: u32,
+    #[serde(default)]
+    pub char_count: usize,
+    #[serde(default)]
+    pub estimated_tokens: u32,
     pub editable: bool,
     pub size_bytes: u64,
     pub modified_ts: u64,
@@ -137,6 +141,12 @@ pub struct LintItemDto {
 pub struct GovernanceSummaryDto {
     pub rule_files_count: usize,
     pub rule_clauses_count: u32,
+    #[serde(default)]
+    pub rule_total_tokens: u32,
+    #[serde(default)]
+    pub global_rule_tokens: u32,
+    #[serde(default)]
+    pub project_rule_tokens: u32,
     pub global_rule_files_count: usize,
     pub project_rule_files_count: usize,
     pub decisions_count: usize,
@@ -161,6 +171,31 @@ pub struct HarnessMetricEventDto {
     pub evaluated_ids: Vec<String>,
     #[serde(default)]
     pub violated_ids: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct GitDiffFileDto {
+    pub path: String,
+    pub old_path: String,
+    pub status: String,
+    pub additions: u32,
+    pub deletions: u32,
+    pub is_binary: bool,
+    pub truncated: bool,
+    pub diff_text: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct GitReviewDiffDto {
+    pub repo_code: String,
+    pub repo_path: String,
+    pub branch: String,
+    pub head_summary: String,
+    pub scope: String,
+    pub has_head: bool,
+    pub total_additions: u32,
+    pub total_deletions: u32,
+    pub files: Vec<GitDiffFileDto>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -1051,6 +1086,9 @@ fn is_allowed_writable_rel_path(rel: &str) -> bool {
 
 fn is_allowed_repo_governance_rel(clean_rel: &str, writable: bool) -> bool {
     let lower = clean_rel.to_ascii_lowercase();
+    if lower == "agents.md" || lower == "gemini.md" {
+        return true;
+    }
     if lower.starts_with(".agents/rules/") && lower.ends_with(".md") {
         return true;
     }
@@ -1132,6 +1170,62 @@ fn extract_rule_title_and_clauses(content: &str, fallback_name: &str) -> (String
     (title, total)
 }
 
+fn estimate_markdown_tokens(raw: &str) -> (usize, u32) {
+    let mut ascii = 0usize;
+    let mut non_ascii = 0usize;
+    let mut chars = 0usize;
+    for ch in raw.chars() {
+        chars += 1;
+        if ch.is_ascii() {
+            ascii += 1;
+        } else {
+            non_ascii += 1;
+        }
+    }
+    let est = ((ascii as f64 / 4.0) + (non_ascii as f64 / 1.2)).ceil() as u32;
+    (chars, est)
+}
+
+fn push_rule_entry_from_path(
+    base_root: &Path,
+    path: &Path,
+    scope: &str,
+    repo: &str,
+    editable: bool,
+    out: &mut Vec<GovernanceRuleEntryDto>,
+) {
+    if !path.is_file() {
+        return;
+    }
+    let Ok(rel) = path.strip_prefix(base_root) else {
+        return;
+    };
+    let rel_str = rel.to_string_lossy().replace('\\', "/");
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let (size_bytes, modified_ts) = file_meta_stats(path);
+    let raw = std::fs::read_to_string(path).unwrap_or_default();
+    let (title, clause_count) = extract_rule_title_and_clauses(&raw, &name);
+    let (char_count, estimated_tokens) = estimate_markdown_tokens(&raw);
+    out.push(GovernanceRuleEntryDto {
+        rel_path: rel_str,
+        abs_path: clean_display_path(path),
+        name,
+        scope: scope.to_string(),
+        repo: repo.to_string(),
+        title,
+        clause_count,
+        char_count,
+        estimated_tokens,
+        editable,
+        size_bytes,
+        modified_ts,
+    });
+}
+
 fn collect_rule_entries_in_dir(
     base_root: &Path,
     rules_dir: &Path,
@@ -1160,30 +1254,7 @@ fn collect_rule_entries_in_dir(
     paths.sort();
 
     for path in paths {
-        let Ok(rel) = path.strip_prefix(base_root) else {
-            continue;
-        };
-        let rel_str = rel.to_string_lossy().replace('\\', "/");
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        let (size_bytes, modified_ts) = file_meta_stats(&path);
-        let raw = std::fs::read_to_string(&path).unwrap_or_default();
-        let (title, clause_count) = extract_rule_title_and_clauses(&raw, &name);
-        out.push(GovernanceRuleEntryDto {
-            rel_path: rel_str,
-            abs_path: clean_display_path(&path),
-            name,
-            scope: scope.to_string(),
-            repo: repo.to_string(),
-            title,
-            clause_count,
-            editable,
-            size_bytes,
-            modified_ts,
-        });
+        push_rule_entry_from_path(base_root, &path, scope, repo, editable, out);
     }
 }
 
@@ -1581,6 +1652,16 @@ pub(crate) fn scan_governance_assets(
             editable,
             &mut rules,
         );
+        for map_name in ["AGENTS.md", "GEMINI.md"] {
+            push_rule_entry_from_path(
+                &repo_root,
+                &repo_root.join(map_name),
+                "project",
+                &proj.code,
+                editable,
+                &mut rules,
+            );
+        }
         collect_decision_entries_in_dir(
             &repo_root,
             &repo_root.join("scripts").join("lints"),
@@ -1616,9 +1697,23 @@ pub(crate) fn scan_governance_assets(
             .then_with(|| a.id.cmp(&b.id))
     });
 
+    let global_rule_tokens: u32 = rules
+        .iter()
+        .filter(|r| r.scope == "global")
+        .map(|r| r.estimated_tokens)
+        .sum();
+    let project_rule_tokens: u32 = rules
+        .iter()
+        .filter(|r| r.scope == "project")
+        .map(|r| r.estimated_tokens)
+        .sum();
+
     let summary = GovernanceSummaryDto {
         rule_files_count: rules.len(),
         rule_clauses_count: rules.iter().map(|r| r.clause_count).sum(),
+        rule_total_tokens: global_rule_tokens + project_rule_tokens,
+        global_rule_tokens,
+        project_rule_tokens,
         global_rule_files_count: rules.iter().filter(|r| r.scope == "global").count(),
         project_rule_files_count: rules.iter().filter(|r| r.scope == "project").count(),
         decisions_count: decisions.len(),
@@ -1992,6 +2087,10 @@ pub fn delete_agent_mind_file(rel_path: String, repo_code: Option<String>) -> Re
     let (target_root, is_repo) = resolve_target_scope(&plugin_root, repo_code.as_deref(), true)?;
     if is_repo {
         let (clean_rel, target) = resolve_safe_rel_path(&target_root, &rel_path)?;
+        let lower = clean_rel.to_ascii_lowercase();
+        if lower == "agents.md" || lower == "gemini.md" {
+            return Err("仓库根地图 (AGENTS.md / GEMINI.md) 受保护，禁止删除".to_string());
+        }
         if !is_allowed_repo_governance_rel(&clean_rel, true) {
             return Err("仓库作用域仅允许删除 .agents/rules/*.md 或 scripts/lints/*.decision.json".to_string());
         }
@@ -2779,15 +2878,12 @@ pub fn advance_proposal_in_antigravity(
     })
 }
 
-/// 运行指定仓库下的 scripts/lints/ 机械检查并记录命中统计到 harness_metrics.jsonl。
-#[tauri::command]
-pub fn run_repo_lints(repo_code: String) -> Result<Value, String> {
+fn resolve_registered_repo_root(plugin_root: &Path, repo_code: &str) -> Result<PathBuf, String> {
     let clean_code = repo_code.trim();
     if clean_code.is_empty() {
         return Err("缺少目标仓库代号 repo_code".to_string());
     }
-    let (plugin_root, _, _) = detect_plugin_location()?;
-    let projects = parse_projects_index(&plugin_root);
+    let projects = parse_projects_index(plugin_root);
     let proj = projects
         .into_iter()
         .find(|p| p.code.eq_ignore_ascii_case(clean_code))
@@ -2796,6 +2892,381 @@ pub fn run_repo_lints(repo_code: String) -> Result<Value, String> {
     if !repo_root.is_dir() {
         return Err(format!("项目目录不存在: {}", clean_display_path(&repo_root)));
     }
+    Ok(repo_root)
+}
+
+fn run_git_output(repo_root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("-C")
+        .arg(repo_root)
+        .arg("-c")
+        .arg("core.quotePath=false")
+        .args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.output()
+        .map_err(|e| format!("执行 git 命令失败（请确认已安装 git 并加入 PATH）: {}", e))
+}
+
+fn run_git_text(repo_root: &Path, args: &[&str]) -> Result<String, String> {
+    let out = run_git_output(repo_root, args)?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("git {:?} 退出码 {:?}", args, out.status.code())
+        } else {
+            stderr
+        });
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+const MAX_DIFF_FILE_BYTES: usize = 300 * 1024;
+const MAX_UNTRACKED_BYTES: usize = 256 * 1024;
+const MAX_UNTRACKED_LINES: usize = 2500;
+
+fn truncate_utf8_on_line(text: &str, max_bytes: usize) -> (String, bool) {
+    if text.len() <= max_bytes {
+        return (text.to_string(), false);
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let slice = &text[..end];
+    let cut = slice.rfind('\n').map(|idx| idx + 1).unwrap_or(end);
+    (text[..cut].to_string(), true)
+}
+
+fn strip_ab_prefix(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let unquoted = if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+        &trimmed[1..trimmed.len() - 1]
+    } else {
+        trimmed
+    };
+    unquoted
+        .strip_prefix("a/")
+        .or_else(|| unquoted.strip_prefix("b/"))
+        .unwrap_or(unquoted)
+        .to_string()
+}
+
+fn parse_diff_git_header_paths(header_line: &str) -> (String, String) {
+    let rest = header_line.strip_prefix("diff --git ").unwrap_or("").trim();
+    if let Some(pos) = rest.find(" b/") {
+        let left = strip_ab_prefix(&rest[..pos]);
+        let right = strip_ab_prefix(&rest[pos + 1..]);
+        return (left, right);
+    }
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    if parts.len() >= 2 {
+        return (strip_ab_prefix(parts[0]), strip_ab_prefix(parts[1]));
+    }
+    (String::new(), String::new())
+}
+
+fn parse_git_diff_blocks(raw: &str) -> Vec<GitDiffFileDto> {
+    let normalized = raw.replace("\r\n", "\n");
+    if normalized.trim().is_empty() {
+        return Vec::new();
+    }
+
+    let mut blocks: Vec<&str> = Vec::new();
+    let mut start_idx: Option<usize> = None;
+    let mut offset = 0usize;
+    for line in normalized.split_inclusive('\n') {
+        if line.starts_with("diff --git ") {
+            if let Some(prev) = start_idx {
+                blocks.push(&normalized[prev..offset]);
+            }
+            start_idx = Some(offset);
+        }
+        offset += line.len();
+    }
+    if let Some(prev) = start_idx {
+        blocks.push(&normalized[prev..]);
+    }
+
+    let mut files = Vec::with_capacity(blocks.len());
+    for block in blocks {
+        let trimmed_block = block.trim_end_matches('\n');
+        let mut lines = trimmed_block.lines();
+        let Some(first_line) = lines.next() else {
+            continue;
+        };
+        let (hdr_old, hdr_new) = parse_diff_git_header_paths(first_line);
+
+        let mut status = "M".to_string();
+        let mut old_path = String::new();
+        let mut new_path = hdr_new.clone();
+        let mut rename_from = String::new();
+        let mut rename_to = String::new();
+        let mut is_binary = false;
+        let mut in_hunk = false;
+        let mut additions: u32 = 0;
+        let mut deletions: u32 = 0;
+
+        for line in lines {
+            if !in_hunk {
+                if line.starts_with("new file mode ") {
+                    status = "A".to_string();
+                    continue;
+                }
+                if line.starts_with("deleted file mode ") {
+                    status = "D".to_string();
+                    continue;
+                }
+                if let Some(rf) = line.strip_prefix("rename from ") {
+                    status = "R".to_string();
+                    rename_from = rf.trim().to_string();
+                    continue;
+                }
+                if let Some(rt) = line.strip_prefix("rename to ") {
+                    status = "R".to_string();
+                    rename_to = rt.trim().to_string();
+                    continue;
+                }
+                if line.starts_with("Binary files ") || line == "GIT binary patch" {
+                    is_binary = true;
+                    continue;
+                }
+                if let Some(minus_path) = line.strip_prefix("--- ") {
+                    let p = minus_path.trim();
+                    if p != "/dev/null" {
+                        old_path = strip_ab_prefix(p);
+                    }
+                    continue;
+                }
+                if let Some(plus_path) = line.strip_prefix("+++ ") {
+                    let p = plus_path.trim();
+                    if p != "/dev/null" {
+                        new_path = strip_ab_prefix(p);
+                    }
+                    continue;
+                }
+                if line.starts_with("@@ ") {
+                    in_hunk = true;
+                    continue;
+                }
+            } else if line.starts_with("@@ ") {
+                continue;
+            } else if line.starts_with('+') && !line.starts_with("+++ ") {
+                additions += 1;
+            } else if line.starts_with('-') && !line.starts_with("--- ") {
+                deletions += 1;
+            }
+        }
+
+        let display_path = if !rename_to.is_empty() {
+            rename_to
+        } else if status == "D" {
+            if !old_path.is_empty() { old_path.clone() } else { hdr_old.clone() }
+        } else if !new_path.is_empty() {
+            new_path
+        } else {
+            hdr_old.clone()
+        };
+
+        let display_old = if status == "R" {
+            if !rename_from.is_empty() { rename_from } else { hdr_old }
+        } else {
+            String::new()
+        };
+
+        let (capped_text, truncated) = truncate_utf8_on_line(trimmed_block, MAX_DIFF_FILE_BYTES);
+        files.push(GitDiffFileDto {
+            path: display_path,
+            old_path: display_old,
+            status,
+            additions,
+            deletions,
+            is_binary,
+            truncated,
+            diff_text: if is_binary { String::new() } else { capped_text },
+        });
+    }
+
+    files
+}
+
+fn build_untracked_file_diff(repo_root: &Path, rel_path: &str) -> GitDiffFileDto {
+    let clean_rel = rel_path.trim().replace('\\', "/");
+    let full = repo_root.join(&clean_rel);
+    let Ok(bytes) = std::fs::read(&full) else {
+        return GitDiffFileDto {
+            path: clean_rel,
+            old_path: String::new(),
+            status: "U".to_string(),
+            additions: 0,
+            deletions: 0,
+            is_binary: true,
+            truncated: false,
+            diff_text: String::new(),
+        };
+    };
+
+    let probe_len = bytes.len().min(8192);
+    if bytes[..probe_len].contains(&0) {
+        return GitDiffFileDto {
+            path: clean_rel,
+            old_path: String::new(),
+            status: "U".to_string(),
+            additions: 0,
+            deletions: 0,
+            is_binary: true,
+            truncated: false,
+            diff_text: String::new(),
+        };
+    }
+
+    let full_text = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
+    let (byte_capped, byte_truncated) = truncate_utf8_on_line(&full_text, MAX_UNTRACKED_BYTES);
+    let mut lines: Vec<&str> = byte_capped.split('\n').collect();
+    if byte_capped.ends_with('\n') && lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    let line_truncated = lines.len() > MAX_UNTRACKED_LINES;
+    if line_truncated {
+        lines.truncate(MAX_UNTRACKED_LINES);
+    }
+
+    let line_count = lines.len();
+    let mut diff = String::with_capacity(byte_capped.len() + 256);
+    diff.push_str(&format!(
+        "diff --git a/{0} b/{0}\nnew file mode 100644\n--- /dev/null\n+++ b/{0}\n",
+        clean_rel
+    ));
+    if line_count > 0 {
+        diff.push_str(&format!("@@ -0,0 +1,{} @@\n", line_count));
+        for ln in &lines {
+            diff.push('+');
+            diff.push_str(ln);
+            diff.push('\n');
+        }
+    }
+
+    GitDiffFileDto {
+        path: clean_rel,
+        old_path: String::new(),
+        status: "U".to_string(),
+        additions: line_count as u32,
+        deletions: 0,
+        is_binary: false,
+        truncated: byte_truncated || line_truncated,
+        diff_text: diff.trim_end_matches('\n').to_string(),
+    }
+}
+
+/// 获取指定已登记仓库的 Git Diff（供提交前人工代码审核）。
+#[tauri::command]
+pub fn get_repo_git_diff(repo_code: String, scope: Option<String>) -> Result<GitReviewDiffDto, String> {
+    let (plugin_root, _, _) = detect_plugin_location()?;
+    let repo_root = resolve_registered_repo_root(&plugin_root, &repo_code)?;
+
+    let inside = run_git_text(&repo_root, &["rev-parse", "--is-inside-work-tree"])?;
+    if inside.trim() != "true" {
+        return Err(format!("目录不是有效的 Git 仓库: {}", clean_display_path(&repo_root)));
+    }
+
+    let norm_scope = match scope.as_deref().map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("staged") => "staged",
+        Some("unstaged") => "unstaged",
+        _ => "all",
+    };
+
+    let has_head = run_git_output(&repo_root, &["rev-parse", "--verify", "HEAD"])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    let branch = if has_head {
+        run_git_text(&repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| "HEAD".to_string())
+    } else {
+        "HEAD (尚无提交)".to_string()
+    };
+
+    let head_summary = if has_head {
+        run_git_text(&repo_root, &["log", "-1", "--pretty=%h %s"])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let mut files = match norm_scope {
+        "staged" => {
+            let raw = run_git_text(
+                &repo_root,
+                &["diff", "--no-color", "--unified=3", "--find-renames", "--cached"],
+            )?;
+            parse_git_diff_blocks(&raw)
+        }
+        "unstaged" => {
+            let raw = run_git_text(&repo_root, &["diff", "--no-color", "--unified=3", "--find-renames"])?;
+            parse_git_diff_blocks(&raw)
+        }
+        _ => {
+            if has_head {
+                let raw = run_git_text(
+                    &repo_root,
+                    &["diff", "--no-color", "--unified=3", "--find-renames", "HEAD"],
+                )?;
+                parse_git_diff_blocks(&raw)
+            } else {
+                let staged = run_git_text(
+                    &repo_root,
+                    &["diff", "--no-color", "--unified=3", "--find-renames", "--cached"],
+                )?;
+                let unstaged = run_git_text(
+                    &repo_root,
+                    &["diff", "--no-color", "--unified=3", "--find-renames"],
+                )?;
+                let mut combined = parse_git_diff_blocks(&staged);
+                combined.extend(parse_git_diff_blocks(&unstaged));
+                combined
+            }
+        }
+    };
+
+    if norm_scope != "staged" {
+        let untracked_raw = run_git_text(&repo_root, &["ls-files", "--others", "--exclude-standard"])?;
+        let mut seen: std::collections::HashSet<String> =
+            files.iter().map(|f| f.path.to_lowercase()).collect();
+        for rel in untracked_raw.lines().map(|l| l.trim()).filter(|l| !l.is_empty()) {
+            let key = rel.replace('\\', "/").to_lowercase();
+            if seen.insert(key) {
+                files.push(build_untracked_file_diff(&repo_root, rel));
+            }
+        }
+    }
+
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    let total_additions = files.iter().map(|f| f.additions).sum();
+    let total_deletions = files.iter().map(|f| f.deletions).sum();
+
+    Ok(GitReviewDiffDto {
+        repo_code: repo_code.trim().to_string(),
+        repo_path: clean_display_path(&repo_root),
+        branch,
+        head_summary,
+        scope: norm_scope.to_string(),
+        has_head,
+        total_additions,
+        total_deletions,
+        files,
+    })
+}
+
+/// 运行指定仓库下的 scripts/lints/ 机械检查并记录命中统计到 harness_metrics.jsonl。
+#[tauri::command]
+pub fn run_repo_lints(repo_code: String) -> Result<Value, String> {
+    let (plugin_root, _, _) = detect_plugin_location()?;
+    let repo_root = resolve_registered_repo_root(&plugin_root, &repo_code)?;
     let runner = plugin_root.join("scripts").join("run_repo_lints.py");
     if !runner.is_file() {
         return Err(format!("缺失插件 Lint 运行器: {}", clean_display_path(&runner)));
@@ -3129,6 +3600,12 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         let (rules, decisions, lints, summary) = scan_governance_assets(&tmp.0, &projects, &empty_stats);
         assert_eq!(summary.rule_files_count, 3); // mind-rules.md, custom.md, sample-repo/redline.md
         assert_eq!(summary.rule_clauses_count, 3);
+        assert!(summary.global_rule_tokens > 0);
+        assert!(summary.project_rule_tokens > 0);
+        assert_eq!(
+            summary.rule_total_tokens,
+            summary.global_rule_tokens + summary.project_rule_tokens
+        );
         assert_eq!(summary.decisions_count, 2);
         assert_eq!(summary.global_decisions_count, 1);
         assert_eq!(summary.project_decisions_count, 1);
@@ -3283,5 +3760,64 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         assert_eq!(lints[0].eval_count, 1);
         assert_eq!(lints[0].hit_count, 1);
         assert_eq!(lints[0].last_hit_ts, now_secs - 50);
+    }
+
+    #[test]
+    fn test_parse_git_diff_blocks_and_untracked_synthesis() {
+        let sample = "\
+diff --git a/src/app.ts b/src/app.ts
+index 1111111..2222222 100644
+--- a/src/app.ts
++++ b/src/app.ts
+@@ -1,3 +1,4 @@
+ const a = 1;
+-const b = 2;
++const b = 3;
++const c = 4;
+diff --git a/old_name.rs b/new_name.rs
+similarity index 90%
+rename from old_name.rs
+rename to new_name.rs
+--- a/old_name.rs
++++ b/new_name.rs
+@@ -1 +1 @@
+-fn old() {}
++fn renamed() {}
+diff --git a/assets/logo.png b/assets/logo.png
+Binary files a/assets/logo.png and b/assets/logo.png differ
+diff --git a/dead.txt b/dead.txt
+deleted file mode 100644
+--- a/dead.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-line1
+-line2
+";
+        let parsed = parse_git_diff_blocks(sample);
+        assert_eq!(parsed.len(), 4);
+        assert_eq!(parsed[0].path, "src/app.ts");
+        assert_eq!(parsed[0].status, "M");
+        assert_eq!(parsed[0].additions, 2);
+        assert_eq!(parsed[0].deletions, 1);
+
+        assert_eq!(parsed[1].path, "new_name.rs");
+        assert_eq!(parsed[1].old_path, "old_name.rs");
+        assert_eq!(parsed[1].status, "R");
+
+        assert_eq!(parsed[2].path, "assets/logo.png");
+        assert!(parsed[2].is_binary);
+
+        assert_eq!(parsed[3].path, "dead.txt");
+        assert_eq!(parsed[3].status, "D");
+        assert_eq!(parsed[3].deletions, 2);
+
+        let tmp = TempPluginDir::new();
+        std::fs::write(tmp.0.join("notes.md"), "hello\nworld\n").unwrap();
+        let untracked = build_untracked_file_diff(&tmp.0, "notes.md");
+        assert_eq!(untracked.status, "U");
+        assert_eq!(untracked.additions, 2);
+        assert!(!untracked.is_binary);
+        assert!(untracked.diff_text.contains("+++ b/notes.md"));
+        assert!(untracked.diff_text.contains("+hello"));
     }
 }

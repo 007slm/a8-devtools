@@ -22,7 +22,7 @@ description: "通用语义架构红线裁判技能。以 Git Diff 为变更指�
    - `decisions_client.py` 调用 `gemini-decision-1` 对局部 Diff（自动附带轻量 `Documented Design Context`）给出先验风险初筛，供 `arch-judge` 参考或快速定位嫌疑块，而非无条件一票否决。
 3. **4 大正交维度动态路由 (Orthogonal Categories)**：
    - `lifecycle_and_evolution`: 演化契约、零擅自向后兼容、旧模型破坏权剥离；
-   - `topology_and_boundaries`: 客户端 SDK 纯净隔离、模块单向分层；
+   - `topology_and_boundaries`: 系统边界自闭环、底层纯库零重型框架侵入、模块单向分层；
    - `concurrency_and_performance`: 热路径无方法锁、杜绝幽灵轮询反查；
    - `implementation_hygiene`: 单一解析路径、错误保留物理第一现场、日志门面规范。
 

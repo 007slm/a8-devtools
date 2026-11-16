@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { EChartsCoreOption } from 'echarts/core';
 import { EChartBox } from './components/EChartBox';
 import { AgentMindView } from './components/AgentMindView';
+import { CodeReviewTab } from './components/CodeReviewTab';
 import {
   Button,
   Chip,
@@ -30,6 +31,7 @@ import {
   ExternalLink,
   FolderGit2,
   FolderOpen,
+  GitPullRequest,
   Globe,
   HardDrive,
   Minus,
@@ -108,6 +110,7 @@ const SIDECAR_HTTP_ROUTES: Record<string, { path: string; method: 'GET' | 'POST'
   advance_proposal_in_antigravity: { path: '/api/agent-mind/proposal/advance', method: 'POST' },
   update_grok_proposal_status: { path: '/api/agent-mind/proposal/status', method: 'POST' },
   run_repo_lints: { path: '/api/agent-mind/lints/run', method: 'POST' },
+  get_repo_git_diff: { path: '/api/agent-mind/git/diff', method: 'POST' },
 };
 
 async function callTauri<T = any>(command: string, args: Record<string, any> = {}): Promise<T | null> {
@@ -127,6 +130,7 @@ async function callTauri<T = any>(command: string, args: Record<string, any> = {
         ? JSON.stringify({
             rel_path: args.relPath ?? args.rel_path,
             repo_code: args.repoCode ?? args.repo_code,
+            scope: args.scope,
             content: args.content,
             file_name: args.fileName ?? args.file_name,
             title: args.title,
@@ -180,6 +184,7 @@ function PathSegment({ path }: { path: string }) {
 
 const NAV_ITEMS = [
   { id: 'agent-mind' as const, group: '核心特性', label: '心智治理', icon: BrainCircuit, badge: '规则' },
+  { id: 'code-review' as const, group: '核心特性', label: '代码审核', icon: GitPullRequest, badge: 'Git' },
   { id: 'mappings' as const, group: '核心特性', label: '虚拟镜像映射', icon: FolderGit2 },
   { id: 'hosts' as const, group: '核心特性', label: 'Hosts 维护', icon: Globe, badge: 'DNS' },
 ];
@@ -192,7 +197,11 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('a8-devtools-sidebar-collapsed') === 'true';
   });
-  const [activeTab, setActiveTab] = useState<'agent-mind' | 'mappings' | 'hosts' | 'settings'>('agent-mind');
+  const [activeTab, setActiveTab] = useState<'agent-mind' | 'code-review' | 'mappings' | 'hosts' | 'settings'>('agent-mind');
+  const [standaloneTab, setStandaloneTab] = useState<'agent-mind' | 'code-review'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('tab') === 'code-review' ? 'code-review' : 'agent-mind';
+  });
   const [settingsSection, setSettingsSection] = useState<'prefs' | 'doctor'>('prefs');
   const [inspectorTab, setInspectorTab] = useState<'topology' | 'diff'>('topology');
   const [workspaces, setWorkspaces] = useState<WorkspaceCard[]>([]);
@@ -273,17 +282,13 @@ export default function App() {
   };
 
   const loadData = async (silent = true) => {
-    try {
-      const [ws, status] = await Promise.all([
-        callTauri<WorkspaceCard[]>('get_workspaces'),
-        callTauri<SystemStatus>('get_system_status'),
-      ]);
-      if (ws) setWorkspaces(ws);
-      if (status) setSystemStatus(status);
-      if (!silent) pushToast('工作区状态已刷新', 'info');
-    } catch (e) {
-      console.error(e);
-    }
+    const [ws, status] = await Promise.all([
+      callTauri<WorkspaceCard[]>('get_workspaces'),
+      callTauri<SystemStatus>('get_system_status'),
+    ]);
+    if (ws) setWorkspaces(ws);
+    if (status) setSystemStatus(status);
+    if (!silent) pushToast('工作区状态已刷新', 'info');
   };
 
   const hasTauriRuntime = Boolean((window as any).__TAURI__?.core?.invoke || (window as any).__TAURI__?.invoke);
@@ -293,7 +298,7 @@ export default function App() {
   useEffect(() => {
     if (isStandaloneSidecar) return;
 
-    loadData(true);
+    loadData(true).catch((e) => pushToast(`加载工作区状态失败: ${e}`, 'danger'));
 
     const fetchSpeed = () => {
       callTauri<any>('get_net_speed')
@@ -447,6 +452,7 @@ export default function App() {
       { id: 'sidebar', title: sidebarCollapsed ? '展开左侧导航栏' : '收起左侧导航栏', hint: 'Ctrl+B', action: () => setSidebarCollapsed((v) => !v) },
       { id: 'theme', title: theme === 'light' ? '切换为 Obsidian 暗夜工作台' : '切换为 Porcelain 极光亮色', hint: '切换主题皮肤', action: () => setTheme((t) => (t === 'light' ? 'dark' : 'light')) },
       { id: 'tab-agent-mind', title: '前往：心智治理规则中心', hint: '直编 rules 与仓库地图', action: () => switchTab('agent-mind') },
+      { id: 'tab-code-review', title: '前往：代码审核（Commit 前人工审查）', hint: 'Git Diff 逐行批注与反馈复制', action: () => switchTab('code-review') },
       { id: 'tab-mappings', title: '前往：虚拟镜像映射', hint: '工作区总览', action: () => switchTab('mappings') },
       { id: 'tab-hosts', title: '前往：Hosts 维护', hint: '编辑系统 DNS', action: () => switchTab('hosts') },
       { id: 'tab-settings', title: '前往：系统设置 · 偏好设置', hint: '任务栏与自启', action: () => switchTab('settings', 'prefs') },
@@ -623,12 +629,39 @@ export default function App() {
   if (isStandaloneSidecar) {
     return (
       <div className="relative h-screen w-screen overflow-hidden flex flex-col bg-white dark:bg-[#09090B] text-foreground text-[12px] antialiased">
-        <header className="h-10 px-4 border-b border-zinc-200/85 dark:border-border/70 flex items-center justify-between shrink-0 bg-white dark:bg-[#09090B]">
-          <div className="flex items-center gap-2 min-w-0">
-            <img src="./app-icon.png" alt="A8 开发工具" className="w-5 h-5 rounded-md shrink-0" />
-            <span className="text-[12.5px] font-semibold tracking-tight text-foreground truncate">
-              A8 心智治理
-            </span>
+        <header className="h-10 px-4 border-b border-zinc-200/85 dark:border-border/70 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#09090B]">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <img src="./app-icon.png" alt="A8 开发工具" className="w-5 h-5 rounded-md shrink-0" />
+              <span className="text-[12.5px] font-semibold tracking-tight text-foreground truncate">
+                A8 开发工具
+              </span>
+            </div>
+
+            <nav aria-label="独立看板模块切换" className="inline-flex items-center rounded-lg border border-zinc-200/85 dark:border-border/70 p-0.5 text-[11px] shrink-0">
+              <button
+                type="button"
+                onClick={() => setStandaloneTab('agent-mind')}
+                className={`px-2.5 py-0.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                  standaloneTab === 'agent-mind'
+                    ? 'bg-zinc-100 dark:bg-surface-secondary font-semibold text-foreground'
+                    : 'text-muted hover:text-foreground'
+                }`}
+              >
+                心智治理
+              </button>
+              <button
+                type="button"
+                onClick={() => setStandaloneTab('code-review')}
+                className={`px-2.5 py-0.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                  standaloneTab === 'code-review'
+                    ? 'bg-zinc-100 dark:bg-surface-secondary font-semibold text-foreground'
+                    : 'text-muted hover:text-foreground'
+                }`}
+              >
+                代码审核
+              </button>
+            </nav>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
@@ -650,7 +683,11 @@ export default function App() {
 
         <main className="flex-1 overflow-y-auto px-4 py-3 bg-white dark:bg-[#09090B]">
           <div className="max-w-[1440px] mx-auto">
-            <AgentMindView callTauri={callTauri} pushToast={pushToast} isStandalone theme={theme} />
+            {standaloneTab === 'agent-mind' ? (
+              <AgentMindView callTauri={callTauri} pushToast={pushToast} isStandalone theme={theme} />
+            ) : (
+              <CodeReviewTab callTauri={callTauri} pushToast={pushToast} />
+            )}
           </div>
         </main>
 
@@ -1064,7 +1101,9 @@ export default function App() {
                             size="sm"
                             variant="outline"
                             className="h-7 w-7 rounded-lg"
-                            onPress={() => loadData(false)}
+                            onPress={() =>
+                              loadData(false).catch((e) => pushToast(`刷新工作区状态失败: ${e}`, 'danger'))
+                            }
                           >
                             <RotateCw className="w-3.5 h-3.5" />
                           </Button>
@@ -1454,6 +1493,19 @@ export default function App() {
               </motion.div>
             )}
 
+            {/* 视图 3.5：独立代码审核（Commit 前人工 Git Diff 审查） */}
+            {activeTab === 'code-review' && (
+              <motion.div
+                key="code-review"
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.16 }}
+              >
+                <CodeReviewTab callTauri={callTauri} pushToast={pushToast} />
+              </motion.div>
+            )}
+
             {/* 视图 4：系统设置（收口偏好设置 + 内核与驱动） */}
             {activeTab === 'settings' && (
               <motion.div
@@ -1515,7 +1567,14 @@ export default function App() {
                           <ShieldCheck className="w-3.5 h-3.5" />
                           <span>一键安装/启动内核服务</span>
                         </Button>
-                        <Button size="sm" variant="primary" className="h-7 px-3 rounded-lg text-[11px]" onPress={() => loadData(false)}>
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          className="h-7 px-3 rounded-lg text-[11px]"
+                          onPress={() =>
+                            loadData(false).catch((e) => pushToast(`内核体检失败: ${e}`, 'danger'))
+                          }
+                        >
                           <RotateCw className="w-3.5 h-3.5" />
                           <span>立即体检</span>
                         </Button>

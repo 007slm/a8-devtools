@@ -46,6 +46,12 @@ struct RunRepoLintsPayload {
     repo_code: String,
 }
 
+#[derive(Deserialize)]
+struct GitDiffPayload {
+    repo_code: String,
+    scope: Option<String>,
+}
+
 fn is_allowed_local_origin(origin: &str) -> bool {
     let trimmed = origin.trim();
     if trimmed.eq_ignore_ascii_case("null") {
@@ -339,6 +345,16 @@ fn handle_api(req: &ParsedRequest, stream: &mut TcpStream) {
                 return;
             };
             match agent_mind::run_repo_lints(payload.repo_code) {
+                Ok(res) => send_json(stream, "200 OK", json!({ "ok": true, "data": res }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
+        ("POST", "/api/agent-mind/git/diff") => {
+            let Ok(payload) = serde_json::from_slice::<GitDiffPayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match agent_mind::get_repo_git_diff(payload.repo_code, payload.scope) {
                 Ok(res) => send_json(stream, "200 OK", json!({ "ok": true, "data": res }), allowed_origin),
                 Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
             }

@@ -17,7 +17,7 @@ description: "基于本机 DeepSeek Harness (DSH) 与插件自完整 dsh-reviewe
 1. **有界迭代上限（Hard Cap = 2~3 轮）**：
    - 标准终审 Loop **最多执行 2~3 轮**，严禁无休止送审。
    - **Round 1（深度首审）**：外部门禁通过后唤起 `dsh-reviewer` 执行首轮跨文件因果链审查；
-   - **主会话独立鉴别（Triage Gate，必须亲自把关）**：主会话拿到 `dsh-reviewer` 返回的每条意见后，**必须逐条评估发生频率 $F \in [1,10]$ 与严重度 $S \in [1,10]$**：
+   - **主会话独立鉴别（Triage Gate，必须亲自把关）**：`review.ps1` 每次调用已通过 `Get-DshTriageDisciplinePrompt` 向 DSH 强制硬注入 $F \times S$ 评分与 YAGNI 非阻塞纪律；同时主会话拿到 `dsh-reviewer` 返回的每条意见后，**仍须独立复核发生频率 $F \in [1,10]$ 与严重度 $S \in [1,10]$**：
      - **$F \times S \ge 10$（真实缺陷 / 架构红线破坏 / 契约不一致）**：必须修改代码，并重跑宿主机编译/单测/Lint 门禁；
      - **$F \times S < 10$（本机单人极端边缘、假想并发、未请求的额外健壮性需求）**：**立即执行 YAGNI 熔断**，记录为已知非阻塞边界，**严禁修改代码**，更不得为了安抚审阅器而把它们留到下一轮重审！
    - **Round 2（闭环复审，仅当 Round 1 修改了代码时触发）**：通过 `send_message` 复用同一个 `dsh-reviewer` 子代理（脚本自动复用同一 DSH Session，避免全仓重扫），仅核验 Round 1 的修复项。若无新的 $F \times S \ge 10$ 真实缺陷，**即刻终止 Loop 收口交付**。

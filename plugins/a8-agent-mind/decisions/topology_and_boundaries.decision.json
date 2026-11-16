@@ -14,11 +14,11 @@
   "file_patterns": [],
   "question": {
     "type": "choice",
-    "instructions": "Evaluate compliance with System Boundaries: client SDK zero heavy server container dependencies, strict unidirectional dependencies.",
+    "instructions": "Evaluate compliance with System Boundaries: strict unidirectional module dependencies, core libraries/thin boundaries kept free from upper-layer heavy runtime/framework intrusion, and self-contained domain responsibilities.",
     "criteria": {
-      "passed": "Clean dependency hierarchy. Pure client SDK/driver has zero heavy server container libraries (Spring, Netty, Jackson, HikariCP), modules follow strict unidirectional flow.",
-      "violated": "Violates boundary: heavy server container dependencies leaking into client SDK, or circular module dependencies."
+      "passed": "Clean dependency hierarchy. Lower-layer core/utility/thin modules have zero reverse dependencies on upper-layer services or heavy host frameworks, and modules follow strict unidirectional flow.",
+      "violated": "Violates boundary: heavy upper-layer frameworks/containers leaking into lower-layer core/thin modules, cross-boundary leakage, or circular module dependencies."
     }
   },
-  "why": "核心正交架构红线：客户端驱动严禁引入服务端重型容器依赖，模块依赖保持严格单向且职责边界自闭环。"
+  "why": "核心正交架构红线：模块间保持严格单向依赖，底层核心库或轻量化边界组件严禁被上层重型框架反向侵入，职责边界保持自闭环。"
 }

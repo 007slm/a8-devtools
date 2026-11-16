@@ -515,7 +515,7 @@ def _build_reason_docs_sync(
         f"按“仅明确不需要时方可豁免”原则，请立即核查并闭环文档维护：\n"
         f"1. 检查本次累积改动是否触及架构/生命周期变更、系统边界/依赖拓扑、外部契约/状态模型、Hook/工作流机制或深层机制故障复盘；\n"
         f"2. 若需要维护文档，请立即在 `{docs_dir}` 新增或更新长期文档（`YYYYMMDD-<TYPE>-<MODULE>-<SUBJECT>.md`），"
-        f"并同步更新 `{agents_map}` 索引表（涉及跨仓拓扑变化时同步更新 `a8-agent-mind/repos.md`）；\n"
+        f"全量归档登记到 `docs/INDEX.md`，仅核心长期 `SPEC/ADR` 在 `{agents_map}` 挂一行简述（严控 `AGENTS.md < 20KB` 防 24KB 截断；跨仓拓扑同步 `a8-agent-mind/repos.md`）；\n"
         f"3. 若经核实确属轻量变更无需入库 `docs/`，请向用户明确说明免建档理由后结束。"
     )
 

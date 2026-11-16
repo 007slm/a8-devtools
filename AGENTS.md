@@ -8,45 +8,34 @@
 ## 一、系统架构大地图 (Architecture Map)
 
 ```mermaid
-graph TD
-    subgraph DevTools["modules/devtools (Tauri 2.0 开发者桌面工作台)"]
-        HTML["ui/index.html (纯白现代 DevTools 门户)"]
-        TW["ui/tailwind.js (脱机本地样式库)"]
-        TauriCore["src/main.rs (Tauri 2.0 IPC 核心派发器)"]
-        ModHosts["Hosts 维护引擎 (Win32 API)"]
+flowchart LR
+    subgraph DevTools["modules/devtools · 桌面工作台"]
+        HTML["ui/index.html<br/>纯白门户"]
+        TauriCore["src/main.rs<br/>IPC 核心派发"]
+        ModHosts["Hosts 引擎<br/>Win32 安全读写"]
     end
 
-    subgraph CowFS["modules/cowfs (自主写时复制文件系统)"]
-        Config["src/config.rs (WorkspaceMeta 自完整与全局双写)"]
-        State["src/cow/state.rs (LayerState 三层路径解析)"]
-        Readdir["src/cow/readdir.rs (DirectoryMerger 目录合并与遮蔽)"]
-        CopyUp["src/cow/copy_up.rs (CopyUpEngine 原子写时复制)"]
-        Doctor["src/doctor.rs (Win32 原生驱动诊断)"]
-        WinFspContext["src/winfsp_fs/context.rs (WinFsp 回调派发)"]
-        WinFspHost["src/winfsp_fs/host.rs (文件系统 Host 挂载)"]
-        CowCLI["src/main.rs (cowfs.exe CLI 命令行驱动)"]
+    subgraph CowFS["modules/cowfs · 写时复制驱动"]
+        WinFsp["cowfs.exe & WinFsp<br/>挂载宿主与回调派发"]
+        State["LayerState<br/>三层路径解析"]
+        CopyUp["CopyUp / Readdir<br/>原子写时复制与遮蔽"]
     end
 
-    subgraph Physical["底层文件系统呈现 (Storage & VFS)"]
-        SourceRepo["源目录/ (只读基底)"]
-        CowDiff["源目录/.cowdiff/{pathHash}/ (自完整差异物理层)"]
-        MountPoint["目标工作区/ (虚拟挂载呈现点)"]
-        HostsFile["C:/Windows/System32/drivers/etc/hosts"]
+    subgraph Physical["底层存储与挂载点"]
+        SourceRepo["源目录/<br/>只读基底"]
+        CowDiff[".cowdiff/{hash}/<br/>差异物理层"]
+        MountPoint["工作区/<br/>虚拟挂载点"]
+        HostsFile["etc/hosts"]
     end
 
-    HTML -->|Tauri IPC invoke| TauriCore
-    TauriCore --> ModHosts
-    TauriCore -->|引用与调度| CowFS
-    TauriCore -->|无黑窗调用| CowCLI
-    ModHosts -->|安全读写| HostsFile
-    CowCLI --> WinFspHost
-    WinFspHost --> WinFspContext
-    WinFspContext --> CopyUp
-    WinFspContext --> Readdir
-    WinFspContext --> State
+    HTML -->|IPC| TauriCore
+    TauriCore --> ModHosts --> HostsFile
+    TauriCore -->|CLI| WinFsp
+    WinFsp --> State
+    WinFsp --> CopyUp
     State --> SourceRepo
-    State --> CowDiff
-    WinFspHost --> MountPoint
+    CopyUp --> CowDiff
+    WinFsp --> MountPoint
 ```
 
 ---
@@ -63,19 +52,19 @@ graph TD
 
 ---
 
-## 三、长期技术文档索引表 (Documentation Registry)
+## 三、核心架构文档索引表 (Core Architecture Index)
 
-> **建档规则规范**：仅收录具备长期参考、架构设计或重大演进价值的有效文档。日常琐碎修补严禁立卷。
+> **双层索引防截断规范**：此处仅保留核心 `SPEC`/`ADR` 简述（单文件严控 `< 20,000 B` 防触及 `24 KB` 截断红线）。**全量文档与 `BUG` 复盘清单见 [`docs/INDEX.md`](docs/INDEX.md)。**
 
-| 文档路径 | 文档类型 | 所属模块 | 当前状态 | 核心用途与摘要 | 关联源码/模块 |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| [`docs/20261115-SPEC-工作台与插件看板-Grok每日AI提案面板与Antigravity联动契约.md`](file:///e:/a8-devtools/docs/20261115-SPEC-工作台与插件看板-Grok每日AI提案面板与Antigravity联动契约.md) | SPEC | 工作台与插件看板 | 实施已生效 | 规约 `logs/grok-proposals/<YYYY-MM-DD>.md` 提案 Frontmatter 契约、提案 4 态流转（`status` 接口与唤醒自动流转 `in_progress`）、三端同源「每日提案」视图控制面接口，以及零黑窗 `language_server.exe agentapi` 创建会话 + Win32 置前唤醒 Antigravity 联动闭环 | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/), [`plugins/a8-agent-mind/sidecars/panel/`](file:///e:/a8-devtools/plugins/a8-agent-mind/sidecars/panel/) |
-| [`docs/20261114-BUG-工作台与插件看板-三端同源Dashboard白屏根因与防踩坑指南.md`](file:///e:/a8-devtools/docs/20261114-BUG-工作台与插件看板-三端同源Dashboard白屏根因与防踩坑指南.md) | BUG | 工作台与插件看板 | 已修复并实测 | 沉淀三端同源（桌面端 + Rust `:18765` + 插件 Sidecar）Dashboard 4 大白屏根因（`type="module"`/`crossorigin` + `Origin: null`/`plugin://` 403 静态资源拦截、`preload.js` 缺失、Vite `base: './'`、HeroUI v3 复合契约与 `RootErrorBoundary`）及经典 IIFE 构建/校验 Checklist | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/), [`plugins/a8-agent-mind/sidecars/panel/`](file:///e:/a8-devtools/plugins/a8-agent-mind/sidecars/panel/) |
-| [`docs/20261113-ADR-存储与桌面集成-纯直通透明映射与ShellOverlay角标架构.md`](file:///e:/a8-devtools/docs/20261113-ADR-存储与桌面集成-纯直通透明映射与ShellOverlay角标架构.md) | ADR | 存储与桌面集成 | 实施已生效 | 记录废弃 `desktop.ini`/`READONLY` 伪装与 `mount_direct`，切换为纯 `bindflt` 透明直通 + `IShellIconOverlayIdentifier` 内嵌角标与 `HKLM` 启动自注册架构 | [`modules/cowfs/`](file:///e:/a8-devtools/modules/cowfs/), [`modules/cowlink_overlay/`](file:///e:/a8-devtools/modules/cowlink_overlay/) |
-| [`docs/20261110-SPEC-插件与治理-基于GoogleDecisionsAPI的语义红线裁判与规则沉淀设计.md`](file:///e:/a8-devtools/docs/20261110-SPEC-插件与治理-基于GoogleDecisionsAPI的语义红线裁判与规则沉淀设计.md) | SPEC | 插件与治理 | 实施已生效 | 规约基于 Google Gemini Decisions API (`gemini-decision-1`) 的 `a8-agent-mind` 插件设计：语法元特征路由裁判（`a8-judge`）、`Stop` Hook 安全脱敏隔离/自动沉淀与 `docs/` 严格门禁、Harness 可观测遥测与检查器命中追踪/一键退役治理、DSH 默认 `medium` 极速终审闭环、含显式状态机与标准工程目录规范的 `mind-rules.md`、`/a8-improve` 及 `/a8-ui-verify` | [`plugins/a8-agent-mind/`](file:///e:/a8-devtools/plugins/a8-agent-mind/) |
-| [`docs/20261022-ADR-架构演进-a8-devtools多模块工作台与cowfs集成.md`](file:///e:/a8-devtools/docs/20261022-ADR-架构演进-a8-devtools多模块工作台与cowfs集成.md) | ADR | 平台底座 | 实施已生效 | 记录从单一 cowlink 演进为 a8-devtools 多模块工作区（对标 a8-turbo 结构）的战略决策 | [`Cargo.toml`](file:///e:/a8-devtools/Cargo.toml), [`modules/`](file:///e:/a8-devtools/modules/) |
-| [`docs/20261022-SPEC-存储引擎-自完整差异存储与虚拟化架构.md`](file:///e:/a8-devtools/docs/20261022-SPEC-存储引擎-自完整差异存储与虚拟化架构.md) | SPEC | 存储引擎 | 实施已生效 | 规约源内 `.cowdiff/{pathHash}/` 自完整布局、C盘零占用、驱动重入死锁防御与根级遮蔽机制 | [`modules/cowfs/`](file:///e:/a8-devtools/modules/cowfs/) |
-| [`docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md`](file:///e:/a8-devtools/docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md) | SPEC | 工作台模块 | 实施已生效 | 规约 Win32 IP Helper 无锁网速采集、任务栏原生实时网速悬浮条 (双缓冲 GDI、全透明大字号、Win11 XAML UIA 事件驱动动态避让、全屏隐藏)、`Local\A8DevTools_SingleInstance_Mutex` 单实例互斥与托盘唤醒闭环、进程内 `:18765` 看板线程及全局设置中心 | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/) |
+| 文档路径 | 类型 | 模块 | 核心用途 |
+| :--- | :--- | :--- | :--- |
+| [20261116-SPEC-工作台与插件看板-提交前GitDiff人工代码审核工作台设计.md](docs/20261116-SPEC-工作台与插件看板-提交前GitDiff人工代码审核工作台设计.md) | SPEC | 工作台与插件看板 | 独立「代码审核」一级入口、Git Diff 契约与批注反馈闭环 |
+| [20261115-SPEC-工作台与插件看板-Grok每日AI提案面板与Antigravity联动契约.md](docs/20261115-SPEC-工作台与插件看板-Grok每日AI提案面板与Antigravity联动契约.md) | SPEC | 工作台与插件看板 | Grok 每日提案 4 态流转与 Antigravity 联动唤醒 |
+| [20261113-ADR-存储与桌面集成-纯直通透明映射与ShellOverlay角标架构.md](docs/20261113-ADR-存储与桌面集成-纯直通透明映射与ShellOverlay角标架构.md) | ADR | 存储与桌面集成 | 纯 `bindflt` 透明直通与 Shell Overlay 内嵌角标 |
+| [20261110-SPEC-插件与治理-基于GoogleDecisionsAPI的语义红线裁判与规则沉淀设计.md](docs/20261110-SPEC-插件与治理-基于GoogleDecisionsAPI的语义红线裁判与规则沉淀设计.md) | SPEC | 插件与治理 | `a8-agent-mind` 三层治理、无损决策、DSH 与可观测面板 |
+| [20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md](docs/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md) | SPEC | 工作台模块 | Win32 网速采集、Win11 托盘悬浮条与 `:18765` 看板 |
+| [20261022-SPEC-存储引擎-自完整差异存储与虚拟化架构.md](docs/20261022-SPEC-存储引擎-自完整差异存储与虚拟化架构.md) | SPEC | 存储引擎 | `.cowdiff/{pathHash}` 自完整存储与重入死锁防御 |
+| [20261022-ADR-架构演进-a8-devtools多模块工作台与cowfs集成.md](docs/20261022-ADR-架构演进-a8-devtools多模块工作台与cowfs集成.md) | ADR | 平台底座 | `a8-devtools` 多模块 Cargo Workspace 演进决策 |
 
 ---
 
@@ -91,5 +80,5 @@ graph TD
    - 物理存储层（Upper/Lower）绝对不能位于虚拟挂载点（Mount Point）内部；
    - 虚拟文件系统必须在解析层与遍历层对 `.cowdiff` 和 `.cowlink` 执行根级静默过滤，禁止工作区透视自身增量。
 4. **验证交卷门槛**：
-   - 提交前必须执行 `cargo test --workspace` 并确认 100% 通过（当前 `cowfs` 4 项单测 + 7 项单元测试 + 1 项 WinFsp 集成探测 + `a8_devtools` 13 项安全边界、Origin、Hub 自动发现、DSH 归档、Grok 提案状态流转、Harness 遥测聚合与检查器命中退役单测，共 25 项全绿）；
-   - 执行 `cargo check --workspace` 确认零告警/编译通过。
+   - Rust 门禁：提交前执行 `cargo test --workspace`（当前 `cowfs` 4 项单测 + 7 项单元测试 + 1 项 WinFsp 集成探测 + `a8_devtools` 13 项单测，共 25 项全绿）及 `cargo check --workspace`；
+   - 前端与结构门禁：`modules/devtools/web` 执行 `npm run build`（`tsc -b && vite build`）；根目录执行 `node scripts/lints/check_swallowed_exceptions.mjs`、`node scripts/lints/check_workspace_hygiene.mjs` 与 `py -3 scripts/lints/check_plugin_agents.py` 全绿通过。

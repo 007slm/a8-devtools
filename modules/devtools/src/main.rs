@@ -871,6 +871,7 @@ fn main() {
             agent_mind::advance_proposal_in_antigravity,
             agent_mind::update_grok_proposal_status,
             agent_mind::run_repo_lints,
+            agent_mind::get_repo_git_diff,
         ]);
 
     let app_built = app
