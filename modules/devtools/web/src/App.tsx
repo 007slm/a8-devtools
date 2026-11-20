@@ -1,9 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { EChartsCoreOption } from 'echarts/core';
 import { EChartBox } from './components/EChartBox';
-import { AgentMindView } from './components/AgentMindView';
+import { AgentMindView, type AgentMindViewId } from './components/AgentMindView';
+import { AgentMindModelConfigPanel } from './components/AgentMindModelConfigPanel';
 import { CodeReviewTab } from './components/CodeReviewTab';
+import { PortalHero } from './components/PortalHero';
 import {
   Button,
   Chip,
@@ -29,13 +31,16 @@ import {
   Command,
   Copy,
   ExternalLink,
+  FileCheck2,
   FolderGit2,
   FolderOpen,
   GitPullRequest,
   Globe,
   HardDrive,
+  LineChart,
   Minus,
   Moon,
+  Network,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -43,6 +48,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Square,
   Sun,
@@ -183,11 +189,35 @@ function PathSegment({ path }: { path: string }) {
 }
 
 const NAV_ITEMS = [
-  { id: 'agent-mind' as const, group: '核心特性', label: '心智治理', icon: BrainCircuit, badge: '规则' },
+  { id: 'agent-mind-rules' as const, group: '心智治理', label: '规则规范', icon: BrainCircuit, badge: '规则' },
+  { id: 'agent-mind-reviews' as const, group: '心智治理', label: '终审记录', icon: FileCheck2 },
+  { id: 'agent-mind-observability' as const, group: '心智治理', label: '可观测', icon: LineChart },
+  { id: 'proposals' as const, group: '核心特性', label: '每日提案', icon: Sparkles, badge: 'Grok' },
+  { id: 'projects' as const, group: '核心特性', label: '仓库地图', icon: Network },
   { id: 'code-review' as const, group: '核心特性', label: '代码审核', icon: GitPullRequest, badge: 'Git' },
   { id: 'mappings' as const, group: '核心特性', label: '虚拟镜像映射', icon: FolderGit2 },
   { id: 'hosts' as const, group: '核心特性', label: 'Hosts 维护', icon: Globe, badge: 'DNS' },
 ];
+
+type MainTabId = (typeof NAV_ITEMS)[number]['id'] | 'settings';
+type SettingsSectionId = 'prefs' | 'doctor' | 'model';
+type StandaloneTabId = AgentMindViewId | 'code-review';
+
+const AGENT_MIND_TAB_TO_VIEW: Partial<Record<MainTabId, AgentMindViewId>> = {
+  'agent-mind-rules': 'rules',
+  'agent-mind-reviews': 'reviews',
+  'agent-mind-observability': 'observability',
+  proposals: 'proposals',
+  projects: 'projects',
+};
+
+const AGENT_MIND_VIEW_TO_TAB: Record<AgentMindViewId, MainTabId> = {
+  rules: 'agent-mind-rules',
+  reviews: 'agent-mind-reviews',
+  observability: 'agent-mind-observability',
+  proposals: 'proposals',
+  projects: 'projects',
+};
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -197,12 +227,24 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('a8-devtools-sidebar-collapsed') === 'true';
   });
-  const [activeTab, setActiveTab] = useState<'agent-mind' | 'code-review' | 'mappings' | 'hosts' | 'settings'>('agent-mind');
-  const [standaloneTab, setStandaloneTab] = useState<'agent-mind' | 'code-review'>(() => {
+  const [activeTab, setActiveTab] = useState<MainTabId>('agent-mind-rules');
+  const [standaloneTab, setStandaloneTab] = useState<StandaloneTabId>(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('tab') === 'code-review' ? 'code-review' : 'agent-mind';
+    const tab = params.get('tab');
+    if (
+      tab === 'code-review' ||
+      tab === 'rules' ||
+      tab === 'reviews' ||
+      tab === 'observability' ||
+      tab === 'proposals' ||
+      tab === 'projects'
+    ) {
+      return tab;
+    }
+    return 'rules';
   });
-  const [settingsSection, setSettingsSection] = useState<'prefs' | 'doctor'>('prefs');
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('prefs');
+  const [agentMindRefreshTick, setAgentMindRefreshTick] = useState(0);
   const [inspectorTab, setInspectorTab] = useState<'topology' | 'diff'>('topology');
   const [workspaces, setWorkspaces] = useState<WorkspaceCard[]>([]);
   const [selectedWsIdx, setSelectedWsIdx] = useState<number>(0);
@@ -231,13 +273,13 @@ export default function App() {
   const [newWsMode, setNewWsMode] = useState<string>('direct');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const pushToast = (title: string, tone: ToastItem['tone'] = 'info') => {
+  const pushToast = useCallback((title: string, tone: ToastItem['tone'] = 'info') => {
     const id = Date.now() + Math.random();
     setToasts((prev) => [...prev.slice(-2), { id, title, tone }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 2400);
-  };
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -427,7 +469,22 @@ export default function App() {
       ws.source_path.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const switchTab = (tab: typeof activeTab, section?: 'prefs' | 'doctor') => {
+  const hostsStats = useMemo(() => {
+    const lines = hostsContent ? hostsContent.split(/\r?\n/) : [];
+    const activeEntries = lines.filter((line) => {
+      const trimmed = line.trim();
+      return Boolean(trimmed) && !trimmed.startsWith('#');
+    }).length;
+    return { totalLines: lines.length, activeEntries };
+  }, [hostsContent]);
+
+  const activeAgentMindView = AGENT_MIND_TAB_TO_VIEW[activeTab] ?? null;
+
+  const navigateAgentMindView = (view: AgentMindViewId) => {
+    setActiveTab(AGENT_MIND_VIEW_TO_TAB[view]);
+  };
+
+  const switchTab = (tab: MainTabId, section?: SettingsSectionId) => {
     setActiveTab(tab);
     if (tab === 'hosts') {
       callTauri<string>('get_hosts_content').then((txt) => txt && setHostsContent(txt));
@@ -451,12 +508,17 @@ export default function App() {
       { id: 'new', title: '新建虚拟镜像映射', hint: '挂载新工作区', action: () => setIsCreateOpen(true) },
       { id: 'sidebar', title: sidebarCollapsed ? '展开左侧导航栏' : '收起左侧导航栏', hint: 'Ctrl+B', action: () => setSidebarCollapsed((v) => !v) },
       { id: 'theme', title: theme === 'light' ? '切换为 Obsidian 暗夜工作台' : '切换为 Porcelain 极光亮色', hint: '切换主题皮肤', action: () => setTheme((t) => (t === 'light' ? 'dark' : 'light')) },
-      { id: 'tab-agent-mind', title: '前往：心智治理规则中心', hint: '直编 rules 与仓库地图', action: () => switchTab('agent-mind') },
+      { id: 'tab-agent-mind-rules', title: '前往：心智治理 · 规则规范', hint: '直编 rules 与决策规则', action: () => switchTab('agent-mind-rules') },
+      { id: 'tab-agent-mind-reviews', title: '前往：心智治理 · 终审记录', hint: 'DSH 审查历史', action: () => switchTab('agent-mind-reviews') },
+      { id: 'tab-agent-mind-observability', title: '前往：心智治理 · 可观测', hint: 'Harness 遥测趋势', action: () => switchTab('agent-mind-observability') },
+      { id: 'tab-proposals', title: '前往：每日提案', hint: 'Grok AI 每日提案与批注', action: () => switchTab('proposals') },
+      { id: 'tab-projects', title: '前往：仓库地图', hint: '多仓库架构索引', action: () => switchTab('projects') },
       { id: 'tab-code-review', title: '前往：代码审核（Commit 前人工审查）', hint: 'Git Diff 逐行批注与反馈复制', action: () => switchTab('code-review') },
       { id: 'tab-mappings', title: '前往：虚拟镜像映射', hint: '工作区总览', action: () => switchTab('mappings') },
       { id: 'tab-hosts', title: '前往：Hosts 维护', hint: '编辑系统 DNS', action: () => switchTab('hosts') },
       { id: 'tab-settings', title: '前往：系统设置 · 偏好设置', hint: '任务栏与自启', action: () => switchTab('settings', 'prefs') },
       { id: 'tab-doctor', title: '前往：系统设置 · 内核与驱动诊断', hint: 'WinFsp 健康检查', action: () => switchTab('settings', 'doctor') },
+      { id: 'tab-model-config', title: '前往：系统设置 · 模型参数', hint: 'Decisions API 与阈值配置', action: () => switchTab('settings', 'model') },
       { id: 'dir', title: '打开全局配置目录', hint: 'Explorer', action: () => callTauri('open_global_dir') },
       { id: 'quit', title: '退出 A8 开发工具', hint: '关闭工作台与托盘常驻', action: () => callTauri('app_quit') },
     ];
@@ -638,29 +700,30 @@ export default function App() {
               </span>
             </div>
 
-            <nav aria-label="独立看板模块切换" className="inline-flex items-center rounded-lg border border-zinc-200/85 dark:border-border/70 p-0.5 text-[11px] shrink-0">
-              <button
-                type="button"
-                onClick={() => setStandaloneTab('agent-mind')}
-                className={`px-2.5 py-0.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                  standaloneTab === 'agent-mind'
-                    ? 'bg-zinc-100 dark:bg-surface-secondary font-semibold text-foreground'
-                    : 'text-muted hover:text-foreground'
-                }`}
-              >
-                心智治理
-              </button>
-              <button
-                type="button"
-                onClick={() => setStandaloneTab('code-review')}
-                className={`px-2.5 py-0.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                  standaloneTab === 'code-review'
-                    ? 'bg-zinc-100 dark:bg-surface-secondary font-semibold text-foreground'
-                    : 'text-muted hover:text-foreground'
-                }`}
-              >
-                代码审核
-              </button>
+            <nav aria-label="独立看板模块切换" className="inline-flex items-center rounded-lg border border-zinc-200/85 dark:border-border/70 p-0.5 text-[11px] shrink-0 overflow-x-auto">
+              {(
+                [
+                  { id: 'rules', label: '规则规范' },
+                  { id: 'reviews', label: '终审记录' },
+                  { id: 'observability', label: '可观测' },
+                  { id: 'proposals', label: '每日提案' },
+                  { id: 'projects', label: '仓库地图' },
+                  { id: 'code-review', label: '代码审核' },
+                ] as const
+              ).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setStandaloneTab(item.id)}
+                  className={`px-2.5 py-0.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                    standaloneTab === item.id
+                      ? 'bg-zinc-100 dark:bg-surface-secondary font-semibold text-foreground'
+                      : 'text-muted hover:text-foreground'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
             </nav>
           </div>
 
@@ -683,10 +746,17 @@ export default function App() {
 
         <main className="flex-1 overflow-y-auto px-4 py-3 bg-white dark:bg-[#09090B]">
           <div className="max-w-[1440px] mx-auto">
-            {standaloneTab === 'agent-mind' ? (
-              <AgentMindView callTauri={callTauri} pushToast={pushToast} isStandalone theme={theme} />
-            ) : (
+            {standaloneTab === 'code-review' ? (
               <CodeReviewTab callTauri={callTauri} pushToast={pushToast} />
+            ) : (
+              <AgentMindView
+                callTauri={callTauri}
+                pushToast={pushToast}
+                isStandalone
+                theme={theme}
+                activeView={standaloneTab}
+                onNavigateView={setStandaloneTab}
+              />
             )}
           </div>
         </main>
@@ -733,7 +803,7 @@ export default function App() {
 
           {/* 分组导航 */}
           <div className={`${sidebarCollapsed ? 'px-1.5 space-y-1.5 mt-2' : 'px-2 space-y-2.5 mt-2'}`}>
-            {(['核心特性'] as const).map((group) => (
+            {(['心智治理', '核心特性'] as const).map((group) => (
               <div key={group}>
                 {!sidebarCollapsed ? (
                   <div className="px-2 pb-1 text-[9px] font-mono font-semibold tracking-[0.1em] text-muted/70">
@@ -896,7 +966,13 @@ export default function App() {
               <span className="text-border">/</span>
               <span className="text-[11.5px] font-semibold text-foreground">
                 {activeTab === 'settings'
-                  ? `系统设置 · ${settingsSection === 'doctor' ? '内核与驱动' : '偏好设置'}`
+                  ? `系统设置 · ${
+                      settingsSection === 'doctor'
+                        ? '内核与驱动'
+                        : settingsSection === 'model'
+                          ? '模型参数'
+                          : '偏好设置'
+                    }`
                   : NAV_ITEMS.find((n) => n.id === activeTab)?.label}
               </span>
               <span className="hidden sm:inline-flex items-center gap-1 text-[9.5px] font-mono text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2 py-[1px]">
@@ -907,6 +983,61 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
+            {activeAgentMindView && (
+              <div className="hidden md:flex items-center gap-1.5">
+                <Tooltip delay={200}>
+                  <Tooltip.Trigger>
+                    <button
+                      onClick={() => callTauri('open_agent_mind_dir')}
+                      className="h-7 px-2 rounded-lg border border-border/80 bg-surface-secondary/70 hover:bg-surface-secondary text-[11px] text-muted hover:text-foreground flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5" />
+                      <span>目录</span>
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content className="text-[10.5px] px-2 py-1 rounded-lg">
+                    打开 a8-agent-mind 插件目录
+                  </Tooltip.Content>
+                </Tooltip>
+
+                <Tooltip delay={200}>
+                  <Tooltip.Trigger>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const url = await callTauri<string>('launch_agent_mind_sidecar');
+                          pushToast(`独立看板已就绪: ${url || '127.0.0.1:18765'}`, 'success');
+                        } catch (e: any) {
+                          pushToast(`启动独立看板失败: ${e}`, 'danger');
+                        }
+                      }}
+                      className="h-7 px-2 rounded-lg border border-border/80 bg-surface-secondary/70 hover:bg-surface-secondary text-[11px] text-muted hover:text-foreground flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>独立看板</span>
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content className="text-[10.5px] px-2 py-1 rounded-lg">
+                    在浏览器中打开独立看板
+                  </Tooltip.Content>
+                </Tooltip>
+
+                <Tooltip delay={200}>
+                  <Tooltip.Trigger>
+                    <button
+                      onClick={() => setAgentMindRefreshTick((n) => n + 1)}
+                      className="w-7 h-7 rounded-lg border border-border/80 bg-surface-secondary/70 hover:bg-surface-secondary flex items-center justify-center text-muted hover:text-foreground transition-colors cursor-pointer"
+                    >
+                      <RotateCw className="w-3.5 h-3.5" />
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content className="text-[10.5px] px-2 py-1 rounded-lg">
+                    刷新面板数据
+                  </Tooltip.Content>
+                </Tooltip>
+              </div>
+            )}
+
             {/* Raycast 风格命令面板触发器 */}
             <button
               onClick={() => setIsPaletteOpen(true)}
@@ -1426,40 +1557,52 @@ export default function App() {
                 transition={{ duration: 0.16 }}
                 className="flex flex-col h-full max-w-[1440px] mx-auto"
               >
-                <div className="flex items-center justify-between pb-2.5 border-b border-border/60 shrink-0">
-                  <div>
-                    <h2 className="text-[15px] font-semibold text-foreground">Hosts DNS 映射编辑器</h2>
-                    <p className="text-[10.5px] text-muted font-mono mt-0.5">C:\Windows\System32\drivers\etc\hosts</p>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2.5 rounded-lg text-[11px]"
-                      onPress={() =>
-                        callTauri<string>('get_hosts_content').then((t) => {
-                          if (t) {
-                            setHostsContent(t);
-                            pushToast('Hosts 文件已重新载入', 'info');
-                          }
-                        })
-                      }
-                    >
-                      重新载入
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      className="h-7 px-3 rounded-lg text-[11px]"
-                      onPress={async () => {
-                        await callTauri('save_hosts_content', { content: hostsContent });
-                        pushToast('Hosts 已保存并刷新本地 DNS 缓存', 'success');
-                      }}
-                    >
-                      保存并刷新 DNS
-                    </Button>
-                  </div>
-                </div>
+                <PortalHero
+                  className="shrink-0"
+                  icon={<Globe className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+                  eyebrow="SYSTEM · HOSTS DNS"
+                  title="本机 Hosts DNS 映射与快速生效控制台"
+                  description="直接维护 Windows 系统 Hosts 解析记录，保存后自动执行 DNS 缓存刷新，适合本地联调域名与多环境流量切换。"
+                  badge={
+                    <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-surface-secondary text-muted border border-zinc-200/80 dark:border-border/70">
+                      C:\Windows\System32\drivers\etc\hosts
+                    </span>
+                  }
+                  metrics={[
+                    { label: '生效规则', value: hostsStats.activeEntries, tone: 'emerald' },
+                    { label: '总行数', value: hostsStats.totalLines },
+                  ]}
+                  actions={
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2.5 rounded-lg text-[11px]"
+                        onPress={() =>
+                          callTauri<string>('get_hosts_content').then((t) => {
+                            if (t) {
+                              setHostsContent(t);
+                              pushToast('Hosts 文件已重新载入', 'info');
+                            }
+                          })
+                        }
+                      >
+                        重新载入
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        className="h-7 px-3 rounded-lg text-[11px]"
+                        onPress={async () => {
+                          await callTauri('save_hosts_content', { content: hostsContent });
+                          pushToast('Hosts 已保存并刷新本地 DNS 缓存', 'success');
+                        }}
+                      >
+                        保存并刷新 DNS
+                      </Button>
+                    </>
+                  }
+                />
 
                 <div className="flex-1 mt-3 rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-[#0D1117] text-foreground dark:text-slate-200 p-3 overflow-hidden flex flex-col">
                   <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/60 dark:border-white/10 text-[10px] font-mono text-muted dark:text-slate-400">
@@ -1480,16 +1623,23 @@ export default function App() {
               </motion.div>
             )}
 
-            {/* 视图 3：A8 Agent Mind 插件能力与规则维护 */}
-            {activeTab === 'agent-mind' && (
+            {/* 视图 3：A8 心智治理 / 每日提案 / 仓库地图（已拆分为菜单一级入口，无双层头） */}
+            {activeAgentMindView && (
               <motion.div
-                key="agent-mind"
+                key={`agent-mind-${activeAgentMindView}`}
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.16 }}
               >
-                <AgentMindView callTauri={callTauri} pushToast={pushToast} theme={theme} />
+                <AgentMindView
+                  callTauri={callTauri}
+                  pushToast={pushToast}
+                  theme={theme}
+                  activeView={activeAgentMindView}
+                  onNavigateView={navigateAgentMindView}
+                  refreshTick={agentMindRefreshTick}
+                />
               </motion.div>
             )}
 
@@ -1532,7 +1682,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    {settingsSection === 'prefs' ? (
+                    {settingsSection === 'prefs' && (
                       <Button
                         size="sm"
                         variant="primary"
@@ -1548,7 +1698,8 @@ export default function App() {
                       >
                         保存设置
                       </Button>
-                    ) : (
+                    )}
+                    {settingsSection === 'doctor' && (
                       <div className="flex items-center gap-2">
                         <Button
                           size="sm"
@@ -1617,10 +1768,27 @@ export default function App() {
                         <span className="absolute left-0 right-0 bottom-0 h-[2px] bg-foreground rounded-full" />
                       )}
                     </button>
+
+                    <button
+                      onClick={() => setSettingsSection('model')}
+                      className={`relative pb-2.5 text-[12px] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                        settingsSection === 'model'
+                          ? 'font-semibold text-foreground'
+                          : 'font-medium text-muted hover:text-foreground'
+                      }`}
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                      <span>模型参数</span>
+                      {settingsSection === 'model' && (
+                        <span className="absolute left-0 right-0 bottom-0 h-[2px] bg-foreground rounded-full" />
+                      )}
+                    </button>
                   </nav>
                 </section>
 
-                {settingsSection === 'prefs' ? (
+                {settingsSection === 'model' ? (
+                  <AgentMindModelConfigPanel callTauri={callTauri} pushToast={pushToast} />
+                ) : settingsSection === 'prefs' ? (
                   <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface max-w-3xl divide-y divide-zinc-200/75 dark:divide-border/50">
                     <div className="px-3.5 py-2.5 flex items-center justify-between">
                       <div>

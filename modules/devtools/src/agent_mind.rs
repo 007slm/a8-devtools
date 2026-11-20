@@ -22,6 +22,8 @@ pub struct HostProjectCardDto {
     pub summary: String,
     pub detail_rel_path: String,
     pub detail_exists: bool,
+    pub has_git: bool,
+    pub readme_rel_path: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -62,6 +64,21 @@ pub struct AdvanceProposalResultDto {
     pub conversation_id: String,
     pub focused_antigravity: bool,
     pub method: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RepoDocEntryDto {
+    pub repo: String,
+    pub doc_tier: String,
+    pub doc_type: String,
+    pub title: String,
+    pub date: String,
+    pub status: String,
+    pub rel_path: String,
+    pub abs_path: String,
+    pub size_bytes: u64,
+    pub estimated_tokens: u32,
+    pub modified_ts: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -128,6 +145,10 @@ pub struct LintItemDto {
     pub description: String,
     pub line_number: u32,
     #[serde(default)]
+    pub editable: bool,
+    #[serde(default)]
+    pub deletable: bool,
+    #[serde(default)]
     pub eval_count: u32,
     #[serde(default)]
     pub hit_count: u32,
@@ -171,6 +192,12 @@ pub struct HarnessMetricEventDto {
     pub evaluated_ids: Vec<String>,
     #[serde(default)]
     pub violated_ids: Vec<String>,
+    #[serde(default)]
+    pub tokens_evaluated: u64,
+    #[serde(default)]
+    pub api_calls_count: u32,
+    #[serde(default)]
+    pub diff_chunks_count: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -245,6 +272,10 @@ pub struct DailyHarnessTrendDto {
     pub allow_or_pass: u32,
     pub hook_woke: u32,
     pub violated_or_error: u32,
+    #[serde(default)]
+    pub tokens_evaluated: u64,
+    #[serde(default)]
+    pub diff_chunks_count: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -257,6 +288,16 @@ pub struct HarnessTelemetryDto {
     pub auto_lint_triggered: usize,
     pub avg_confidence: f64,
     pub threshold: f64,
+    #[serde(default)]
+    pub total_tokens_evaluated: u64,
+    #[serde(default)]
+    pub avg_judge_tokens: u64,
+    #[serde(default)]
+    pub max_judge_tokens: u64,
+    #[serde(default)]
+    pub total_diff_chunks: u32,
+    #[serde(default)]
+    pub total_api_calls: u32,
     pub daily_trends: Vec<DailyHarnessTrendDto>,
     pub recent_events: Vec<HarnessMetricEventDto>,
 }
@@ -276,6 +317,7 @@ pub struct AgentMindOverviewDto {
     pub proposals_dir: String,
     pub files: Vec<AgentMindFileEntryDto>,
     pub governance_rules: Vec<GovernanceRuleEntryDto>,
+    pub repo_docs: Vec<RepoDocEntryDto>,
     pub decisions: Vec<DecisionEntryDto>,
     pub lints: Vec<LintItemDto>,
     pub governance_summary: GovernanceSummaryDto,
@@ -552,6 +594,28 @@ fn extract_md_link_path(raw: &str) -> String {
     strip_md_cell(s)
 }
 
+fn has_git_repo(dir: &Path) -> bool {
+    if !dir.exists() {
+        return false;
+    }
+    // 跳过驱动器根目录（如 C:\.git）避免误判机器上的普通文件夹
+    dir.ancestors()
+        .take_while(|p| p.parent().is_some())
+        .any(|p| p.join(".git").exists())
+}
+
+fn detect_repo_readme(dir: &Path) -> String {
+    if !dir.is_dir() {
+        return String::new();
+    }
+    for name in ["README.md", "readme.md"] {
+        if dir.join(name).is_file() {
+            return name.to_string();
+        }
+    }
+    String::new()
+}
+
 fn parse_projects_index(root: &Path) -> Vec<HostProjectCardDto> {
     let mut cards = Vec::new();
     let path = root.join("repos.md");
@@ -585,6 +649,17 @@ fn parse_projects_index(root: &Path) -> Vec<HostProjectCardDto> {
         } else {
             root.join(&detail_rel_path).exists()
         };
+        let phys_trimmed = physical_path.trim();
+        let has_git = if phys_trimmed.is_empty() {
+            false
+        } else {
+            has_git_repo(Path::new(phys_trimmed))
+        };
+        let readme_rel_path = if phys_trimmed.is_empty() {
+            String::new()
+        } else {
+            detect_repo_readme(Path::new(phys_trimmed))
+        };
 
         cards.push(HostProjectCardDto {
             code,
@@ -593,6 +668,8 @@ fn parse_projects_index(root: &Path) -> Vec<HostProjectCardDto> {
             summary,
             detail_rel_path,
             detail_exists,
+            has_git,
+            readme_rel_path,
         });
     }
 
@@ -1096,11 +1173,58 @@ fn is_allowed_repo_governance_rel(clean_rel: &str, writable: bool) -> bool {
         if lower.ends_with(".decision.json") {
             return true;
         }
-        if !writable && lower.ends_with(".py") {
+        if !writable && (lower.ends_with(".py") || lower.ends_with(".mjs")) {
             return true;
         }
     }
+    if !writable && (lower == "readme.md" || lower.starts_with("docs/")) && lower.ends_with(".md") {
+        return true;
+    }
     false
+}
+
+fn validate_repo_delete_target(clean_rel: &str, target: &Path) -> Result<(), String> {
+    let lower = clean_rel.to_ascii_lowercase();
+    if lower == "agents.md" || lower == "gemini.md" {
+        return Err("仓库根地图 (AGENTS.md / GEMINI.md) 受保护，禁止删除".to_string());
+    }
+    if lower.starts_with(".agents/rules/") && lower.ends_with(".md") {
+        return Ok(());
+    }
+    if lower.starts_with("scripts/lints/") {
+        if lower.ends_with(".decision.json") {
+            return Ok(());
+        }
+        if lower.ends_with(".py") || lower.ends_with(".mjs") {
+            let file_name = target
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if file_name == "run_lints.py" || file_name == "__init__.py" {
+                return Err(format!("安全拦截：核心检查入口 {} 受保护，禁止删除整文件", file_name));
+            }
+            if lower.ends_with(".py") {
+                if let Ok(raw) = std::fs::read_to_string(target) {
+                    let check_count = raw
+                        .lines()
+                        .filter(|ln| ln.trim().starts_with("def check_"))
+                        .count();
+                    if check_count > 1 {
+                        return Err(
+                            "安全拦截：该脚本包含多个检查函数，禁止整文件删除，请在源码中移除单个检查函数"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            return Ok(());
+        }
+    }
+    Err(
+        "仓库作用域仅允许删除 .agents/rules/*.md、scripts/lints/*.decision.json 或独立单检查脚本"
+            .to_string(),
+    )
 }
 
 fn resolve_target_scope(
@@ -1184,6 +1308,156 @@ fn estimate_markdown_tokens(raw: &str) -> (usize, u32) {
     }
     let est = ((ascii as f64 / 4.0) + (non_ascii as f64 / 1.2)).ceil() as u32;
     (chars, est)
+}
+
+fn parse_doc_meta(raw: &str, file_name: &str) -> (String, String, String, String) {
+    let stem = file_name.strip_suffix(".md").unwrap_or(file_name);
+    let mut title = String::new();
+    let mut status = String::new();
+    for (idx, raw_line) in raw.lines().take(20).enumerate() {
+        let trimmed = raw_line.trim().trim_start_matches('\u{feff}');
+        if title.is_empty() && trimmed.starts_with('#') {
+            title = trimmed.trim_start_matches('#').trim().to_string();
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("- **状态**：") {
+            let val = rest.trim();
+            if !val.is_empty() {
+                status = val.chars().take(48).collect();
+            }
+        }
+        if idx > 0 && !title.is_empty() && !status.is_empty() {
+            break;
+        }
+    }
+    if title.is_empty() {
+        title = stem.to_string();
+    }
+
+    let mut date = String::new();
+    let mut doc_type = String::new();
+    let bytes = stem.as_bytes();
+    if bytes.len() >= 9 && bytes[..8].iter().all(|b| b.is_ascii_digit()) && bytes[8] == b'-' {
+        date = format!("{}-{}-{}", &stem[0..4], &stem[4..6], &stem[6..8]);
+        let rest = &stem[9..];
+        if let Some(first_seg) = rest.split('-').next() {
+            if !first_seg.is_empty() && first_seg.chars().all(|c| c.is_ascii_uppercase()) {
+                doc_type = first_seg.to_string();
+            }
+        }
+    }
+    (title, date, doc_type, status)
+}
+
+fn classify_repo_doc_tier(rel_lower: &str, date: &str, status: &str) -> (&'static str, &'static str) {
+    let sub = rel_lower.strip_prefix("docs/").unwrap_or(rel_lower);
+    if sub.starts_with("evergreen/") {
+        return ("evergreen", "EVERGREEN");
+    }
+    if sub.starts_with("deferred/") {
+        return ("deferred", "DEFERRED");
+    }
+    let is_inactive = status.starts_with("已废弃") || status.starts_with("已暂缓");
+    if sub.starts_with("records/") || !date.is_empty() {
+        return if is_inactive { ("deferred", "RECORD") } else { ("record", "RECORD") };
+    }
+    ("other", "DOC")
+}
+
+fn collect_repo_docs_recursive(
+    repo_root: &Path,
+    dir: &Path,
+    repo_code: &str,
+    out: &mut Vec<RepoDocEntryDto>,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    paths.sort();
+    for path in paths {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if path.is_dir() {
+            let lower_dir = name.to_ascii_lowercase();
+            if matches!(lower_dir.as_str(), ".git" | "node_modules" | "target" | ".cowdiff" | ".cowlink") {
+                continue;
+            }
+            collect_repo_docs_recursive(repo_root, &path, repo_code, out);
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        let is_md = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("md"))
+            .unwrap_or(false);
+        if !is_md {
+            continue;
+        }
+        let Ok(rel) = path.strip_prefix(repo_root) else {
+            continue;
+        };
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+        let rel_lower = rel_str.to_ascii_lowercase();
+        let (size_bytes, modified_ts) = file_meta_stats(&path);
+        let raw = std::fs::read_to_string(&path).unwrap_or_default();
+        let (title, date, parsed_type, status) = parse_doc_meta(&raw, name);
+        let (tier, fallback_type) = classify_repo_doc_tier(&rel_lower, &date, &status);
+        let doc_type = if tier == "evergreen" || parsed_type.is_empty() {
+            fallback_type.to_string()
+        } else {
+            parsed_type
+        };
+        let (_, estimated_tokens) = estimate_markdown_tokens(&raw);
+        out.push(RepoDocEntryDto {
+            repo: repo_code.to_string(),
+            doc_tier: tier.to_string(),
+            doc_type,
+            title,
+            date,
+            status,
+            rel_path: rel_str,
+            abs_path: clean_display_path(&path),
+            size_bytes,
+            estimated_tokens,
+            modified_ts,
+        });
+    }
+}
+
+fn scan_repo_docs(projects: &[HostProjectCardDto]) -> Vec<RepoDocEntryDto> {
+    let mut docs = Vec::new();
+    for proj in projects {
+        let phys = proj.physical_path.trim();
+        if phys.is_empty() {
+            continue;
+        }
+        let docs_dir = PathBuf::from(phys).join("docs");
+        if docs_dir.is_dir() {
+            collect_repo_docs_recursive(Path::new(phys), &docs_dir, &proj.code, &mut docs);
+        }
+    }
+    let tier_rank = |tier: &str| -> u8 {
+        match tier {
+            "evergreen" => 0,
+            "record" => 1,
+            "deferred" => 2,
+            _ => 3,
+        }
+    };
+    docs.sort_by(|a, b| {
+        a.repo
+            .cmp(&b.repo)
+            .then_with(|| tier_rank(&a.doc_tier).cmp(&tier_rank(&b.doc_tier)))
+            .then_with(|| b.date.cmp(&a.date))
+            .then_with(|| b.modified_ts.cmp(&a.modified_ts))
+            .then_with(|| a.rel_path.cmp(&b.rel_path))
+    });
+    docs
 }
 
 fn push_rule_entry_from_path(
@@ -1483,11 +1757,126 @@ fn collect_decision_entries_in_dir(
     }
 }
 
+fn extract_unquoted_ident(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.len() >= 2 {
+        let q = s.chars().next()?;
+        if (q == '"' || q == '\'') && s.ends_with(q) {
+            let inner = s[1..s.len() - 1].trim();
+            if !inner.is_empty()
+                && inner
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+            {
+                return Some(inner.to_ascii_uppercase());
+            }
+        }
+    }
+    None
+}
+
+fn extract_explicit_check_id(raw: &str) -> Option<String> {
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        let after_kw = trimmed
+            .strip_prefix("const ")
+            .or_else(|| trimmed.strip_prefix("let "))
+            .or_else(|| trimmed.strip_prefix("var "))
+            .unwrap_or(trimmed)
+            .trim();
+        if let Some(rest) = after_kw.strip_prefix("CHECK_ID") {
+            let rest = rest.trim_start();
+            if let Some(val_part) = rest.strip_prefix('=') {
+                let val_token = val_part.trim().trim_end_matches(';').trim();
+                if let Some(id) = extract_unquoted_ident(val_token) {
+                    return Some(id);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_tuple_check_id_map(raw: &str) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if let Some(start) = trimmed.find('(') {
+            if let Some(end) = trimmed.rfind(')') {
+                if end > start + 1 {
+                    let inner = &trimmed[start + 1..end];
+                    let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+                    if parts.len() == 2 {
+                        if let Some(cid) = extract_unquoted_ident(parts[0]) {
+                            let fn_name = parts[1].trim();
+                            if fn_name.starts_with("check_")
+                                && fn_name
+                                    .chars()
+                                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                            {
+                                map.insert(fn_name.to_string(), cid);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
+fn extract_pass_tag_id(raw: &str) -> Option<String> {
+    for line in raw.lines() {
+        if let Some(pos) = line.find("[PASS]") {
+            let rest = line[pos + 6..].trim_start();
+            let token: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+                .collect();
+            if token.len() >= 3
+                && token
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' || c == '-' || c == '.')
+            {
+                return Some(token);
+            }
+        }
+    }
+    None
+}
+
+fn extract_mjs_description(raw: &str) -> String {
+    for line in raw.lines().take(20) {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with("#!")
+            || trimmed == "/**"
+            || trimmed == "/*"
+            || trimmed == "*/"
+            || trimmed == "*"
+        {
+            continue;
+        }
+        let cleaned = trimmed
+            .trim_start_matches("/*")
+            .trim_start_matches("//")
+            .trim_start_matches('*')
+            .trim_end_matches("*/")
+            .trim();
+        if cleaned.is_empty() || cleaned.starts_with("import ") || cleaned.starts_with("const ") {
+            continue;
+        }
+        return cleaned.to_string();
+    }
+    "仓库静态检查脚本 (Node.js)".to_string()
+}
+
 fn collect_lint_items_in_dir(
     base_root: &Path,
     lints_dir: &Path,
     scope: &str,
     repo: &str,
+    editable: bool,
     stats: &CheckerStatsIndex,
     out: &mut Vec<LintItemDto>,
 ) {
@@ -1497,19 +1886,37 @@ fn collect_lint_items_in_dir(
     let Ok(entries) = std::fs::read_dir(lints_dir) else {
         return;
     };
+
+    let runner_lower = std::fs::read_to_string(lints_dir.join("run_lints.py"))
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+
     let mut paths: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path())
         .filter(|p| {
-            p.is_file()
-                && p.extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| e.eq_ignore_ascii_case("py"))
-                    .unwrap_or(false)
-                && p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n != "__init__.py")
-                    .unwrap_or(false)
+            if !p.is_file() {
+                return false;
+            }
+            let Some(fname) = p.file_name().and_then(|n| n.to_str()) else {
+                return false;
+            };
+            if fname == "__init__.py" {
+                return false;
+            }
+            let ext = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if ext == "py" {
+                return true;
+            }
+            if ext == "mjs" {
+                // Skip .mjs helper scripts already wrapped and surfaced inside run_lints.py
+                return runner_lower.is_empty() || !runner_lower.contains(&fname.to_ascii_lowercase());
+            }
+            false
         })
         .collect();
     paths.sort();
@@ -1524,19 +1931,66 @@ fn collect_lint_items_in_dir(
             .and_then(|n| n.to_str())
             .unwrap_or("lint.py")
             .to_string();
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
         let Ok(raw) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let lines: Vec<&str> = raw.lines().collect();
-        let mut found_for_file = 0usize;
 
-        for (idx, line) in lines.iter().enumerate() {
-            let trimmed = line.trim();
-            if let Some(after_def) = trimmed.strip_prefix("def check_") {
-                let fn_tail = after_def.split('(').next().unwrap_or("").trim();
-                if fn_tail.is_empty() {
-                    continue;
-                }
+        let explicit_id = extract_explicit_check_id(&raw);
+        let is_runner_file = file_name.eq_ignore_ascii_case("run_lints.py");
+
+        if ext == "mjs" {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("lint");
+            let id = explicit_id
+                .or_else(|| extract_pass_tag_id(&raw))
+                .unwrap_or_else(|| stem.to_ascii_uppercase());
+            let st = stats.lookup_lint(scope, repo, &id);
+            out.push(LintItemDto {
+                id,
+                name: file_name.clone(),
+                scope: scope.to_string(),
+                repo: repo.to_string(),
+                file_name,
+                rel_path: rel_str,
+                abs_path: clean_display_path(&path),
+                description: extract_mjs_description(&raw),
+                line_number: 1,
+                editable,
+                deletable: editable && !is_runner_file,
+                eval_count: st.eval_count,
+                hit_count: st.hit_count,
+                last_eval_ts: st.last_eval_ts,
+                last_hit_ts: st.last_hit_ts,
+            });
+            continue;
+        }
+
+        let lines: Vec<&str> = raw.lines().collect();
+        let tuple_map = extract_tuple_check_id_map(&raw);
+        let check_defs: Vec<(usize, String)> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, line)| {
+                let trimmed = line.trim();
+                trimmed.strip_prefix("def check_").and_then(|after_def| {
+                    let fn_tail = after_def.split('(').next().unwrap_or("").trim();
+                    if fn_tail.is_empty() {
+                        None
+                    } else {
+                        Some((idx, fn_tail.to_string()))
+                    }
+                })
+            })
+            .collect();
+
+        if !check_defs.is_empty() {
+            let def_count = check_defs.len();
+            let file_deletable = editable && !is_runner_file && def_count <= 1;
+            for (idx, fn_tail) in check_defs {
                 let mut desc = String::new();
                 if let Some(next_line) = lines.get(idx + 1) {
                     let nt = next_line.trim();
@@ -1544,11 +1998,16 @@ fn collect_lint_items_in_dir(
                         desc = inner.trim_end_matches("\"\"\"").trim().to_string();
                     }
                 }
-                let id = fn_tail.to_ascii_uppercase();
+                let fn_name = format!("check_{}", fn_tail);
+                let id = tuple_map
+                    .get(&fn_name)
+                    .cloned()
+                    .or_else(|| if def_count == 1 { explicit_id.clone() } else { None })
+                    .unwrap_or_else(|| fn_tail.to_ascii_uppercase());
                 let st = stats.lookup_lint(scope, repo, &id);
                 out.push(LintItemDto {
                     id,
-                    name: format!("check_{}", fn_tail),
+                    name: fn_name,
                     scope: scope.to_string(),
                     repo: repo.to_string(),
                     file_name: file_name.clone(),
@@ -1560,18 +2019,19 @@ fn collect_lint_items_in_dir(
                         desc
                     },
                     line_number: (idx + 1) as u32,
+                    editable,
+                    deletable: file_deletable,
                     eval_count: st.eval_count,
                     hit_count: st.hit_count,
                     last_eval_ts: st.last_eval_ts,
                     last_hit_ts: st.last_hit_ts,
                 });
-                found_for_file += 1;
             }
-        }
-
-        if found_for_file == 0 {
+        } else {
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("lint");
-            let id = stem.to_ascii_uppercase();
+            let id = explicit_id
+                .or_else(|| extract_pass_tag_id(&raw))
+                .unwrap_or_else(|| stem.to_ascii_uppercase());
             let st = stats.lookup_lint(scope, repo, &id);
             out.push(LintItemDto {
                 id,
@@ -1583,6 +2043,8 @@ fn collect_lint_items_in_dir(
                 abs_path: clean_display_path(&path),
                 description: "仓库静态检查脚本".to_string(),
                 line_number: 1,
+                editable,
+                deletable: editable && !is_runner_file,
                 eval_count: st.eval_count,
                 hit_count: st.hit_count,
                 last_eval_ts: st.last_eval_ts,
@@ -1629,6 +2091,7 @@ pub(crate) fn scan_governance_assets(
         &plugin_root.join("lints"),
         "global",
         "a8-agent-mind",
+        true,
         stats,
         &mut lints,
     );
@@ -1676,6 +2139,7 @@ pub(crate) fn scan_governance_assets(
             &repo_root.join("scripts").join("lints"),
             "project",
             &proj.code,
+            editable,
             stats,
             &mut lints,
         );
@@ -1758,6 +2222,7 @@ pub fn get_agent_mind_overview() -> Result<AgentMindOverviewDto, String> {
 
     let (governance_rules, decisions, lints, governance_summary) =
         scan_governance_assets(&root, &projects, &checker_stats);
+    let repo_docs = scan_repo_docs(&projects);
 
     let mut files = Vec::new();
     for (dir_name, category) in [
@@ -1825,6 +2290,7 @@ pub fn get_agent_mind_overview() -> Result<AgentMindOverviewDto, String> {
         proposals_dir,
         files,
         governance_rules,
+        repo_docs,
         decisions,
         lints,
         governance_summary,
@@ -2087,13 +2553,7 @@ pub fn delete_agent_mind_file(rel_path: String, repo_code: Option<String>) -> Re
     let (target_root, is_repo) = resolve_target_scope(&plugin_root, repo_code.as_deref(), true)?;
     if is_repo {
         let (clean_rel, target) = resolve_safe_rel_path(&target_root, &rel_path)?;
-        let lower = clean_rel.to_ascii_lowercase();
-        if lower == "agents.md" || lower == "gemini.md" {
-            return Err("仓库根地图 (AGENTS.md / GEMINI.md) 受保护，禁止删除".to_string());
-        }
-        if !is_allowed_repo_governance_rel(&clean_rel, true) {
-            return Err("仓库作用域仅允许删除 .agents/rules/*.md 或 scripts/lints/*.decision.json".to_string());
-        }
+        validate_repo_delete_target(&clean_rel, &target)?;
         if !target.is_file() {
             return Err(format!("文件不存在: {}", clean_rel));
         }
@@ -2318,13 +2778,27 @@ pub(crate) fn parse_harness_telemetry_with_stats(
                             .to_string(),
                         evaluated_ids: parse_string_array_field(&v, "evaluated_ids"),
                         violated_ids: parse_string_array_field(&v, "violated_ids"),
+                        tokens_evaluated: v
+                            .get("tokens_evaluated")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0),
+                        api_calls_count: v
+                            .get("api_calls_count")
+                            .and_then(|x| x.as_u64())
+                            .and_then(|n| u32::try_from(n).ok())
+                            .unwrap_or(0),
+                        diff_chunks_count: v
+                            .get("diff_chunks_count")
+                            .and_then(|x| x.as_u64())
+                            .and_then(|n| u32::try_from(n).ok())
+                            .unwrap_or(0),
                     });
                 }
             }
         }
     }
 
-    let mut day_buckets: std::collections::HashMap<String, (u32, u32, u32)> =
+    let mut day_buckets: std::collections::HashMap<String, (u32, u32, u32, u64, u32)> =
         std::collections::HashMap::new();
     let mut stats_index = CheckerStatsIndex::default();
     let mut stop_hook_events = 0usize;
@@ -2333,6 +2807,12 @@ pub(crate) fn parse_harness_telemetry_with_stats(
     let mut auto_lint_triggered = 0usize;
     let mut conf_sum = 0.0f64;
     let mut conf_cnt = 0usize;
+    let mut total_tokens_evaluated = 0u64;
+    let mut judge_token_sum = 0u64;
+    let mut judge_token_cnt = 0u64;
+    let mut max_judge_tokens = 0u64;
+    let mut total_diff_chunks = 0u32;
+    let mut total_api_calls = 0u32;
 
     for ev in &events {
         if ev.source == "stop_hook" {
@@ -2349,6 +2829,16 @@ pub(crate) fn parse_harness_telemetry_with_stats(
         if ev.confidence > 0.0 {
             conf_sum += ev.confidence;
             conf_cnt += 1;
+        }
+        total_tokens_evaluated = total_tokens_evaluated.saturating_add(ev.tokens_evaluated);
+        total_diff_chunks = total_diff_chunks.saturating_add(ev.diff_chunks_count);
+        total_api_calls = total_api_calls.saturating_add(ev.api_calls_count);
+        if ev.source == "a8_judge" && ev.tokens_evaluated > 0 {
+            judge_token_sum = judge_token_sum.saturating_add(ev.tokens_evaluated);
+            judge_token_cnt += 1;
+            if ev.tokens_evaluated > max_judge_tokens {
+                max_judge_tokens = ev.tokens_evaluated;
+            }
         }
 
         let repo_lower = ev.repo.to_lowercase();
@@ -2407,7 +2897,7 @@ pub(crate) fn parse_harness_telemetry_with_stats(
         }
 
         if !ev.date.is_empty() {
-            let entry = day_buckets.entry(ev.date.clone()).or_insert((0, 0, 0));
+            let entry = day_buckets.entry(ev.date.clone()).or_insert((0, 0, 0, 0, 0));
             let is_err_or_violated = matches!(
                 ev.verdict.as_str(),
                 "VIOLATED" | "REQUIRES_APPROVAL" | "ERROR"
@@ -2420,6 +2910,8 @@ pub(crate) fn parse_harness_telemetry_with_stats(
             } else {
                 entry.0 += 1;
             }
+            entry.3 = entry.3.saturating_add(ev.tokens_evaluated);
+            entry.4 = entry.4.saturating_add(ev.diff_chunks_count);
         }
     }
 
@@ -2427,13 +2919,15 @@ pub(crate) fn parse_harness_telemetry_with_stats(
     for offset in (0..14u64).rev() {
         let day_secs = now_secs.saturating_sub(offset * 86400);
         let ymd = unix_secs_to_ymd_cn(day_secs);
-        let (allow_or_pass, hook_woke, violated_or_error) =
-            day_buckets.get(&ymd).copied().unwrap_or((0, 0, 0));
+        let (allow_or_pass, hook_woke, violated_or_error, tokens_evaluated, diff_chunks_count) =
+            day_buckets.get(&ymd).copied().unwrap_or((0, 0, 0, 0, 0));
         daily_trends.push(DailyHarnessTrendDto {
             date: ymd,
             allow_or_pass,
             hook_woke,
             violated_or_error,
+            tokens_evaluated,
+            diff_chunks_count,
         });
     }
 
@@ -2453,6 +2947,15 @@ pub(crate) fn parse_harness_telemetry_with_stats(
             0.0
         },
         threshold,
+        total_tokens_evaluated,
+        avg_judge_tokens: if judge_token_cnt > 0 {
+            judge_token_sum / judge_token_cnt
+        } else {
+            0
+        },
+        max_judge_tokens,
+        total_diff_chunks,
+        total_api_calls,
         daily_trends,
         recent_events: events,
     };
@@ -3595,7 +4098,10 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         );
         std::fs::write(tmp.0.join("repos.md"), repos_md).unwrap();
 
+        std::fs::create_dir_all(project_repo.join(".git")).unwrap();
         let projects = parse_projects_index(&tmp.0);
+        assert!(projects.iter().any(|p| p.code == "sample-repo" && p.has_git));
+        assert!(projects.iter().any(|p| p.code == "sample-testbed" && !p.has_git));
         let empty_stats = CheckerStatsIndex::default();
         let (rules, decisions, lints, summary) = scan_governance_assets(&tmp.0, &projects, &empty_stats);
         assert_eq!(summary.rule_files_count, 3); // mind-rules.md, custom.md, sample-repo/redline.md
@@ -3620,8 +4126,42 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         assert!(is_allowed_repo_governance_rel("scripts/lints/run_lints.py", false));
         assert!(!is_allowed_repo_governance_rel("scripts/lints/run_lints.py", true));
         assert!(is_allowed_repo_governance_rel("scripts/lints/x.decision.json", true));
+        assert!(is_allowed_repo_governance_rel("README.md", false));
+        assert!(!is_allowed_repo_governance_rel("README.md", true));
+        assert!(is_allowed_repo_governance_rel("docs/evergreen/core.md", false));
+        assert!(!is_allowed_repo_governance_rel("docs/evergreen/core.md", true));
         assert!(resolve_target_scope(&tmp.0, Some("sample-testbed"), true).is_err());
         assert!(resolve_target_scope(&tmp.0, Some("sample-repo"), true).is_ok());
+
+        // 仓库 README 与治理文档分类扫描
+        std::fs::write(project_repo.join("README.md"), "# Sample Repo\n").unwrap();
+        let reparsed_projects = parse_projects_index(&tmp.0);
+        let sample_card = reparsed_projects.iter().find(|p| p.code == "sample-repo").unwrap();
+        assert_eq!(sample_card.readme_rel_path, "README.md");
+        std::fs::create_dir_all(project_repo.join("docs").join("evergreen")).unwrap();
+        std::fs::create_dir_all(project_repo.join("docs").join("records")).unwrap();
+        std::fs::create_dir_all(project_repo.join("docs").join("deferred")).unwrap();
+        std::fs::write(project_repo.join("docs").join("evergreen").join("core.md"), "# 核心常青\n").unwrap();
+        std::fs::write(
+            project_repo.join("docs").join("records").join("20261120-ADR-core-test.md"),
+            "# ADR：决策记录\n- **状态**：已落地（当时有效）\n",
+        )
+        .unwrap();
+        std::fs::write(
+            project_repo.join("docs").join("records").join("20261110-SPEC-old-test.md"),
+            "# SPEC：旧版方案\n- **状态**：已废弃（被 20261120-ADR-core-test.md 取代）\n",
+        )
+        .unwrap();
+        std::fs::write(
+            project_repo.join("docs").join("deferred").join("20261010-SPEC-prof.md"),
+            "# SPEC：暂缓观测\n- **状态**：已暂缓\n",
+        )
+        .unwrap();
+        let scanned_docs = scan_repo_docs(&projects);
+        assert!(scanned_docs.iter().any(|d| d.repo == "sample-repo" && d.doc_tier == "evergreen" && d.title == "核心常青"));
+        assert!(scanned_docs.iter().any(|d| d.repo == "sample-repo" && d.doc_tier == "record" && d.doc_type == "ADR" && d.date == "2026-11-20" && d.status == "已落地（当时有效）"));
+        assert!(scanned_docs.iter().any(|d| d.repo == "sample-repo" && d.doc_tier == "deferred" && d.doc_type == "SPEC" && d.status.starts_with("已废弃")));
+        assert!(scanned_docs.iter().any(|d| d.repo == "sample-repo" && d.doc_tier == "deferred" && d.rel_path.ends_with("20261010-SPEC-prof.md") && d.status == "已暂缓"));
     }
 
     #[test]
@@ -3659,9 +4199,9 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         let today = unix_secs_to_ymd_cn(now_secs);
         let yest = unix_secs_to_ymd_cn(now_secs - 86400);
         let content = format!(
-            "{{\"ts\":{},\"date\":\"{}\",\"source\":\"stop_hook\",\"mode\":\"DOCS_MAINTENANCE\",\"repo\":\"a8-devtools\",\"verdict\":\"continue\",\"confidence\":0.98,\"docs_choice\":\"yes\",\"lesson_choice\":\"no\"}}\n\
-             {{\"ts\":{},\"date\":\"{}\",\"source\":\"a8_judge\",\"mode\":\"PASSED\",\"repo\":\"a8-devtools\",\"verdict\":\"PASSED\",\"confidence\":0.92,\"docs_choice\":\"\",\"lesson_choice\":\"\"}}\n\
-             {{\"ts\":{},\"date\":\"{}\",\"source\":\"a8_judge\",\"mode\":\"VIOLATED\",\"repo\":\"a8-turbo\",\"verdict\":\"VIOLATED\",\"confidence\":0.81,\"docs_choice\":\"\",\"lesson_choice\":\"\"}}\n",
+            "{{\"ts\":{},\"date\":\"{}\",\"source\":\"stop_hook\",\"mode\":\"DOCS_MAINTENANCE\",\"repo\":\"a8-devtools\",\"verdict\":\"continue\",\"confidence\":0.98,\"docs_choice\":\"yes\",\"lesson_choice\":\"no\",\"tokens_evaluated\":1200,\"api_calls_count\":1}}\n\
+             {{\"ts\":{},\"date\":\"{}\",\"source\":\"a8_judge\",\"mode\":\"PASSED\",\"repo\":\"a8-devtools\",\"verdict\":\"PASSED\",\"confidence\":0.92,\"docs_choice\":\"\",\"lesson_choice\":\"\",\"tokens_evaluated\":8400,\"api_calls_count\":2,\"diff_chunks_count\":2}}\n\
+             {{\"ts\":{},\"date\":\"{}\",\"source\":\"a8_judge\",\"mode\":\"VIOLATED\",\"repo\":\"a8-turbo\",\"verdict\":\"VIOLATED\",\"confidence\":0.81,\"docs_choice\":\"\",\"lesson_choice\":\"\",\"tokens_evaluated\":15600,\"api_calls_count\":3,\"diff_chunks_count\":4}}\n",
             now_secs - 3600,
             yest,
             now_secs - 100,
@@ -3676,11 +4216,21 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         assert_eq!(tel.stop_hook_events, 1);
         assert_eq!(tel.judge_events, 2);
         assert_eq!(tel.docs_gate_triggered, 1);
+        assert_eq!(tel.total_tokens_evaluated, 25200);
+        assert_eq!(tel.avg_judge_tokens, 12000);
+        assert_eq!(tel.max_judge_tokens, 15600);
+        assert_eq!(tel.total_diff_chunks, 6);
+        assert_eq!(tel.total_api_calls, 6);
         assert_eq!(tel.daily_trends.len(), 14);
         assert_eq!(tel.daily_trends.last().unwrap().date, today);
         assert_eq!(tel.daily_trends.last().unwrap().allow_or_pass, 1);
         assert_eq!(tel.daily_trends.last().unwrap().violated_or_error, 1);
+        assert_eq!(tel.daily_trends.last().unwrap().tokens_evaluated, 24000);
+        assert_eq!(tel.daily_trends.last().unwrap().diff_chunks_count, 6);
         assert_eq!(tel.recent_events[0].verdict, "VIOLATED");
+        assert_eq!(tel.recent_events[0].tokens_evaluated, 15600);
+        assert_eq!(tel.recent_events[0].diff_chunks_count, 4);
+        assert_eq!(tel.recent_events[0].api_calls_count, 3);
 
         let pdir = tmp.0.join("grok-proposals");
         std::fs::create_dir_all(&pdir).unwrap();
@@ -3754,12 +4304,35 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         )
         .unwrap();
         let mut lints = Vec::new();
-        collect_lint_items_in_dir(&repo_root, &lints_dir, "project", "sample-repo", &stats, &mut lints);
+        collect_lint_items_in_dir(&repo_root, &lints_dir, "project", "sample-repo", true, &stats, &mut lints);
         assert_eq!(lints.len(), 1);
         assert_eq!(lints[0].id, "CLIENT_SDK_ISOLATION");
+        assert!(!lints[0].deletable); // run_lints.py protected against whole-file delete
         assert_eq!(lints[0].eval_count, 1);
         assert_eq!(lints[0].hit_count, 1);
         assert_eq!(lints[0].last_hit_ts, now_secs - 50);
+
+        // Standalone .py and .mjs lints extract CHECK_ID/[PASS] and support single-check deletion
+        std::fs::write(
+            lints_dir.join("check_demo.py"),
+            "CHECK_ID = \"DEMO_RULE\"\ndef check_demo_impl():\n    \"\"\"演示单独检查\"\"\"\n    return []\n",
+        )
+        .unwrap();
+        std::fs::write(
+            lints_dir.join("check_js_guard.mjs"),
+            "/**\n * JS 静态防线检查 (JS_GUARD)\n */\nconsole.log('[PASS] JS_GUARD');\n",
+        )
+        .unwrap();
+        let mut lints2 = Vec::new();
+        collect_lint_items_in_dir(&repo_root, &lints_dir, "project", "sample-repo", true, &stats, &mut lints2);
+        let py_item = lints2.iter().find(|l| l.file_name == "check_demo.py").unwrap();
+        assert_eq!(py_item.id, "DEMO_RULE");
+        assert!(py_item.deletable);
+        let mjs_item = lints2.iter().find(|l| l.file_name == "check_js_guard.mjs").unwrap();
+        assert_eq!(mjs_item.id, "JS_GUARD");
+        assert!(mjs_item.deletable);
+        assert!(validate_repo_delete_target("scripts/lints/check_js_guard.mjs", &lints_dir.join("check_js_guard.mjs")).is_ok());
+        assert!(validate_repo_delete_target("scripts/lints/run_lints.py", &lints_dir.join("run_lints.py")).is_err());
     }
 
     #[test]

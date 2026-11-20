@@ -40,12 +40,15 @@ import {
   type ReviewVerdict,
   type SplitDiffRow,
 } from '../utils/gitDiff';
+import { copyTextSafe } from '../utils/clipboard';
+import { PortalHero } from './PortalHero';
 
 export interface CodeReviewProjectOption {
   code: string;
   physical_path: string;
   role: string;
   summary: string;
+  has_git?: boolean;
 }
 
 interface CodeReviewTabProps {
@@ -119,27 +122,6 @@ function loadStoredReview(repoCode: string): StoredReviewState {
     console.warn('[CodeReview] 读取本地批注缓存失败:', err);
     return empty;
   }
-}
-
-async function copyTextSafe(text: string): Promise<boolean> {
-  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-    const copied = await navigator.clipboard.writeText(text).then(
-      () => true,
-      () => false
-    );
-    if (copied) return true;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  textarea.style.top = '0';
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  const ok = document.execCommand('copy');
-  document.body.removeChild(textarea);
-  return ok;
 }
 
 function splitFilePath(relPath: string): { dir: string; base: string } {
@@ -866,6 +848,11 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
     window.localStorage.setItem('a8_code_review_view_mode', viewMode);
   }, [viewMode]);
 
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.code === selectedRepo) || null,
+    [projects, selectedRepo]
+  );
+
   useEffect(() => {
     if (projects.length === 0) return;
     if (!selectedRepo || !projects.some((p) => p.code === selectedRepo)) {
@@ -1224,6 +1211,44 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
 
   return (
     <div className="flex flex-col gap-3 max-w-[1440px] mx-auto">
+      <PortalHero
+        icon={<FileCode2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+        eyebrow="WORKTREE · CODE REVIEW"
+        title={selectedRepo ? `${selectedRepo} · 提交前本地代码审核台` : '提交前本地代码审核台'}
+        description="按文件审阅 Git 工作区与暂存区 Diff，支持行级批注、问题分类标记并一键组装 Markdown 审查反馈回传给 AI 闭环修复。"
+        badge={
+          selectedProject?.has_git === false ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[10px] font-medium">
+              <ShieldAlert className="w-3 h-3" />
+              未检测到 Git
+            </span>
+          ) : diffResult?.branch ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-surface-secondary text-foreground border border-zinc-200/80 dark:border-border/70 font-mono text-[10px]">
+              <GitBranch className="w-3 h-3 text-muted" />
+              {diffResult.branch}
+            </span>
+          ) : null
+        }
+        metrics={[
+          { label: '变更文件', value: files.length },
+          {
+            label: '审阅进度',
+            value: `${reviewedCount}/${files.length}`,
+            tone: files.length > 0 && reviewedCount === files.length ? 'emerald' : 'default',
+          },
+          {
+            label: '新增 / 删除',
+            value: diffResult ? `+${diffResult.total_additions} / -${diffResult.total_deletions}` : '0 / 0',
+            tone: 'blue',
+          },
+          {
+            label: '行内批注',
+            value: annotations.length,
+            tone: annotations.length > 0 ? 'amber' : 'default',
+          },
+        ]}
+      />
+
       {/* 1. 顶部工具条 */}
       <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex flex-wrap items-center gap-2 min-w-0">
@@ -1246,10 +1271,19 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
             >
               {projects.map((p) => (
                 <option key={p.code} value={p.code}>
-                  {p.code}
+                  {p.has_git === false ? `${p.code} (无 Git)` : p.code}
                 </option>
               ))}
             </select>
+            {selectedProject?.has_git === false && (
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[10.5px] font-medium whitespace-nowrap"
+                title="未检测到 .git 仓库：无法获取 Git Diff，文档门禁 Hook 对此项目静默跳过"
+              >
+                <ShieldAlert className="w-3 h-3" />
+                未检测到 .git
+              </span>
+            )}
           </div>
 
           {diffResult && (

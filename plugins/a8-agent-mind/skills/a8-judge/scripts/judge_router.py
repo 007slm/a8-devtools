@@ -16,7 +16,7 @@ ALL_CATEGORIES = {
     "lifecycle_and_evolution": "演化与生命周期契约",
     "topology_and_boundaries": "系统边界与拓扑隔离",
     "concurrency_and_performance": "并发安全与热路径性能",
-    "implementation_hygiene": "实现规范与单一路径",
+    "implementation_hygiene": "实现规范、直白命名与单一路径",
 }
 
 MAX_UNTRACKED_BYTES = 128 * 1024
@@ -680,7 +680,7 @@ def analyze_diff(
         activated_categories.add("topology_and_boundaries")
     if any(k in relevant_diff for k in ["synchronized", "Lock", "Mutex", "volatile", "Thread.sleep", "time.Sleep"]):
         activated_categories.add("concurrency_and_performance")
-    if any(k in relevant_diff for k in ["catch", "except", "System.out", "console.log", "print("]):
+    if any(k in relevant_diff for k in ["catch", "except", "System.out", "console.log", "print(", "enum "]):
         activated_categories.add("implementation_hygiene")
 
     # Match triggers defined on loaded *.decision.json specifications
@@ -749,8 +749,81 @@ def analyze_diff(
     return result
 
 
+_DOC_PATH_RE = re.compile(r"(docs[/\\][^\s`)\]<>\"]+?.md)", re.I)
+_SEP_CELL_RE = re.compile(r"^:?-{2,}:?$")
+_HIGHLIGHT_SECTION_RE = re.compile(
+    r"决策|权衡|契约|边界|核心架构|核心设计|总览|不变量|状态机|生命周期|非目标|适用边界"
+    r"|红线|原则|治理|漏斗|裁决|闭环|门禁|规范|隔离"
+    r"|Key Decisions|Architecture|Contract|Invariant|State Machine|Lifecycle|Boundary|Non-Goal|Reconsider|Overview",
+    re.I,
+)
+_VERSION_OR_NUM_RE = re.compile(r"^\d+(?:\.\d+)+$")
+
+
+def _infer_table_column_map(header_cells: list[str]) -> dict[str, int]:
+    """Infers semantic column indices from a Markdown table header row."""
+    col_map: dict[str, int] = {}
+    for idx, raw_h in enumerate(header_cells):
+        h = re.sub(r"[`*\s]", "", raw_h).lower()
+        if not h:
+            continue
+        if "type" not in col_map and any(k in h for k in ("类型", "type")):
+            col_map["type"] = idx
+        elif "status" not in col_map and any(k in h for k in ("状态", "status")):
+            col_map["status"] = idx
+        elif "assoc" not in col_map and any(k in h for k in ("源码", "关联", "code", "source", "scope")):
+            col_map["assoc"] = idx
+        elif "summary" not in col_map and any(k in h for k in ("用途", "说明", "摘要", "职责", "summary", "desc", "purpose")):
+            col_map["summary"] = idx
+        elif "module" not in col_map and any(k in h for k in ("模块", "域", "domain", "module")):
+            col_map["module"] = idx
+        elif "doc" not in col_map and any(k in h for k in ("文档", "路径", "doc", "path")):
+            col_map["doc"] = idx
+    return col_map
+
+
+def _extract_assoc_paths_from_cells(
+    cells: list[str],
+    skip_indices: set[int],
+    include_indices: set[int] | None = None,
+) -> list[str]:
+    """Extracts source/module path hints from table cells (preferring explicit assoc/module columns)."""
+    paths: list[str] = []
+    for idx, cell in enumerate(cells):
+        if idx in skip_indices:
+            continue
+        if include_indices is not None and idx not in include_indices:
+            continue
+        for m in re.findall(r"`([^`]+)`", cell):
+            cand = m.strip().rstrip("/").replace("\\", "/").lower()
+            if (
+                cand
+                and " " not in cand
+                and not _VERSION_OR_NUM_RE.match(cand)
+                and cand not in (".", "..")
+                and ("/" in cand or "." in cand)
+                and not cand.startswith(("http:", "https:", "file:", "docs/"))
+            ):
+                if cand not in paths:
+                    paths.append(cand)
+        for label, target in re.findall(r"\[([^\]]+)\]\(([^)]+)\)", cell):
+            for raw in (label, target):
+                cand = raw.strip().rstrip("/").replace("\\", "/").lower()
+                if (
+                    cand
+                    and " " not in cand
+                    and not _VERSION_OR_NUM_RE.match(cand)
+                    and cand not in (".", "..")
+                    and ("/" in cand or "." in cand)
+                    and not cand.startswith(("http:", "https:", "file:", "docs/"))
+                ):
+                    if cand not in paths:
+                        paths.append(cand)
+    return paths
+
+
 def _parse_agents_doc_registry(agents_md: Path) -> list[dict]:
-    """Extracts structured rows from AGENTS.md documentation registry tables."""
+    """Extracts structured rows from AGENTS.md documentation registry tables (4/5/6+ columns)."""
     if not agents_md.is_file():
         return []
     try:
@@ -759,29 +832,84 @@ def _parse_agents_doc_registry(agents_md: Path) -> list[dict]:
         return []
 
     rows: list[dict] = []
+    pending_header: list[str] | None = None
+    col_map: dict[str, int] | None = None
+
     for raw in lines:
         line = raw.strip()
-        if not line.startswith("|") or "docs/" not in line:
+        if not line.startswith("|"):
+            pending_header = None
+            col_map = None
             continue
+
         cells = [c.strip() for c in line.strip("|").split("|")]
-        if len(cells) < 5:
+        if not cells:
             continue
-        if cells[0].startswith("---") or cells[0].startswith(":---"):
+        if all((not c) or _SEP_CELL_RE.match(c) for c in cells):
+            if pending_header is not None:
+                col_map = _infer_table_column_map(pending_header)
             continue
-        path_match = re.search(r"(docs/[^\s`)\]]+?\.md)", cells[0], re.I)
-        if not path_match:
+
+        doc_cell_idx = -1
+        path_match = None
+        for idx, c in enumerate(cells):
+            m = _DOC_PATH_RE.search(c)
+            if m:
+                doc_cell_idx = idx
+                path_match = m
+                break
+
+        if path_match is None:
+            pending_header = cells
+            col_map = None
             continue
+
+        if len(cells) < 3:
+            continue
+
         rel_doc = path_match.group(1).replace("\\", "/")
-        doc_type = cells[1].strip("`* ")
-        module_name = cells[2].strip("`* ")
-        status = cells[3].strip("`* ")
-        summary = re.sub(r"`([^`]*)`", r"\1", cells[4]).strip()
-        assoc_col = cells[5] if len(cells) > 5 else ""
-        assoc_paths = [
-            m.strip().rstrip("/").replace("\\", "/").lower()
-            for m in re.findall(r"`([^`]+)`", assoc_col)
-            if "/" in m or "." in m
-        ]
+        use_map = col_map if (col_map and max(col_map.values(), default=-1) < len(cells)) else None
+
+        if use_map:
+            doc_type = cells[use_map["type"]].strip("`* ") if "type" in use_map else ""
+            module_name = cells[use_map["module"]].strip("`* ") if "module" in use_map else ""
+            status = cells[use_map["status"]].strip("`* ") if "status" in use_map else ""
+            summary_raw = cells[use_map["summary"]] if "summary" in use_map else cells[-1]
+            summary = re.sub(r"`([^`]*)`", r"\1", summary_raw).strip()
+        else:
+            # Fallback column mapping for 3, 4, 5, 6+ column tables without recognized headers
+            other_indices = [i for i in range(len(cells)) if i != doc_cell_idx]
+            if len(cells) == 3:
+                doc_type = cells[other_indices[0]].strip("`* ")
+                module_name = ""
+                status = ""
+                summary = re.sub(r"`([^`]*)`", r"\1", cells[other_indices[-1]]).strip()
+            elif len(cells) == 4:
+                doc_type = cells[other_indices[0]].strip("`* ")
+                module_name = cells[other_indices[1]].strip("`* ")
+                status = ""
+                summary = re.sub(r"`([^`]*)`", r"\1", cells[other_indices[-1]]).strip()
+            else:
+                doc_type = cells[other_indices[0]].strip("`* ")
+                module_name = cells[other_indices[1]].strip("`* ")
+                status = cells[other_indices[2]].strip("`* ")
+                summary = re.sub(r"`([^`]*)`", r"\1", cells[other_indices[-1]]).strip()
+
+        if not doc_type:
+            doc_type = "EVERGREEN" if "/evergreen/" in f"/{rel_doc.lower()}" else "SPEC"
+        if not status and doc_type.upper() == "EVERGREEN":
+            status = "ACTIVE"
+
+        if use_map and ("assoc" in use_map or "module" in use_map):
+            include_indices = {use_map[k] for k in ("assoc", "module") if k in use_map}
+            assoc_paths = _extract_assoc_paths_from_cells(cells, {doc_cell_idx}, include_indices=include_indices)
+        else:
+            skip_indices = {doc_cell_idx}
+            if use_map:
+                for k in ("type", "status", "summary"):
+                    if k in use_map:
+                        skip_indices.add(use_map[k])
+            assoc_paths = _extract_assoc_paths_from_cells(cells, skip_indices)
         rows.append(
             {
                 "rel_path": rel_doc,
@@ -796,7 +924,7 @@ def _parse_agents_doc_registry(agents_md: Path) -> list[dict]:
 
 
 def _extract_doc_highlights(doc_path: Path, max_chars: int = 420) -> str:
-    """Extracts concise key decision bullets/sentences from a SPEC/ADR markdown doc."""
+    """Extracts concise key decision/invariant/boundary bullets from an Evergreen/SPEC/ADR doc."""
     if not doc_path.is_file():
         return ""
     try:
@@ -808,6 +936,7 @@ def _extract_doc_highlights(doc_path: Path, max_chars: int = 420) -> str:
     preferred: list[str] = []
     fallback_lines: list[str] = []
     in_preferred_section = False
+    seen_sub_heading = False
     for raw in text.splitlines():
         s = raw.strip()
         if s.startswith("```"):
@@ -816,13 +945,16 @@ def _extract_doc_highlights(doc_path: Path, max_chars: int = 420) -> str:
         if in_code or not s or s == "---":
             continue
         if s.startswith("#"):
-            in_preferred_section = bool(
-                re.search(r"决策|权衡|契约|边界|核心架构|Key Decisions|Architecture|Contract", s, re.I)
-            )
+            if s.startswith("##"):
+                seen_sub_heading = True
+            in_preferred_section = bool(_HIGHLIGHT_SECTION_RE.search(s))
             continue
         if s.startswith("|"):
             continue
-        clean = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
+        if s.startswith(">") and not seen_sub_heading:
+            continue
+        clean = re.sub(r"^>\s*", "", s)
+        clean = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", clean)
         clean = re.sub(r"\s+", " ", clean).strip()
         if len(clean) < 12:
             continue
@@ -871,7 +1003,7 @@ def get_relevant_docs_for_files(
                 if cf == ap_clean or cf.startswith(ap_clean + "/") or ap_clean in cf:
                     score += 5
                     reasons.append(f"module:{ap_clean}")
-        if score == 0 and row["doc_type"].upper() in ("ADR", "SPEC") and idx < 2:
+        if score == 0 and row["doc_type"].upper() in ("ADR", "SPEC", "EVERGREEN", "GUIDE") and idx < 2:
             score = 1
             reasons.append("core_spec_baseline")
         if score > 0:
@@ -911,7 +1043,8 @@ def load_documented_decisions_context(
     total_len = 0
     for row in guide["relevant_docs"]:
         highlights = _extract_doc_highlights(ws / row["rel_path"], max_chars=360)
-        entry = f"- [{row['doc_type']}] {row['rel_path']} ({row['status']}): {row['summary']}"
+        status_part = f" ({row['status']})" if row.get("status") else ""
+        entry = f"- [{row['doc_type']}] {row['rel_path']}{status_part}: {row['summary']}"
         if highlights:
             entry += f" | Key points: {highlights}"
         if total_len + len(entry) + 1 > max_chars:

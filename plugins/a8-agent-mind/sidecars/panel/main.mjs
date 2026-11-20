@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, extname, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -123,6 +123,32 @@ function extractMdLinkPath(raw) {
   return stripMdCell(s);
 }
 
+function hasGitRepo(physicalPath) {
+  const trimmed = String(physicalPath || '').trim();
+  if (!trimmed || !existsSync(trimmed)) return false;
+  let cur = resolve(trimmed);
+  for (;;) {
+    const parent = dirname(cur);
+    if (parent === cur) return false; // 跳过驱动器根目录（如 C:\.git）
+    if (existsSync(join(cur, '.git'))) return true;
+    cur = parent;
+  }
+}
+
+function detectRepoReadme(physDir) {
+  const clean = String(physDir || '').trim();
+  if (!clean) return '';
+  for (const name of ['README.md', 'readme.md']) {
+    try {
+      const full = join(clean, name);
+      if (existsSync(full) && statSync(full).isFile()) return name;
+    } catch {
+      // ignore invalid path
+    }
+  }
+  return '';
+}
+
 function parseReposMd() {
   try {
     const content = readFileSync(join(pluginRoot, 'repos.md'), 'utf-8');
@@ -139,6 +165,8 @@ function parseReposMd() {
       const summary = cols[3];
       const detailRelPath = extractMdLinkPath(cols[4]);
       const detailExists = Boolean(detailRelPath && existsSync(join(pluginRoot, detailRelPath)));
+      const hasGit = hasGitRepo(physicalPath);
+      const readmeRelPath = detectRepoReadme(physicalPath);
       repos.push({
         code,
         physicalPath,
@@ -147,6 +175,8 @@ function parseReposMd() {
         summary,
         detail_rel_path: detailRelPath,
         detail_exists: detailExists,
+        has_git: hasGit,
+        readme_rel_path: readmeRelPath,
       });
     }
     return repos;
@@ -407,6 +437,9 @@ function parseHarnessTelemetryWithStats(threshold = 0.85) {
             lesson_choice: String(v?.lesson_choice || ''),
             evaluated_ids: normStrArray(v?.evaluated_ids),
             violated_ids: normStrArray(v?.violated_ids),
+            tokens_evaluated: Math.max(0, Math.floor(Number(v?.tokens_evaluated || 0))),
+            api_calls_count: Math.max(0, Math.floor(Number(v?.api_calls_count || 0))),
+            diff_chunks_count: Math.max(0, Math.floor(Number(v?.diff_chunks_count || 0))),
           });
         } catch {
           // skip malformed jsonl row
@@ -430,6 +463,12 @@ function parseHarnessTelemetryWithStats(threshold = 0.85) {
   let auto_lint_triggered = 0;
   let confSum = 0;
   let confCnt = 0;
+  let total_tokens_evaluated = 0;
+  let judgeTokenSum = 0;
+  let judgeTokenCnt = 0;
+  let max_judge_tokens = 0;
+  let total_diff_chunks = 0;
+  let total_api_calls = 0;
 
   for (const ev of events) {
     if (ev.source === 'stop_hook') stop_hook_events += 1;
@@ -439,6 +478,14 @@ function parseHarnessTelemetryWithStats(threshold = 0.85) {
     if (ev.confidence > 0) {
       confSum += ev.confidence;
       confCnt += 1;
+    }
+    total_tokens_evaluated += ev.tokens_evaluated;
+    total_diff_chunks += ev.diff_chunks_count;
+    total_api_calls += ev.api_calls_count;
+    if (ev.source === 'a8_judge' && ev.tokens_evaluated > 0) {
+      judgeTokenSum += ev.tokens_evaluated;
+      judgeTokenCnt += 1;
+      if (ev.tokens_evaluated > max_judge_tokens) max_judge_tokens = ev.tokens_evaluated;
     }
 
     const repoLower = ev.repo.toLowerCase();
@@ -465,7 +512,7 @@ function parseHarnessTelemetryWithStats(threshold = 0.85) {
     }
 
     if (ev.date) {
-      const cur = dayBuckets.get(ev.date) || [0, 0, 0];
+      const cur = dayBuckets.get(ev.date) || [0, 0, 0, 0, 0];
       const isErrOrViolated =
         ev.verdict === 'VIOLATED' ||
         ev.verdict === 'REQUIRES_APPROVAL' ||
@@ -475,6 +522,8 @@ function parseHarnessTelemetryWithStats(threshold = 0.85) {
       if (isErrOrViolated) cur[2] += 1;
       else if (ev.source === 'stop_hook' && ev.verdict === 'continue') cur[1] += 1;
       else cur[0] += 1;
+      cur[3] += ev.tokens_evaluated;
+      cur[4] += ev.diff_chunks_count;
       dayBuckets.set(ev.date, cur);
     }
   }
@@ -483,8 +532,16 @@ function parseHarnessTelemetryWithStats(threshold = 0.85) {
   const daily_trends = [];
   for (let offset = 13; offset >= 0; offset -= 1) {
     const ymd = toCnYmd(nowSecs - offset * 86400);
-    const [allow_or_pass, hook_woke, violated_or_error] = dayBuckets.get(ymd) || [0, 0, 0];
-    daily_trends.push({ date: ymd, allow_or_pass, hook_woke, violated_or_error });
+    const [allow_or_pass, hook_woke, violated_or_error, tokens_evaluated, diff_chunks_count] =
+      dayBuckets.get(ymd) || [0, 0, 0, 0, 0];
+    daily_trends.push({
+      date: ymd,
+      allow_or_pass,
+      hook_woke,
+      violated_or_error,
+      tokens_evaluated,
+      diff_chunks_count,
+    });
   }
 
   events.sort((a, b) => b.ts - a.ts);
@@ -500,6 +557,11 @@ function parseHarnessTelemetryWithStats(threshold = 0.85) {
       auto_lint_triggered,
       avg_confidence: confCnt > 0 ? Math.round((confSum / confCnt) * 10000) / 10000 : 0,
       threshold,
+      total_tokens_evaluated,
+      avg_judge_tokens: judgeTokenCnt > 0 ? Math.floor(judgeTokenSum / judgeTokenCnt) : 0,
+      max_judge_tokens,
+      total_diff_chunks,
+      total_api_calls,
       daily_trends,
       recent_events,
     },
@@ -798,9 +860,38 @@ function isAllowedRepoGovernanceRel(cleanRel, writable) {
   if (lower.startsWith('.agents/rules/') && lower.endsWith('.md')) return true;
   if (lower.startsWith('scripts/lints/')) {
     if (lower.endsWith('.decision.json')) return true;
-    if (!writable && lower.endsWith('.py')) return true;
+    if (!writable && (lower.endsWith('.py') || lower.endsWith('.mjs'))) return true;
+  }
+  if (!writable && (lower === 'readme.md' || lower.startsWith('docs/')) && lower.endsWith('.md')) {
+    return true;
   }
   return false;
+}
+
+function validateRepoDeleteTarget(cleanRel, target) {
+  const lower = cleanRel.toLowerCase();
+  if (lower === 'agents.md' || lower === 'gemini.md') {
+    throw new Error('仓库根地图 (AGENTS.md / GEMINI.md) 受保护，禁止删除');
+  }
+  if (lower.startsWith('.agents/rules/') && lower.endsWith('.md')) return;
+  if (lower.startsWith('scripts/lints/')) {
+    if (lower.endsWith('.decision.json')) return;
+    if (lower.endsWith('.py') || lower.endsWith('.mjs')) {
+      const fileName = basename(target).toLowerCase();
+      if (fileName === 'run_lints.py' || fileName === '__init__.py') {
+        throw new Error(`安全拦截：核心检查入口 ${fileName} 受保护，禁止删除整文件`);
+      }
+      if (lower.endsWith('.py') && existsSync(target) && statSync(target).isFile()) {
+        const raw = readFileSync(target, 'utf-8');
+        const checkCount = raw.split(/\r?\n/).filter((ln) => ln.trim().startsWith('def check_')).length;
+        if (checkCount > 1) {
+          throw new Error('安全拦截：该脚本包含多个检查函数，禁止整文件删除，请在源码中移除单个检查函数');
+        }
+      }
+      return;
+    }
+  }
+  throw new Error('仓库作用域仅允许删除 .agents/rules/*.md、scripts/lints/*.decision.json 或独立单检查脚本');
 }
 
 function isAllowedWritable(rel) {
@@ -844,6 +935,123 @@ function estimateMarkdownTokens(raw) {
   }
   const estimated_tokens = Math.ceil(ascii / 4 + nonAscii / 1.2);
   return { char_count: chars, estimated_tokens };
+}
+
+function parseRepoDocMeta(raw, fileName) {
+  const stem = fileName.replace(/\.md$/i, '');
+  let title = '';
+  let status = '';
+  const lines = String(raw || '').split(/\r?\n/).slice(0, 20);
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    const trimmed = lines[idx].trim().replace(/^\uFEFF/, '');
+    if (!title && trimmed.startsWith('#')) {
+      title = trimmed.replace(/^#+\s*/, '').trim();
+      continue;
+    }
+    const prefix = '- **状态**：';
+    if (trimmed.startsWith(prefix)) {
+      const val = trimmed.slice(prefix.length).trim();
+      if (val) status = val.slice(0, 48);
+    }
+    if (idx > 0 && title && status) break;
+  }
+  if (!title) title = stem;
+
+  let date = '';
+  let docType = '';
+  const m = stem.match(/^(\d{4})(\d{2})(\d{2})-([A-Z]+)?/);
+  if (m) {
+    date = `${m[1]}-${m[2]}-${m[3]}`;
+    if (m[4]) docType = m[4];
+  }
+  return { title, date, parsedType: docType, status };
+}
+
+function classifyRepoDocTier(relLower, date, status) {
+  const sub = relLower.startsWith('docs/') ? relLower.slice(5) : relLower;
+  if (sub.startsWith('evergreen/')) return { tier: 'evergreen', fallbackType: 'EVERGREEN' };
+  if (sub.startsWith('deferred/')) {
+    return { tier: 'deferred', fallbackType: 'DEFERRED' };
+  }
+  const isInactive = status.startsWith('已废弃') || status.startsWith('已暂缓');
+  if (sub.startsWith('records/') || Boolean(date)) {
+    return isInactive ? { tier: 'deferred', fallbackType: 'RECORD' } : { tier: 'record', fallbackType: 'RECORD' };
+  }
+  return { tier: 'other', fallbackType: 'DOC' };
+}
+
+function collectRepoDocsRecursive(repoRoot, dir, repoCode, out) {
+  let entries = [];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return;
+  }
+  for (const ent of entries) {
+    const full = join(dir, ent.name);
+    if (ent.isDirectory()) {
+      const lower = ent.name.toLowerCase();
+      if (lower === '.git' || lower === 'node_modules' || lower === 'target' || lower === '.cowdiff' || lower === '.cowlink') {
+        continue;
+      }
+      collectRepoDocsRecursive(repoRoot, full, repoCode, out);
+      continue;
+    }
+    if (!ent.isFile() || !ent.name.toLowerCase().endsWith('.md')) continue;
+    const relStr = relative(repoRoot, full).replace(/\\/g, '/');
+    const relLower = relStr.toLowerCase();
+    let st;
+    try {
+      st = statSync(full);
+    } catch {
+      continue;
+    }
+    let raw = '';
+    try {
+      raw = readFileSync(full, 'utf-8');
+    } catch {
+      raw = '';
+    }
+    const { title, date, parsedType, status } = parseRepoDocMeta(raw, ent.name);
+    const { tier, fallbackType } = classifyRepoDocTier(relLower, date, status);
+    const doc_type = tier === 'evergreen' || !parsedType ? fallbackType : parsedType;
+    const { estimated_tokens } = estimateMarkdownTokens(raw);
+    out.push({
+      repo: repoCode,
+      doc_tier: tier,
+      doc_type,
+      title,
+      date,
+      status,
+      rel_path: relStr,
+      abs_path: full,
+      size_bytes: st.size,
+      estimated_tokens,
+      modified_ts: Math.floor(st.mtimeMs / 1000),
+    });
+  }
+}
+
+function scanRepoDocs(repos) {
+  const docs = [];
+  for (const proj of repos) {
+    const phys = String(proj.physical_path || '').trim();
+    if (!phys) continue;
+    const docsDir = join(phys, 'docs');
+    if (existsSync(docsDir) && statSync(docsDir).isDirectory()) {
+      collectRepoDocsRecursive(phys, docsDir, proj.code, docs);
+    }
+  }
+  const tierRank = (t) => (t === 'evergreen' ? 0 : t === 'record' ? 1 : t === 'deferred' ? 2 : 3);
+  docs.sort(
+    (a, b) =>
+      a.repo.localeCompare(b.repo) ||
+      tierRank(a.doc_tier) - tierRank(b.doc_tier) ||
+      b.date.localeCompare(a.date) ||
+      b.modified_ts - a.modified_ts ||
+      a.rel_path.localeCompare(b.rel_path)
+  );
+  return docs;
 }
 
 function pushRuleEntryFromPath(baseRoot, full, scope, repo, editable, out) {
@@ -971,49 +1179,135 @@ function collectDecisionEntriesInDir(baseRoot, decisionDir, scope, repo, editabl
   }
 }
 
-function collectLintItemsInDir(baseRoot, lintsDir, scope, repo, stats, out) {
+function extractExplicitCheckId(raw) {
+  const m = String(raw || '').match(/^\s*(?:const\s+|let\s+|var\s+)?CHECK_ID\s*=\s*["']([A-Za-z0-9_.-]+)["']/m);
+  return m ? m[1].toUpperCase() : '';
+}
+
+function extractTupleCheckIdMap(raw) {
+  const map = new Map();
+  const re = /\(\s*["']([A-Za-z0-9_.-]+)["']\s*,\s*(check_[A-Za-z0-9_]+)\s*\)/g;
+  for (const match of String(raw || '').matchAll(re)) {
+    map.set(match[2], match[1].toUpperCase());
+  }
+  return map;
+}
+
+function extractPassTagId(raw) {
+  const m = String(raw || '').match(/\[PASS\]\s+([A-Z][A-Z0-9_.-]{2,})\b/);
+  return m ? m[1].toUpperCase() : '';
+}
+
+function extractMjsDescription(raw) {
+  const lines = String(raw || '').split(/\r?\n/).slice(0, 20);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#!') || trimmed === '/**' || trimmed === '/*' || trimmed === '*/' || trimmed === '*') {
+      continue;
+    }
+    const cleaned = trimmed
+      .replace(/^\/\*\s*/, '')
+      .replace(/^\/\/\s*/, '')
+      .replace(/^\*\s*/, '')
+      .replace(/\*\/$/, '')
+      .trim();
+    if (!cleaned || cleaned.startsWith('import ') || cleaned.startsWith('const ')) continue;
+    return cleaned;
+  }
+  return '仓库静态检查脚本 (Node.js)';
+}
+
+function collectLintItemsInDir(baseRoot, lintsDir, scope, repo, editable, stats, out) {
   if (!existsSync(lintsDir) || !statSync(lintsDir).isDirectory()) return;
+  const runnerPath = join(lintsDir, 'run_lints.py');
+  const runnerLower = existsSync(runnerPath) && statSync(runnerPath).isFile()
+    ? readFileSync(runnerPath, 'utf-8').toLowerCase()
+    : '';
   const files = readdirSync(lintsDir)
-    .filter((n) => n.toLowerCase().endsWith('.py') && n !== '__init__.py')
+    .filter((n) => {
+      const lower = n.toLowerCase();
+      if (lower === '__init__.py') return false;
+      if (lower.endsWith('.py')) return true;
+      if (lower.endsWith('.mjs')) {
+        return !runnerLower || !runnerLower.includes(lower);
+      }
+      return false;
+    })
     .sort();
   for (const fileName of files) {
     const full = join(lintsDir, fileName);
     if (!statSync(full).isFile()) continue;
     const rel = full.slice(baseRoot.length + 1).replace(/\\/g, '/');
-    const lines = readFileSync(full, 'utf-8').split(/\r?\n/);
-    let found = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
-      if (!trimmed.startsWith('def check_')) continue;
-      const tail = trimmed.slice('def check_'.length).split('(')[0].trim();
-      if (!tail) continue;
-      let desc = '';
-      const nextLine = (lines[i + 1] || '').trim();
-      if (nextLine.startsWith('"""')) {
-        desc = nextLine.replace(/^"""/, '').replace(/"""$/, '').trim();
-      }
-      const id = tail.toUpperCase();
+    const raw = readFileSync(full, 'utf-8');
+    const explicitId = extractExplicitCheckId(raw);
+    const isRunner = fileName.toLowerCase() === 'run_lints.py';
+
+    if (fileName.toLowerCase().endsWith('.mjs')) {
+      const stem = fileName.replace(/\.mjs$/i, '');
+      const id = explicitId || extractPassTagId(raw) || stem.toUpperCase();
       const hitStat = lookupCheckerStat(stats, 'lint', scope, repo, id);
       out.push({
         id,
-        name: `check_${tail}`,
+        name: fileName,
         scope,
         repo,
         file_name: fileName,
         rel_path: rel,
         abs_path: full,
-        description: desc || `静态检查函数 check_${tail}`,
-        line_number: i + 1,
+        description: extractMjsDescription(raw),
+        line_number: 1,
+        editable,
+        deletable: editable && !isRunner,
         eval_count: hitStat.eval_count,
         hit_count: hitStat.hit_count,
         last_eval_ts: hitStat.last_eval_ts,
         last_hit_ts: hitStat.last_hit_ts,
       });
-      found += 1;
+      continue;
     }
-    if (found === 0) {
+
+    const lines = raw.split(/\r?\n/);
+    const tupleMap = extractTupleCheckIdMap(raw);
+    const checkDefs = [];
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      if (!trimmed.startsWith('def check_')) continue;
+      const tail = trimmed.slice('def check_'.length).split('(')[0].trim();
+      if (tail) checkDefs.push({ lineIdx: i, tail });
+    }
+
+    if (checkDefs.length > 0) {
+      const fileDeletable = editable && !isRunner && checkDefs.length <= 1;
+      for (const { lineIdx, tail } of checkDefs) {
+        let desc = '';
+        const nextLine = (lines[lineIdx + 1] || '').trim();
+        if (nextLine.startsWith('"""')) {
+          desc = nextLine.replace(/^"""/, '').replace(/"""$/, '').trim();
+        }
+        const fnName = `check_${tail}`;
+        const id = tupleMap.get(fnName) || (checkDefs.length === 1 ? explicitId : '') || tail.toUpperCase();
+        const hitStat = lookupCheckerStat(stats, 'lint', scope, repo, id);
+        out.push({
+          id,
+          name: fnName,
+          scope,
+          repo,
+          file_name: fileName,
+          rel_path: rel,
+          abs_path: full,
+          description: desc || `静态检查函数 check_${tail}`,
+          line_number: lineIdx + 1,
+          editable,
+          deletable: fileDeletable,
+          eval_count: hitStat.eval_count,
+          hit_count: hitStat.hit_count,
+          last_eval_ts: hitStat.last_eval_ts,
+          last_hit_ts: hitStat.last_hit_ts,
+        });
+      }
+    } else {
       const stem = fileName.replace(/\.py$/i, '');
-      const id = stem.toUpperCase();
+      const id = explicitId || extractPassTagId(raw) || stem.toUpperCase();
       const hitStat = lookupCheckerStat(stats, 'lint', scope, repo, id);
       out.push({
         id,
@@ -1025,6 +1319,8 @@ function collectLintItemsInDir(baseRoot, lintsDir, scope, repo, stats, out) {
         abs_path: full,
         description: '仓库静态检查脚本',
         line_number: 1,
+        editable,
+        deletable: editable && !isRunner,
         eval_count: hitStat.eval_count,
         hit_count: hitStat.hit_count,
         last_eval_ts: hitStat.last_eval_ts,
@@ -1041,7 +1337,7 @@ function scanGovernanceAssets(repos, stats) {
 
   collectRuleEntriesInDir(pluginRoot, join(pluginRoot, 'rules'), 'global', 'a8-agent-mind', true, governance_rules);
   collectDecisionEntriesInDir(pluginRoot, join(pluginRoot, 'decisions'), 'global', 'a8-agent-mind', true, stats, decisions);
-  collectLintItemsInDir(pluginRoot, join(pluginRoot, 'lints'), 'global', 'a8-agent-mind', stats, lints);
+  collectLintItemsInDir(pluginRoot, join(pluginRoot, 'lints'), 'global', 'a8-agent-mind', true, stats, lints);
 
   for (const proj of repos) {
     const phys = String(proj.physical_path || '').trim();
@@ -1052,7 +1348,7 @@ function scanGovernanceAssets(repos, stats) {
       pushRuleEntryFromPath(phys, join(phys, mapName), 'project', proj.code, editable, governance_rules);
     }
     collectDecisionEntriesInDir(phys, join(phys, 'scripts', 'lints'), 'project', proj.code, editable, stats, decisions);
-    collectLintItemsInDir(phys, join(phys, 'scripts', 'lints'), 'project', proj.code, stats, lints);
+    collectLintItemsInDir(phys, join(phys, 'scripts', 'lints'), 'project', proj.code, editable, stats, lints);
   }
 
   governance_rules.sort((a, b) => {
@@ -1094,6 +1390,7 @@ function buildOverviewDto() {
   const threshold = Number(configJson?.confidence_threshold ?? 0.85) || 0.85;
   const { telemetry, stats } = parseHarnessTelemetryWithStats(threshold);
   const { governance_rules, decisions, lints, governance_summary } = scanGovernanceAssets(repos, stats);
+  const repo_docs = scanRepoDocs(repos);
   const files = [];
   for (const [dirName, cat] of [
     ['rules', 'rules'],
@@ -1144,6 +1441,7 @@ function buildOverviewDto() {
     proposals_dir: proposalsDir || '',
     files,
     governance_rules,
+    repo_docs,
     decisions,
     lints,
     governance_summary,
@@ -1647,12 +1945,7 @@ const server = createServer(async (req, res) => {
       const { cleanRel, target } = resolveSafePathInRoot(targetRoot, body.rel_path);
       const lower = cleanRel.toLowerCase();
       if (isRepo) {
-        if (lower === 'agents.md' || lower === 'gemini.md') {
-          throw new Error('仓库根地图 (AGENTS.md / GEMINI.md) 受保护，禁止删除');
-        }
-        if (!isAllowedRepoGovernanceRel(cleanRel, true)) {
-          throw new Error('仓库作用域仅允许删除 .agents/rules/*.md 或 scripts/lints/*.decision.json');
-        }
+        validateRepoDeleteTarget(cleanRel, target);
         if (!existsSync(target) || !statSync(target).isFile()) {
           throw new Error(`文件不存在: ${cleanRel}`);
         }

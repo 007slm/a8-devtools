@@ -1,16 +1,16 @@
 # a8-agent-mind 设计与演进架构规范 (design.md)
 
-> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、显式状态机、标准工程目录与双层仓库地图随会话自动治理 (`mind-rules.md`)”**、**“回合结束自动反射钩子 (`hooks.json` + `stop_reflect.py`，`AUTO_LINT` 自动写 `scripts/lints/` + `ASK_USER_UI` 区分通用与项目作用域)”**、**“AI 自主择机红线终审 (`a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，构建职责正交、自动闭环的智能体心智中枢。
+> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、显式状态机、标准工程目录与双层仓库地图随会话自动治理 (`mind-rules.md`)”**、**“后置高维品味轻提示与文档门禁钩子 (`hooks.json` + `stop_reflect.py`，屏蔽未收口回合、废除静默写盘，仅以 `ASK_USER_UI` 与 `DOCS_MAINTENANCE` 提示)”**、**“AI 自主择机红线终审 (`a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，构建职责正交、自动闭环的智能体心智中枢。
 
 ---
 
 ## 1. 核心设计哲学 (Core Architectural Principles)
 
 ### 1.1 智能体心智的三层模型 (The Tripartite Mind)
-1. **理智与戒律 (Super-ego / AI 自主择机终审)**：遵循全局 `mind-rules.md`，当代码改动触及 4 大正交架构红线时，由 AI 在交卷前**自主择机调用一次 `a8-judge`**（无需人工触发，亦支持 `/a8-judge` 显式发起），通过语法元特征自适应路由与 Google Gemini Decisions API 零输出 Token 概率校准裁决执行冷酷审查；
-2. **认知与记忆仓库地图 (Memory / 随会话自动维护)**：由全局 `mind-rules.md` 强制驱动，在每次开发任务收尾前**随会话自动生成 `docs/` 长期文档并同步双层仓库地图**（单仓“仓库大地图 `AGENTS.md`” + 全局“仓库地图 `a8-agent-mind/repos.md`”），并贯彻两级检索法则，无需人工调用 Skill；
-3. **自动反射与人工精炼 (Reflection / `Stop` Hook + `/a8-improve`)**：
-   - 回合结束时，由插件根目录 `hooks.json` 触发 `hooks/stop_reflect.py`（L0 零开销预筛 + Google Decisions API 三维判定）：明确的机械违规走 `AUTO_LINT` 自动写入目标仓库 `scripts/lints/` 并立即自检通过；边界模糊或设计品味走 `ASK_USER_UI` 弹出 Generative UI 卡片，明确区分**通用全局规范 (`mind-rules.md`)** 与 **本项目红线 (`.agents/rules/redline.md`)** 交用户拍板；
+1. **理智与戒律 (Super-ego / 高风险自主终审)**：遵循全局 `mind-rules.md`，仅当代码改动触及跨模块边界、状态机/并发重构或兼容层清理等高架构风险时，由 AI 在交卷前**自主择机调用一次 `a8-judge`**（常规局部功能、UI 与微调免检且禁止同任务频繁增量复核，亦支持 `/a8-judge` 显式发起），通过语法元特征自适应路由与 Google Gemini Decisions API 零输出 Token 概率校准裁决执行冷酷审查；
+2. **认知与记忆仓库地图 (Memory / 双层文档与隔离整合)**：由全局 `mind-rules.md` 强制驱动，确立 **常青文档 (`docs/evergreen/*.md`) + 按日期工作记录 (`docs/records/YYYYMMDD-*.md`) + 暂缓区 (`docs/deferred/`)** 双层分域体系；开发期仅写轻量工作记录（简单修复靠单测与注释），同步更新根目录 `AGENTS.md`（仅挂常青索引表）与 `repos.md`，由隔离上下文子代理 **`docs-curator`** 对照真实源码整合更新常青文档并挂载渐进式披露回链；
+3. **后置品味轻提示与双层文档同步 (`Stop` Hook + `docs-curator` + `/a8-improve`)**：
+   - 回合结束时，由插件根目录 `hooks.json` 触发 `hooks/stop_reflect.py`（严格屏蔽 `/plan`、待审批计划、问答中断及运行中后台任务/子代理，并用 `last_taste_step` 单调水位跨轮保留未消费纠偏信号）：彻底废除未经确认静默写盘，仅在真实仓内非文档代码落地结算且注入既有规则摘要后经 Decisions API 双门禁确认为全新高维工程品味（非具体 Bug Fix 细节）时，才弹出 `ASK_USER_UI` 确认卡交用户拍板；同时执行 `DOCS_MAINTENANCE` 与 `evergreen_sync_needed` 裁决——写完工作记录（`docs/records/`）不会绕过常青同步，常规局部修改免阻断，需同步常青真源时指令主会话调用 `docs-curator` 并以时序/指纹防止无限重入；
    - 当用户需要跨会话深度复盘、全面审视经验，或清理无效/冲突/重复规则时，主动调用 `/a8-improve` 一体化完成沉淀与精简。
 4. **独立界面验证 (`/a8-ui-verify`)**：标准化目标仓库 `scripts/tests/ui-verify/` 脚本目录与 `logs/ui-verify/` 产物目录，由用户按需触发全链路浏览器验证。
 
@@ -27,7 +27,7 @@
 ### 1.4 语法元特征与 `docs/` 指针路由 + 全自由度终审流水线
 既做到“只评相关维度、节省上下文”，又做到“结合设计文档避免误报、全仓核验准确定音”：
 1. **步骤一：变更指针与设计文档路由 (`judge_router.py`)**：
-   - 提取当前 Git Diff 语法元特征与真正触及的正交关注点 (`activated_categories`)，并解析目标仓库 `AGENTS.md` 提取命中文档清单 (`relevant_docs`)；
+   - 提取当前 Git Diff 语法元特征与真正触及的正交关注点 (`activated_categories`)，并兼容解析目标仓库 `AGENTS.md`（支持 4/5/6+ 列常青/SPEC 索引表，含表头自动识别与全列源码路径提取）输出命中文档清单 (`relevant_docs`)；
 2. **步骤二：Decisions API 先验初筛 + `arch-judge` 全自由终审**：
    - 将 Git Diff 仅作为变更指针：`decisions_client.py` 为每个分片前置 `Documented Design Context` 向 `gemini-decision-1` 发起先验初筛，最终由具备完整工具权限的 `arch-judge` 结合项目 `AGENTS.md`、`docs/`、源码全貌与调用链作出终审；
    - **Antigravity `agents/*.md` 工具下发契约**：插件定义独立执行权子代理时，frontmatter 必须同时显式声明 `subagent: true`、`mainAgent: false` 与单行 `tools: [read_file, edit_file, write_file, run_command, manage_task, search_web]`；缺少 `mainAgent: false` 或使用多行 YAML `tools:` 列表会被运行时静默降级为无 `run_command` 的 9 工具只读集。
@@ -43,10 +43,10 @@
                                          │
         ┌────────────────────────────────┼────────────────────────────────┐
         ▼                                ▼                                ▼
-【演化与生命周期契约】          【系统边界与拓扑隔离】          【并发安全与热路径性能】          【实现规范与单一路径】
-• `@Deprecated`, `obsolete`    • `import`, `package`          • `synchronized`, `Lock`       • `catch`, `throw`
+【演化与生命周期契约】          【系统边界与拓扑隔离】          【并发安全与热路径性能】          【实现规范、直白命名与单一路径】
+• `@Deprecated`, `obsolete`    • `import`, `package`          • `synchronized`, `Lock`       • `catch`, `throw`, `enum `
 • 公开 API 签名增删            • 构建依赖 (`pom/json/mod`)    • `Thread`, `volatile`         • `System.out`, 日志门面
-• 零擅自向后兼容死代码         • 底层模块零重型侵入          • 高频热路径无排他锁           • 错误物理第一现场保留
+• 零擅自向后兼容死代码         • 底层模块零重型侵入          • 高频热路径无排他锁           • 直白简单命名、平实文档与异常保留
 ```
 
 - **路由脚本**：`skills/a8-judge/scripts/judge_router.py`（纯 Python 标库，无任何三方依赖，无任何特定项目硬编码，执行耗时 < 50ms）。
@@ -60,8 +60,8 @@
 ```text
                     【日常编码 / 任务收尾】
                               │
-   自动履行 (mind-rules.md)   ├──► 1. 自动生成 docs/ 长期文档 & 同步仓库大地图 AGENTS.md / repos.md
-                              │       （无需手动调用 Skill，随会话交卷自动完成）
+   自动履行 (mind-rules.md)   ├──► 1. 重大变更先写轻量工作记录 (docs/records/)；简单修 Bug 靠单测/注释
+                              │       （Stop Hook 判定 evergreen_sync_needed 时唤起 docs-curator 同步常青文档与 AGENTS.md）
                               │
                               ▼    2. 触及 4 大红线的代码变更交卷前，AI 自主择机调用一次：
         ┌────────────────────────────────────────────┐
@@ -79,9 +79,9 @@
                               │ (回合结束自动触发 / 用户按需主动发起)
                               ▼
         ┌────────────────────────────────────────────┐
-        │ Stop Hook (自动反射)+/a8-improve (全面体检) │
-        │  • AUTO_LINT ：直写 scripts/lints/ 并跑通   │  <-- 0 报错且 0 误报才保留
-        │  • ASK_USER_UI：弹窗选 通用规则/项目红线/Lint │  <-- 严格隔离通用 vs 项目作用域
+        │ Stop Hook (后置轻提示)+/a8-improve (全面体检) │
+        │  • 时机门禁：未收口回合静默，水位跨轮延后评估 │  <-- 严禁/plan与跑测期抢跑或静默写盘
+        │  • ASK_USER_UI：高维品味双门禁弹出审批卡片    │  <-- 排除BugFix详情与既有规则已覆盖项
         │  • /a8-improve：沉淀新规+清理无效与重复规则 │  <-- 主会话零子代理，确认后落盘
         └────────────────────────────────────────────┘
                               │ (用户显式发起界面验收)
@@ -93,7 +93,7 @@
 ```
 
 #### 3.1 `Stop` Hook 自动反射与 `a8-improve` 一体化机制
-- **职责纯洁性**：自动反射钩子专注于低成本捕捉明确纠偏与机械缺陷；`/a8-improve` 统一负责深度五维纠偏沉淀**以及**规则库中的无效/冲突/重复逻辑清理（不再单独拆分清理命令），仓内 `docs/` 与双层仓库地图始终随会话自动更新；
+- **职责纯洁性**：`Stop` Hook 已彻底废除静默写盘且严禁在 `/plan` 评估期或具体 Bug Fix 细节上抢跑提示，仅作为代码落地后的客观文档门禁（`DOCS_MAINTENANCE`）与高维品味轻提示（`ASK_USER_UI`）；`/a8-improve` 统一负责深度五维纠偏沉淀**以及**规则库中的无效/冲突/重复逻辑清理（不再单独拆分清理命令），仓内 `docs/` 与双层仓库地图始终随会话自动更新；
 - **五维纠偏信号捕获**：除显式批评外，强制回溯 `Silent edit`（外部静默修改）、`Repeated nudge`（连续微调终值）、`Revert / Rejection` 与 `Confirmed non-obvious choice`；
 - **防膨胀过滤漏斗 (`Rewrite Stricter`)**：命中既有规则覆盖范围且仍犯错时，判定为旧规失效并收紧重写（补齐数值/API/绝对词），严禁堆砌第 2 条重复规则；可精确机械拦截项一律优先写入目标仓库 `scripts/lints/`；
 - **真实 Why 与审计锚点**：严禁编造原因（AI 推演必标 `*inferred*:` 并列入 `Needs your answer`），规则下方保留 `<!-- YYYY-MM-DD: "用户原话" -->` 时间戳注释；
@@ -129,7 +129,7 @@ E:\a8-devtools\plugins\a8-agent-mind/
 ├── hooks.json                      # 生命周期钩子配置 (Stop -> stop_reflect.py)
 ├── config.json                     # Google Decisions API (gemini-decision-1) 配置
 ├── hooks/
-│   └── stop_reflect.py             # L0预筛 + Decisions API 三层漏斗 (AUTO_LINT / AUTO_DECISION / ASK_USER_UI)
+│   └── stop_reflect.py             # 未收口回合屏蔽 + 高维品味双门禁 (ASK_USER_UI / DOCS_MAINTENANCE)
 ├── decisions/                      # 全局结构化 Decision 规范 (*.decision.json，无损分批送审)
 ├── design.md                       # 【核心设计与架构规范】（本文件）
 ├── readme.md                       # 跨仓库安装与使用指南
@@ -141,7 +141,8 @@ E:\a8-devtools\plugins\a8-agent-mind/
 │                                   # 静态资源免 Origin 拦截；/api/ 控制面兼容 Origin: null 与 plugin:// 等本地协议（宿主机完整工作台由 :18765 托管）
 ├── reviews/                        # DSH 每次架构终审按项目子目录隔离归档 (reviews/<repo>/*.md，已纳入 .gitignore)
 ├── agents/
-│   ├── arch-judge.md               # 专职语义裁决 Subagent（只读权限沙箱）
+│   ├── arch-judge.md               # 专职语义裁决 Subagent（全工具自主调查）
+│   ├── docs-curator.md             # 专职双层文档整合与常青真源核验 Subagent
 │   └── dsh-reviewer.md             # 插件自完整 DSH 资深架构终审 Subagent
 ├── skills/
 │   ├── a8-judge/                   # 【能力1：AI 自主择机架构红线裁决 (a8-judge / /a8-judge)】

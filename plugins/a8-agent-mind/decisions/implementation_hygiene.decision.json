@@ -1,6 +1,6 @@
 {
   "id": "implementation_hygiene",
-  "name": "实现规范与单一路径",
+  "name": "实现规范、直白命名与单一路径",
   "category": "implementation_hygiene",
   "enabled": true,
   "triggers": [
@@ -8,16 +8,21 @@
     "except",
     "System.out",
     "console.log",
-    "print("
+    "print(",
+    "enum ",
+    "Phase",
+    "State",
+    "Status",
+    "docs/"
   ],
   "file_patterns": [],
   "question": {
     "type": "choice",
-    "instructions": "Evaluate Implementation Hygiene: single implementation path for core capabilities, propagate unhandleable exceptions cleanly without useless try/catch wrappers, never swallow exceptions in catch blocks with only a log/print statement, and use standardized logging.",
+    "instructions": "Evaluate Implementation Hygiene, Official-Primitive Simplicity, and Plain Readability: (1) Single implementation path & official primitives first — when the standard library, database, or mature dependency already provides an official native capability, use it directly instead of inventing complex custom application-layer mechanisms or dual-track converters; (2) Exception crime-scene preservation — propagate unhandleable exceptions cleanly without useless try/catch wrappers or log/print-only swallowed catch blocks; (3) Plain Naming & Accessible Docs — for self-designed code and documentation where the developer owns the naming and wording choice (as opposed to referencing external interfaces, protocols, schemas, or third-party APIs not named by this codebase), state enums and identifiers must use simple, everyday English words familiar to mainland Chinese developers (e.g., INIT, SNAPSHOT, SYNCING, READY, DIRTY, ERROR, STOPPED rather than obscure words like STALE or cryptic abbreviations), and docs/comments must explain conditions and handling in plain, direct language without esoteric jargon.",
     "criteria": {
-      "passed": "Single implementation path for core domain logic; exceptions propagate cleanly when unhandleable or retain original cause with explicit recovery/failure handling; no useless try/catch or log-only swallowed catch blocks.",
-      "violated": "Dual-track parser or converter introduced, redundant try/catch that merely catches and rethrows or swallows exceptions with only a log/null return, or broken logging standards."
+      "passed": "Uses a single clean path and official native primitives where available; preserves exception causes without useless or swallowed catch blocks; self-owned state enums, identifiers, and docs use simple everyday words and plain direct explanations so code and docs remain easy to read and maintain.",
+      "violated": "Reinvents complex custom mechanisms when an official native primitive suffices, introduces dual-track logic, swallows exceptions in catch blocks with only logs/nulls, OR chooses obscure words (such as STALE), cryptic abbreviations, or esoteric jargon in self-designed state enums, identifiers, or docs."
     }
   },
-  "why": "核心正交架构红线：同一核心领域能力全工程保持唯一实现路径；不加无用 try/catch，严禁 catch 后仅打日志就把异常吃掉掩盖第一现场。"
+  "why": "核心正交架构红线：优先采用官方标准原语并保持唯一路径、保留异常第一现场；自研代码状态命名与设计文档必须用大陆程序员常用的简单直白单词与大白话表达，确保易读易维护。"
 }

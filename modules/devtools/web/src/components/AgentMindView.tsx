@@ -1,39 +1,43 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Button,
-  InputGroup,
-  Label,
-  TextField,
-} from '@heroui/react';
+import { Button } from '@heroui/react';
 import type { EChartsCoreOption } from 'echarts/core';
 import {
   Activity,
   ArrowLeft,
+  BookOpen,
   Check,
   ChevronDown,
   Clock,
   Copy,
   Edit3,
-  ExternalLink,
   Eye,
+  FileCheck2,
   FolderGit2,
   FolderOpen,
   History,
   Lock,
-  Network,
   Play,
   Plus,
-  RotateCw,
   Save,
   Search,
   Send,
   ShieldAlert,
+  ShieldCheck,
   Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
 import { EChartBox } from './EChartBox';
 import { MermaidBlock } from './MermaidBlock';
+import { PortalHero } from './PortalHero';
+import { ProposalDetailAnnotator } from './ProposalDetailAnnotator';
+import { RepoDocsBrowser, type RepoDocEntry } from './RepoDocsBrowser';
+import {
+  buildProposalAdvancePrompt,
+  loadProposalReview,
+  saveProposalReview,
+  type ProposalAnnotation,
+} from '../utils/proposalAnnotations';
 
 export interface AgentMindFileEntry {
   rel_path: string;
@@ -96,6 +100,8 @@ export interface LintItem {
   abs_path: string;
   description: string;
   line_number: number;
+  editable?: boolean;
+  deletable?: boolean;
   eval_count?: number;
   hit_count?: number;
   last_eval_ts?: number;
@@ -124,6 +130,8 @@ export interface HostProjectCard {
   summary: string;
   detail_rel_path: string;
   detail_exists: boolean;
+  has_git?: boolean;
+  readme_rel_path?: string;
 }
 
 export interface DshReviewRecord {
@@ -175,6 +183,9 @@ export interface HarnessMetricEvent {
   lesson_choice: string;
   evaluated_ids?: string[];
   violated_ids?: string[];
+  tokens_evaluated?: number;
+  api_calls_count?: number;
+  diff_chunks_count?: number;
 }
 
 export interface DailyHarnessTrend {
@@ -182,6 +193,8 @@ export interface DailyHarnessTrend {
   allow_or_pass: number;
   hook_woke: number;
   violated_or_error: number;
+  tokens_evaluated?: number;
+  diff_chunks_count?: number;
 }
 
 export interface HarnessTelemetry {
@@ -193,6 +206,11 @@ export interface HarnessTelemetry {
   auto_lint_triggered: number;
   avg_confidence: number;
   threshold: number;
+  total_tokens_evaluated?: number;
+  avg_judge_tokens?: number;
+  max_judge_tokens?: number;
+  total_diff_chunks?: number;
+  total_api_calls?: number;
   daily_trends: DailyHarnessTrend[];
   recent_events: HarnessMetricEvent[];
 }
@@ -225,16 +243,27 @@ export interface AgentMindOverview {
   telemetry?: HarnessTelemetry;
   files: AgentMindFileEntry[];
   governance_rules?: GovernanceRuleEntry[];
+  repo_docs?: RepoDocEntry[];
   decisions?: DecisionEntry[];
   lints?: LintItem[];
   governance_summary?: GovernanceSummary;
 }
+
+export type AgentMindViewId =
+  | 'rules'
+  | 'reviews'
+  | 'proposals'
+  | 'observability'
+  | 'projects';
 
 interface AgentMindViewProps {
   callTauri: <T = any>(command: string, args?: Record<string, any>) => Promise<T | null>;
   pushToast: (title: string, tone?: 'success' | 'info' | 'danger') => void;
   isStandalone?: boolean;
   theme?: 'light' | 'dark';
+  activeView?: AgentMindViewId;
+  onNavigateView?: (view: AgentMindViewId) => void;
+  refreshTick?: number;
 }
 
 const PROTECTED_FILES = new Set([
@@ -248,6 +277,32 @@ const PROTECTED_FILES = new Set([
   'decisions/concurrency_and_performance.decision.json',
   'decisions/implementation_hygiene.decision.json',
 ]);
+
+const DECISION_CLEANUP_MIN_EVAL = 20;
+const LINT_CLEANUP_MIN_EVAL = 30;
+
+function isProtectedDecisionItem(d: DecisionEntry): boolean {
+  return d.scope === 'global' && PROTECTED_FILES.has((d.rel_path || '').toLowerCase());
+}
+
+function isDecisionCleanupCandidate(d: DecisionEntry): boolean {
+  return Boolean(
+    d.enabled &&
+      !d.parse_error &&
+      d.editable &&
+      !isProtectedDecisionItem(d) &&
+      (d.eval_count ?? 0) >= DECISION_CLEANUP_MIN_EVAL &&
+      (d.hit_count ?? 0) === 0
+  );
+}
+
+function isLintCleanupCandidate(l: LintItem): boolean {
+  return Boolean(
+    (l.editable ?? true) &&
+      (l.eval_count ?? 0) >= LINT_CLEANUP_MIN_EVAL &&
+      (l.hit_count ?? 0) === 0
+  );
+}
 
 const DECISION_CATEGORY_LABELS: Record<string, string> = {
   lifecycle_and_evolution: '演化与生命周期',
@@ -437,15 +492,80 @@ function formatReviewTime(iso: string, modifiedTs: number): string {
   return '-';
 }
 
+function highlightPlainText(
+  plain: string,
+  annotations?: ProposalAnnotation[]
+): React.ReactNode {
+  if (!plain || !annotations || annotations.length === 0) return plain;
+
+  let bestIdx = -1;
+  let bestLen = 0;
+  let bestAnn: ProposalAnnotation | null = null;
+  for (const ann of annotations) {
+    const q = ann.quote.trim();
+    if (q.length < 2) continue;
+    const idx = plain.indexOf(q);
+    if (idx >= 0 && (bestIdx < 0 || idx < bestIdx || (idx === bestIdx && q.length > bestLen))) {
+      bestIdx = idx;
+      bestLen = q.length;
+      bestAnn = ann;
+    }
+  }
+  if (bestIdx < 0 || !bestAnn) return plain;
+
+  const before = plain.slice(0, bestIdx);
+  const hit = plain.slice(bestIdx, bestIdx + bestLen);
+  const after = plain.slice(bestIdx + bestLen);
+
+  const styledHit =
+    bestAnn.type === 'delete' ? (
+      <del
+        key={bestAnn.id}
+        title={bestAnn.comment || '已标记划删 / 不采纳'}
+        className="bg-rose-500/15 text-rose-700 dark:text-rose-300 line-through px-0.5 rounded"
+      >
+        {hit}
+      </del>
+    ) : bestAnn.type === 'replace' ? (
+      <mark
+        key={bestAnn.id}
+        title={`建议替换为：${bestAnn.replacement}`}
+        className="bg-sky-500/15 text-foreground border-b border-sky-500 px-0.5 rounded"
+      >
+        {hit}
+      </mark>
+    ) : (
+      <mark
+        key={bestAnn.id}
+        title={bestAnn.comment}
+        className="bg-amber-500/18 text-foreground border-b border-amber-500 px-0.5 rounded"
+      >
+        {hit}
+      </mark>
+    );
+
+  return (
+    <>
+      {before}
+      {styledHit}
+      {after ? highlightPlainText(after, annotations) : null}
+    </>
+  );
+}
+
 /** 行内 Markdown 轻量安全渲染（零 dangerouslySetInnerHTML） */
-function renderInlineMd(text: string): React.ReactNode[] {
+function renderInlineMd(
+  text: string,
+  annotations?: ProposalAnnotation[],
+  onOpenDocLink?: (href: string) => void
+): React.ReactNode[] {
   const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g);
   return tokens.map((part, idx) => {
     if (!part) return null;
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
       return (
         <strong key={idx} className="font-semibold text-foreground">
-          {part.slice(2, -2)}
+          {highlightPlainText(part.slice(2, -2), annotations)}
         </strong>
       );
     }
@@ -461,6 +581,20 @@ function renderInlineMd(text: string): React.ReactNode[] {
     }
     const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (linkMatch) {
+      const href = linkMatch[2].trim();
+      if (onOpenDocLink && href && !/^(https?:|mailto:|#)/i.test(href)) {
+        return (
+          <button
+            key={idx}
+            type="button"
+            title={`在文档浏览器中打开: ${href}`}
+            onClick={() => onOpenDocLink(href)}
+            className="underline decoration-emerald-500/50 dark:decoration-emerald-400/50 underline-offset-2 text-foreground hover:text-emerald-700 dark:hover:text-emerald-300 font-medium cursor-pointer transition-colors"
+          >
+            {linkMatch[1]}
+          </button>
+        );
+      }
       return (
         <span
           key={idx}
@@ -471,7 +605,7 @@ function renderInlineMd(text: string): React.ReactNode[] {
         </span>
       );
     }
-    return <Fragment key={idx}>{part}</Fragment>;
+    return <Fragment key={idx}>{highlightPlainText(part, annotations)}</Fragment>;
   });
 }
 
@@ -485,7 +619,15 @@ function parseTableCells(line: string): string[] {
 }
 
 /** 轻量安全 Markdown 阅读排版组件 */
-function MarkdownArticle({ content }: { content: string }) {
+function MarkdownArticle({
+  content,
+  annotations,
+  onOpenDocLink,
+}: {
+  content: string;
+  annotations?: ProposalAnnotation[];
+  onOpenDocLink?: (href: string) => void;
+}) {
   const lines = content.replace(/\r\n/g, '\n').split('\n');
   const blocks: React.ReactNode[] = [];
   let i = 0;
@@ -548,8 +690,8 @@ function MarkdownArticle({ content }: { content: string }) {
           ? 'text-[13.5px] font-semibold text-foreground mt-5 mb-2 pb-1.5 border-b border-zinc-200/75 dark:border-border/60'
           : 'text-[12.5px] font-semibold text-foreground mt-3.5 mb-1.5';
       blocks.push(
-        <div key={`h-${i}`} className={cls}>
-          {renderInlineMd(text)}
+        <div key={`h-${i}`} data-section-heading={text} className={cls}>
+          {renderInlineMd(text, annotations, onOpenDocLink)}
         </div>
       );
       i += 1;
@@ -571,7 +713,7 @@ function MarkdownArticle({ content }: { content: string }) {
               <tr className="bg-zinc-50/90 dark:bg-surface-secondary/50 border-b border-zinc-200/80 dark:border-border/70">
                 {header.map((cell, ci) => (
                   <th key={ci} className="px-3 py-2 font-semibold text-foreground whitespace-nowrap">
-                    {renderInlineMd(cell)}
+                    {renderInlineMd(cell, annotations, onOpenDocLink)}
                   </th>
                 ))}
               </tr>
@@ -581,7 +723,7 @@ function MarkdownArticle({ content }: { content: string }) {
                 <tr key={ri} className="hover:bg-zinc-50/60 dark:hover:bg-surface-secondary/30">
                   {header.map((_, ci) => (
                     <td key={ci} className="px-3 py-2 text-zinc-700 dark:text-zinc-300 align-top">
-                      {renderInlineMd(row[ci] || '')}
+                      {renderInlineMd(row[ci] || '', annotations, onOpenDocLink)}
                     </td>
                   ))}
                 </tr>
@@ -605,7 +747,7 @@ function MarkdownArticle({ content }: { content: string }) {
           className="my-2 pl-3 border-l-2 border-zinc-300 dark:border-zinc-600 text-[12px] leading-relaxed text-muted"
         >
           {quoteLines.map((ql, qi) => (
-            <p key={qi}>{renderInlineMd(ql)}</p>
+            <p key={qi}>{renderInlineMd(ql, annotations, onOpenDocLink)}</p>
           ))}
         </blockquote>
       );
@@ -652,7 +794,7 @@ function MarkdownArticle({ content }: { content: string }) {
                 ) : (
                   <span className="text-muted font-mono text-[11px] shrink-0 mt-[1px]">{it.marker}</span>
                 )}
-                <span className="min-w-0 flex-1">{renderInlineMd(bodyText)}</span>
+                <span className="min-w-0 flex-1">{renderInlineMd(bodyText, annotations, onOpenDocLink)}</span>
               </li>
             );
           })}
@@ -680,7 +822,7 @@ function MarkdownArticle({ content }: { content: string }) {
     }
     blocks.push(
       <p key={`p-${i}`} className="my-1.5 text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300">
-        {renderInlineMd(paraLines.join(' '))}
+        {renderInlineMd(paraLines.join(' '), annotations, onOpenDocLink)}
       </p>
     );
   }
@@ -777,18 +919,29 @@ export function AgentMindView({
   pushToast,
   isStandalone = false,
   theme = 'light',
+  activeView,
+  onNavigateView,
+  refreshTick = 0,
 }: AgentMindViewProps) {
   const isDark = theme === 'dark';
   // 默认首页即“规则维护”，直接加载并呈现主规则 rules/mind-rules.md
-  const [subTab, setSubTab] = useState<
-    'rules' | 'reviews' | 'proposals' | 'observability' | 'projects' | 'config'
-  >('rules');
+  const [internalSubTab, setInternalSubTab] = useState<AgentMindViewId>('rules');
+  const subTab = activeView ?? internalSubTab;
+  const setSubTab = useCallback(
+    (next: AgentMindViewId) => {
+      if (onNavigateView) {
+        onNavigateView(next);
+      } else {
+        setInternalSubTab(next);
+      }
+    },
+    [onNavigateView]
+  );
   const [overview, setOverview] = useState<AgentMindOverview | null>(null);
-  const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Tab 1 (默认首页): 三层治理资产 (Markdown 规则 / Decision 决策 / Lint 检查)
-  const [govLayer, setGovLayer] = useState<'rules' | 'decisions' | 'lints'>('rules');
+  // Tab 1 (默认首页): 四层治理资产 (规则与地图 / 治理文档 / Decision 决策 / Lint 检查)
+  const [govLayer, setGovLayer] = useState<'rules' | 'docs' | 'decisions' | 'lints'>('rules');
   const [govScope, setGovScope] = useState<string>('global');
   const [scopePickerOpen, setScopePickerOpen] = useState<boolean>(false);
   const [scopeSearch, setScopeSearch] = useState<string>('');
@@ -832,6 +985,7 @@ export function AgentMindView({
   const [lintSourceText, setLintSourceText] = useState('');
   const [loadingLintSource, setLoadingLintSource] = useState(false);
   const [runningLintRepo, setRunningLintRepo] = useState<string | null>(null);
+  const [confirmDeleteLint, setConfirmDeleteLint] = useState(false);
 
   // Tab 2: Reviews list vs inline detail view
   const [reviewFilterVerdict, setReviewFilterVerdict] = useState<'ALL' | 'PASSED' | 'VIOLATED' | 'REQUIRES_APPROVAL'>('ALL');
@@ -859,9 +1013,12 @@ export function AgentMindView({
   const [confirmDeleteProposal, setConfirmDeleteProposal] = useState(false);
   const [advancingProposalName, setAdvancingProposalName] = useState<string | null>(null);
   const [updatingProposalStatus, setUpdatingProposalStatus] = useState<string | null>(null);
+  const [proposalAnnotations, setProposalAnnotations] = useState<ProposalAnnotation[]>([]);
+  const [proposalOverallNote, setProposalOverallNote] = useState('');
 
   // Tab 4: Harness observability filter
   const [telemetryFilter, setTelemetryFilter] = useState<'ALL' | 'stop_hook' | 'a8_judge' | 'repo_lint' | 'alerts'>('ALL');
+  const [checkerPerfFilter, setCheckerPerfFilter] = useState<'ALL' | 'CLEANUP' | 'HIT'>('ALL');
 
   // Tab 3: Projects grid vs inline detail/editor view
   const [activeProjectItem, setActiveProjectItem] = useState<
@@ -874,14 +1031,11 @@ export function AgentMindView({
   const [loadingProjectDoc, setLoadingProjectDoc] = useState(false);
   const [savingProjectDoc, setSavingProjectDoc] = useState(false);
   const [pendingProjectExit, setPendingProjectExit] = useState(false);
-
-  // Tab 4: Config form state
-  const [cfgModel, setCfgModel] = useState('');
-  const [cfgEndpoint, setCfgEndpoint] = useState('');
-  const [cfgTimeout, setCfgTimeout] = useState('15');
-  const [cfgThreshold, setCfgThreshold] = useState('0.85');
-  const [cfgApiKey, setCfgApiKey] = useState('');
-  const [savingConfig, setSavingConfig] = useState(false);
+  const [projectDetailTab, setProjectDetailTab] = useState<'home' | 'evergreen' | 'docs'>('home');
+  const [repoReadmeContent, setRepoReadmeContent] = useState('');
+  const [loadingRepoReadme, setLoadingRepoReadme] = useState(false);
+  const [repoReadmeError, setRepoReadmeError] = useState<string | null>(null);
+  const [repoMapDrawerOpen, setRepoMapDrawerOpen] = useState(false);
 
   const isRuleDirty = editorContent !== savedContent;
   const isDecisionDirty = decisionEditorContent !== decisionSavedContent;
@@ -889,29 +1043,29 @@ export function AgentMindView({
 
   const loadOverview = useCallback(
     async (silent = true) => {
-      setLoading(true);
       setLoadError(null);
       try {
         const res = await callTauri<AgentMindOverview>('get_agent_mind_overview');
         if (res) {
           setOverview(res);
-          setCfgModel(res.config_json?.model || '');
-          setCfgEndpoint(res.config_json?.endpoint || '');
-          setCfgTimeout(String(res.config_json?.timeout_seconds ?? 15));
-          setCfgThreshold(String(res.config_json?.confidence_threshold ?? 0.85));
-          setCfgApiKey(res.config_json?.api_key || '');
           if (!silent) pushToast('已刷新面板数据', 'success');
         }
       } catch (e: any) {
         const msg = String(e || '加载失败');
         setLoadError(msg);
         if (!silent) pushToast(`加载失败: ${msg}`, 'danger');
-      } finally {
-        setLoading(false);
       }
     },
     [callTauri, pushToast]
   );
+
+  const lastRefreshTickRef = useRef(0);
+  useEffect(() => {
+    if (refreshTick > 0 && refreshTick !== lastRefreshTickRef.current) {
+      lastRefreshTickRef.current = refreshTick;
+      void loadOverview(false);
+    }
+  }, [refreshTick, loadOverview]);
 
   // ---------------- Rule Actions (默认直显主规则) ----------------
   const loadRuleFileDirect = useCallback(
@@ -1177,6 +1331,7 @@ export function AgentMindView({
   const loadLintSourceDirect = useCallback(
     async (lint: LintItem) => {
       setSelectedLint(lint);
+      setConfirmDeleteLint(false);
       setLoadingLintSource(true);
       try {
         const txt = await callTauri<string>('read_agent_mind_file', {
@@ -1292,8 +1447,26 @@ export function AgentMindView({
   const openProjectCard = useCallback(
     async (proj: HostProjectCard) => {
       setActiveProjectItem({ kind: 'repo', project: proj });
+      setProjectDetailTab('home');
+      setRepoMapDrawerOpen(false);
       setProjectMode('preview');
       setPendingProjectExit(false);
+
+      setRepoReadmeContent('');
+      setRepoReadmeError(null);
+      if (proj.readme_rel_path) {
+        setLoadingRepoReadme(true);
+        callTauri<string>('read_agent_mind_file', {
+          relPath: proj.readme_rel_path,
+          repoCode: proj.code,
+        })
+          .then((txt) => setRepoReadmeContent(txt ?? ''))
+          .catch((e: any) => setRepoReadmeError(`读取 ${proj.readme_rel_path} 失败: ${e}`))
+          .finally(() => setLoadingRepoReadme(false));
+      } else {
+        setLoadingRepoReadme(false);
+      }
+
       if (!proj.detail_exists || !proj.detail_rel_path) {
         setProjectDocPath('');
         setProjectDocContent('');
@@ -1343,6 +1516,7 @@ export function AgentMindView({
       setPendingProjectExit(true);
       return;
     }
+    setRepoMapDrawerOpen(false);
     setActiveProjectItem(null);
     setProjectDocPath('');
   };
@@ -1423,7 +1597,7 @@ export function AgentMindView({
 
   const executeDeleteFile = async (
     relPath: string,
-    source: 'review' | 'rule' | 'decision',
+    source: 'review' | 'rule' | 'decision' | 'lint',
     repoCode = ''
   ) => {
     setDeletingFile(true);
@@ -1445,6 +1619,11 @@ export function AgentMindView({
         setDecisionEditorContent('');
         setDecisionSavedContent('');
         await loadOverview(true);
+      } else if (source === 'lint') {
+        setConfirmDeleteLint(false);
+        setSelectedLint(null);
+        setLintSourceText('');
+        await loadOverview(true);
       } else {
         setConfirmDeleteRule(false);
         await loadOverview(true);
@@ -1454,34 +1633,6 @@ export function AgentMindView({
       pushToast(`删除失败: ${e}`, 'danger');
     } finally {
       setDeletingFile(false);
-    }
-  };
-
-  const handleSaveConfig = async () => {
-    const endpointTrimmed = cfgEndpoint.trim();
-    if (!endpointTrimmed || (!endpointTrimmed.startsWith('http://') && !endpointTrimmed.startsWith('https://'))) {
-      pushToast('Endpoint 不能为空且必须以 http:// 或 https:// 开头', 'danger');
-      return;
-    }
-    setSavingConfig(true);
-    try {
-      const payload = {
-        api_key: cfgApiKey.trim() || '${GEMINI_API_KEY}',
-        model: cfgModel.trim() || 'gemini-decision-1',
-        endpoint: endpointTrimmed,
-        timeout_seconds: Math.max(1, parseInt(cfgTimeout, 10) || 15),
-        confidence_threshold: Math.min(1, Math.max(0.1, parseFloat(cfgThreshold) || 0.85)),
-      };
-      await callTauri('save_agent_mind_file', {
-        relPath: 'config.json',
-        content: `${JSON.stringify(payload, null, 2)}\n`,
-      });
-      pushToast('决策参数已保存', 'success');
-      await loadOverview(true);
-    } catch (e: any) {
-      pushToast(`保存 config.json 失败: ${e}`, 'danger');
-    } finally {
-      setSavingConfig(false);
     }
   };
 
@@ -1524,6 +1675,7 @@ export function AgentMindView({
         role: string;
         summary: string;
         physicalPath: string;
+        hasGit?: boolean;
         rulesCount: number;
         decisionsCount: number;
         lintsCount: number;
@@ -1537,6 +1689,7 @@ export function AgentMindView({
       role: 'global',
       summary: '跨仓库生效的通用工程规范与架构红线决策',
       physicalPath: overview?.plugin_root || 'a8-agent-mind',
+      hasGit: true,
       rulesCount: 0,
       decisionsCount: 0,
       lintsCount: 0,
@@ -1550,6 +1703,7 @@ export function AgentMindView({
         role: p.role,
         summary: p.summary,
         physicalPath: p.physical_path,
+        hasGit: p.has_git,
         rulesCount: 0,
         decisionsCount: 0,
         lintsCount: 0,
@@ -1652,6 +1806,54 @@ export function AgentMindView({
     if (govScope === 'global') return allLints.filter((l) => l.scope === 'global');
     return allLints.filter((l) => l.scope === 'project' && l.repo === govScope);
   }, [allLints, govScope]);
+
+  const allRepoDocs = useMemo<RepoDocEntry[]>(() => overview?.repo_docs || [], [overview]);
+
+  const scopedRepoDocs = useMemo(() => {
+    if (govScope === 'global') return allRepoDocs;
+    return allRepoDocs.filter((d) => d.repo === govScope);
+  }, [allRepoDocs, govScope]);
+
+  const scopedDocTierCounts = useMemo(() => {
+    let evergreen = 0;
+    let record = 0;
+    let deferred = 0;
+    for (const d of scopedRepoDocs) {
+      if (d.doc_tier === 'evergreen') evergreen += 1;
+      else if (d.doc_tier === 'record') record += 1;
+      else if (d.doc_tier === 'deferred') deferred += 1;
+    }
+    return { evergreen, record, deferred, total: scopedRepoDocs.length };
+  }, [scopedRepoDocs]);
+
+  const repoDocsStatsByRepo = useMemo(() => {
+    const byRepo = new Map<
+      string,
+      { evergreen: number; record: number; deferred: number; total: number }
+    >();
+    let evergreenTotal = 0;
+    let recordTotal = 0;
+    let deferredTotal = 0;
+    for (const d of allRepoDocs) {
+      let cur = byRepo.get(d.repo);
+      if (!cur) {
+        cur = { evergreen: 0, record: 0, deferred: 0, total: 0 };
+        byRepo.set(d.repo, cur);
+      }
+      cur.total += 1;
+      if (d.doc_tier === 'evergreen') {
+        cur.evergreen += 1;
+        evergreenTotal += 1;
+      } else if (d.doc_tier === 'record') {
+        cur.record += 1;
+        recordTotal += 1;
+      } else if (d.doc_tier === 'deferred') {
+        cur.deferred += 1;
+        deferredTotal += 1;
+      }
+    }
+    return { byRepo, evergreenTotal, recordTotal, deferredTotal };
+  }, [allRepoDocs]);
 
   const activeRuleEntry = useMemo(
     () =>
@@ -1812,6 +2014,9 @@ export function AgentMindView({
       setOpenedProposal(p);
       setProposalSourceMode('rendered');
       setConfirmDeleteProposal(false);
+      const savedReview = loadProposalReview(p.file_name);
+      setProposalAnnotations(savedReview.annotations);
+      setProposalOverallNote(savedReview.overallNote);
       setLoadingProposalBody(true);
       try {
         const raw = await callTauri<string>('read_grok_proposal', { fileName: p.file_name });
@@ -1823,6 +2028,32 @@ export function AgentMindView({
       }
     },
     [callTauri]
+  );
+
+  const handleUpdateProposalAnnotations = useCallback(
+    (next: ProposalAnnotation[]) => {
+      setProposalAnnotations(next);
+      if (openedProposal) {
+        saveProposalReview(openedProposal.file_name, {
+          annotations: next,
+          overallNote: proposalOverallNote,
+        });
+      }
+    },
+    [openedProposal, proposalOverallNote]
+  );
+
+  const handleUpdateProposalOverallNote = useCallback(
+    (next: string) => {
+      setProposalOverallNote(next);
+      if (openedProposal) {
+        saveProposalReview(openedProposal.file_name, {
+          annotations: proposalAnnotations,
+          overallNote: next,
+        });
+      }
+    },
+    [openedProposal, proposalAnnotations]
   );
 
   const executeDeleteProposal = async (fileName: string) => {
@@ -1871,8 +2102,18 @@ export function AgentMindView({
   const handleAdvanceInAntigravity = useCallback(
     async (p: GrokProposalRecord) => {
       setAdvancingProposalName(p.file_name);
+      const isCurrentlyOpened = openedProposal?.file_name === p.file_name;
+      const reviewState = isCurrentlyOpened
+        ? { annotations: proposalAnnotations, overallNote: proposalOverallNote }
+        : loadProposalReview(p.file_name);
       const convTitle = `推进 Grok 提案 (${p.date || p.id})`;
-      const convPrompt = `请阅读提案文件 \`${p.abs_path}\` 以及 \`AGENTS.md\`，并与我确认后开始推进实施其中的工作流提升提案（优先推进 P0/P1 项，先给出本次拟落地的改造计划）。`;
+      const convPrompt = buildProposalAdvancePrompt({
+        title: p.title,
+        fileName: p.file_name,
+        absPath: p.abs_path,
+        annotations: reviewState.annotations,
+        overallNote: reviewState.overallNote,
+      });
       try {
         const sidecarBridge = (window as any).sidecar;
         const hasHostBridge =
@@ -1939,7 +2180,7 @@ export function AgentMindView({
         setAdvancingProposalName(null);
       }
     },
-    [callTauri, isStandalone, loadOverview, pushToast]
+    [callTauri, isStandalone, loadOverview, openedProposal, proposalAnnotations, proposalOverallNote, pushToast]
   );
 
   const allProposals = useMemo(() => overview?.proposals || [], [overview]);
@@ -2066,6 +2307,103 @@ export function AgentMindView({
     });
   }, [telemetry, telemetryFilter]);
 
+  const cleanupSummary = useMemo(() => {
+    const decisions = overview?.decisions || [];
+    const lints = overview?.lints || [];
+    const items: Array<{
+      kind: 'decision' | 'lint';
+      key: string;
+      scopeCode: string;
+      scopeLabel: string;
+      name: string;
+      id: string;
+      evalCount: number;
+      deletable: boolean;
+      decision?: DecisionEntry;
+      lint?: LintItem;
+    }> = [];
+    const byScope = new Map<string, number>();
+
+    for (const d of decisions) {
+      if (!isDecisionCleanupCandidate(d)) continue;
+      const scopeCode = d.scope === 'global' ? 'global' : d.repo;
+      items.push({
+        kind: 'decision',
+        key: `decision::${d.scope}::${d.repo}::${d.rel_path}`,
+        scopeCode,
+        scopeLabel: d.scope === 'global' ? '全局' : d.repo,
+        name: d.name,
+        id: d.id,
+        evalCount: d.eval_count ?? 0,
+        deletable: true,
+        decision: d,
+      });
+      byScope.set(scopeCode, (byScope.get(scopeCode) || 0) + 1);
+    }
+
+    for (const l of lints) {
+      if (!isLintCleanupCandidate(l)) continue;
+      const scopeCode = l.scope === 'global' ? 'global' : l.repo;
+      items.push({
+        kind: 'lint',
+        key: `lint::${l.repo}::${l.rel_path}::${l.id}`,
+        scopeCode,
+        scopeLabel: l.scope === 'global' ? '全局' : l.repo,
+        name: l.name,
+        id: l.id,
+        evalCount: l.eval_count ?? 0,
+        deletable: l.deletable ?? false,
+        lint: l,
+      });
+      byScope.set(scopeCode, (byScope.get(scopeCode) || 0) + 1);
+    }
+
+    items.sort(
+      (a, b) =>
+        (a.kind === 'decision' ? 0 : 1) - (b.kind === 'decision' ? 0 : 1) ||
+        b.evalCount - a.evalCount ||
+        a.id.localeCompare(b.id)
+    );
+
+    const scopedDecisions = items.filter((i) => i.scopeCode === govScope && i.kind === 'decision').length;
+    const scopedLints = items.filter((i) => i.scopeCode === govScope && i.kind === 'lint').length;
+
+    return {
+      items,
+      byScope,
+      scopedDecisions,
+      scopedLints,
+      scopedTotal: scopedDecisions + scopedLints,
+    };
+  }, [overview?.decisions, overview?.lints, govScope]);
+
+  const navigateToChecker = useCallback(
+    (target: { decision?: DecisionEntry; lint?: LintItem }) => {
+      if (isRuleDirty || isDecisionDirty) {
+        pushToast('当前规则或 Decision 有未保存修改，请先保存后再跳转', 'danger');
+        return;
+      }
+      if (target.decision) {
+        const d = target.decision;
+        const scopeCode = d.scope === 'global' ? 'global' : d.repo;
+        const repoCode = d.scope === 'global' ? '' : d.repo;
+        setSubTab('rules');
+        setGovScope(scopeCode);
+        setGovLayer('decisions');
+        setDecisionSearch('');
+        void loadDecisionDirect(d.rel_path, repoCode);
+      } else if (target.lint) {
+        const l = target.lint;
+        const scopeCode = l.scope === 'global' ? 'global' : l.repo;
+        setSubTab('rules');
+        setGovScope(scopeCode);
+        setGovLayer('lints');
+        void loadLintSourceDirect(l);
+      }
+    },
+    [isRuleDirty, isDecisionDirty, pushToast, loadDecisionDirect, loadLintSourceDirect]
+  );
+
   const checkerPerfRows = useMemo(() => {
     const decisions = overview?.decisions || [];
     const lints = overview?.lints || [];
@@ -2081,6 +2419,7 @@ export function AgentMindView({
         eval_count: d.eval_count ?? 0,
         hit_count: d.hit_count ?? 0,
         last_eval_ts: d.last_eval_ts ?? 0,
+        cleanupCandidate: isDecisionCleanupCandidate(d),
         decision: d,
         lint: undefined as LintItem | undefined,
       })),
@@ -2095,6 +2434,7 @@ export function AgentMindView({
         eval_count: l.eval_count ?? 0,
         hit_count: l.hit_count ?? 0,
         last_eval_ts: l.last_eval_ts ?? 0,
+        cleanupCandidate: isLintCleanupCandidate(l),
         decision: undefined as DecisionEntry | undefined,
         lint: l,
       })),
@@ -2107,6 +2447,16 @@ export function AgentMindView({
         a.id.localeCompare(b.id)
     );
   }, [overview?.decisions, overview?.lints]);
+
+  const checkerPerfFilteredRows = useMemo(() => {
+    if (checkerPerfFilter === 'CLEANUP') {
+      return checkerPerfRows.filter((r) => r.cleanupCandidate);
+    }
+    if (checkerPerfFilter === 'HIT') {
+      return checkerPerfRows.filter((r) => r.hit_count > 0);
+    }
+    return checkerPerfRows;
+  }, [checkerPerfRows, checkerPerfFilter]);
 
   const chartTooltipBase = useMemo(
     () => ({
@@ -2318,6 +2668,81 @@ export function AgentMindView({
     };
   }, [telemetryComputed, isDark, chartTooltipBase]);
 
+  const formatCompactTokens = (value: number | undefined): string => {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n) || n <= 0) return '0';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(Math.round(n));
+  };
+
+  const tokenLoadOption = useMemo<EChartsCoreOption>(() => {
+    const trends = telemetry?.daily_trends || [];
+    const axisColor = isDark ? '#A1A1AA' : '#71717A';
+    const splitColor = isDark ? 'rgba(63,63,70,0.45)' : 'rgba(228,228,231,0.7)';
+    return {
+      tooltip: {
+        ...chartTooltipBase,
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+      },
+      legend: {
+        top: 0,
+        right: 4,
+        itemWidth: 8,
+        itemHeight: 8,
+        icon: 'roundRect',
+        textStyle: { color: axisColor, fontSize: 10 },
+      },
+      grid: { top: 28, right: 34, bottom: 20, left: 42 },
+      xAxis: {
+        type: 'category',
+        data: trends.map((d) => d.date.slice(5)),
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { color: axisColor, fontSize: 10, interval: 1 },
+      },
+      yAxis: [
+        {
+          type: 'value',
+          minInterval: 1,
+          splitLine: { lineStyle: { color: splitColor, type: 'dashed' } },
+          axisLabel: {
+            color: axisColor,
+            fontSize: 10,
+            formatter: (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : `${v}`),
+          },
+        },
+        {
+          type: 'value',
+          minInterval: 1,
+          splitLine: { show: false },
+          axisLabel: { color: axisColor, fontSize: 10 },
+        },
+      ],
+      series: [
+        {
+          name: '评估 Token',
+          type: 'bar',
+          yAxisIndex: 0,
+          barMaxWidth: 16,
+          itemStyle: { color: '#3B82F6', borderRadius: [3, 3, 0, 0] },
+          data: trends.map((d) => d.tokens_evaluated || 0),
+        },
+        {
+          name: 'Diff 分块数',
+          type: 'line',
+          yAxisIndex: 1,
+          smooth: true,
+          symbolSize: 5,
+          lineStyle: { color: '#F59E0B', width: 2 },
+          itemStyle: { color: '#F59E0B' },
+          data: trends.map((d) => d.diff_chunks_count || 0),
+        },
+      ],
+    };
+  }, [telemetry?.daily_trends, isDark, chartTooltipBase]);
+
   const trendBarOption = useMemo<EChartsCoreOption>(() => {
     const trends = telemetry?.daily_trends || [];
     const axisColor = isDark ? '#A1A1AA' : '#71717A';
@@ -2499,18 +2924,6 @@ export function AgentMindView({
   );
 
   const govSummary = overview?.governance_summary;
-  const totalGovernanceCount = govSummary
-    ? govSummary.rule_files_count + govSummary.decisions_count + govSummary.lints_count
-    : governanceRules.length + allDecisions.length + allLints.length;
-
-  const navItems: { id: typeof subTab; label: string; count?: number }[] = [
-    { id: 'rules', label: '规则规范', count: totalGovernanceCount || undefined },
-    { id: 'reviews', label: '终审记录', count: allReviews.length || undefined },
-    { id: 'proposals', label: '每日提案', count: allProposals.length || undefined },
-    { id: 'observability', label: '可观测', count: telemetry?.total_events || undefined },
-    { id: 'projects', label: '仓库地图', count: overview?.projects.length || undefined },
-    { id: 'config', label: '模型参数' },
-  ];
 
   useEffect(() => {
     setIsNewRuleOpen(false);
@@ -2519,106 +2932,6 @@ export function AgentMindView({
 
   return (
     <div className="flex flex-col gap-3 max-w-[1440px] mx-auto">
-      {/* ================================================================= */}
-      {/* 1. 与映射页同体系的顶部摘要卡：标题 + 根路径 + 一级下划线导航 */}
-      {/* ================================================================= */}
-      <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 px-4 pt-3 pb-0 flex flex-col gap-2.5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-7 h-7 rounded-lg bg-zinc-100 dark:bg-surface-secondary border border-zinc-200/80 dark:border-border/70 flex items-center justify-center shrink-0">
-              <Network className="w-3.5 h-3.5 text-foreground" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h1 className="text-[13.5px] font-semibold tracking-tight text-foreground">
-                  A8 心智治理面板
-                </h1>
-                <span className="inline-flex items-center gap-1 text-[10px] text-muted">
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      overview?.mount_alive ? 'bg-emerald-500' : 'bg-zinc-400'
-                    }`}
-                  />
-                  <span>{overview?.mount_alive ? 'CowFS 实时透视' : '源码直连'}</span>
-                </span>
-              </div>
-              {overview?.plugin_root && (
-                <div className="text-[10.5px] font-mono text-muted truncate mt-0.5">
-                  {overview.plugin_root}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5 shrink-0">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 px-2.5 rounded-lg text-[11px]"
-              onPress={() => callTauri('open_agent_mind_dir')}
-            >
-              <FolderOpen className="w-3.5 h-3.5" />
-              <span>打开目录</span>
-            </Button>
-            {!isStandalone && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 px-2.5 rounded-lg text-[11px]"
-                onPress={async () => {
-                  try {
-                    const url = await callTauri<string>('launch_agent_mind_sidecar');
-                    pushToast(`独立看板已就绪: ${url || '127.0.0.1:18765'}`, 'success');
-                    await loadOverview(true);
-                  } catch (e: any) {
-                    pushToast(`启动独立看板失败: ${e}`, 'danger');
-                  }
-                }}
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>独立看板</span>
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="outline"
-              isPending={loading}
-              className="h-7 px-2.5 rounded-lg text-[11px]"
-              onPress={() => loadOverview(false)}
-            >
-              <RotateCw className="w-3.5 h-3.5" />
-              <span>刷新</span>
-            </Button>
-          </div>
-        </div>
-
-        {/* 下划线一级导航 */}
-        <nav aria-label="心智治理视图切换" className="flex items-center gap-6">
-          {navItems.map((item) => {
-            const active = subTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setSubTab(item.id)}
-                className={`relative pb-2.5 text-[12px] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
-                  active
-                    ? 'font-semibold text-foreground'
-                    : 'font-medium text-muted hover:text-foreground'
-                }`}
-              >
-                <span>{item.label}</span>
-                {typeof item.count === 'number' && (
-                  <span className="text-[10px] font-mono text-muted">{item.count}</span>
-                )}
-                {active && (
-                  <span className="absolute left-0 right-0 bottom-0 h-[2px] bg-foreground rounded-full" />
-                )}
-              </button>
-            );
-          })}
-        </nav>
-      </section>
-
       {loadError && (
         <div className="rounded-xl bg-rose-500/8 border border-rose-500/25 px-3.5 py-2 text-[11px] text-rose-600 dark:text-rose-400 flex items-center gap-2">
           <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
@@ -2627,22 +2940,91 @@ export function AgentMindView({
       )}
 
       {/* ================================================================= */}
-      {/* Tab 1 (首页): 规则规范 — 三层治理 + 富内容可搜索作用域选择器 */}
+      {/* Tab 1 (首页): 规则规范 — 门户 Hero + 四层治理 + 富内容作用域选择器 */}
       {/* ================================================================= */}
       {subTab === 'rules' && (
-        <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 flex flex-col">
-          <div className="px-4 pt-2.5 pb-0 border-b border-zinc-200/80 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-5">
-              {[
-                {
-                  id: 'rules' as const,
-                  label: '规则与地图',
-                  count: filteredRules.length,
-                  alertDot: ruleTokenStats.aggregateStatus.level !== 'ok' ? ruleTokenStats.aggregateStatus.dotClass : '',
-                },
-                { id: 'decisions' as const, label: 'Decision 决策', count: filteredDecisions.length, alertDot: '' },
-                { id: 'lints' as const, label: 'Lint 检查', count: filteredLints.length, alertDot: '' },
-              ].map((t) => {
+        <>
+          <PortalHero
+            icon={<ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
+            eyebrow="AGENT MIND · GOVERNANCE"
+            title={
+              govScope === 'global'
+                ? '心智治理规则与跨仓双层文档中枢'
+                : `${govScope} · 仓库治理与双层文档工作台`
+            }
+            description="统筹维护全局与分仓规则大地图（RULES）、双层治理文档（常青架构 / 按日记录 / 暂缓过期）、Google Decisions 语义裁决与确定性 Lint 门禁。"
+            badge={
+              govScope !== 'global' && activeScopeOption?.hasGit === false ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[10px] font-medium">
+                  <ShieldAlert className="w-3 h-3" />
+                  未检测到 Git
+                </span>
+              ) : isGovScopeReadOnly ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-surface-secondary text-muted border border-zinc-200/80 dark:border-border/70 text-[10px]">
+                  <Lock className="w-3 h-3 text-amber-500" />
+                  只读靶场
+                </span>
+              ) : null
+            }
+            metrics={[
+              {
+                label: '规则 / 地图',
+                value: filteredRules.length,
+                hint: `${ruleTokenStats.sessionBudgetTokens.toLocaleString()} tok`,
+              },
+              {
+                label: '治理文档',
+                value: scopedDocTierCounts.total,
+                tone: 'emerald',
+                hint: `常青 ${scopedDocTierCounts.evergreen} · 记录 ${scopedDocTierCounts.record}${
+                  scopedDocTierCounts.deferred > 0 ? ` · 暂缓 ${scopedDocTierCounts.deferred}` : ''
+                }`,
+              },
+              {
+                label: 'Decisions',
+                value: filteredDecisions.length,
+                tone: 'blue',
+              },
+              {
+                label: 'Lint 门禁',
+                value: filteredLints.length,
+              },
+            ]}
+          />
+
+          <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 flex flex-col">
+            <div className="px-4 pt-2.5 pb-0 border-b border-zinc-200/80 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-5">
+                {[
+                  {
+                    id: 'rules' as const,
+                    label: '规则与地图',
+                    count: filteredRules.length,
+                    alertDot: ruleTokenStats.aggregateStatus.level !== 'ok' ? ruleTokenStats.aggregateStatus.dotClass : '',
+                    cleanupCount: 0,
+                  },
+                  {
+                    id: 'docs' as const,
+                    label: '治理文档',
+                    count: scopedRepoDocs.length,
+                    alertDot: '',
+                    cleanupCount: 0,
+                  },
+                  {
+                    id: 'decisions' as const,
+                    label: 'Decision 决策',
+                    count: filteredDecisions.length,
+                    alertDot: cleanupSummary.scopedDecisions > 0 ? 'bg-amber-500' : '',
+                    cleanupCount: cleanupSummary.scopedDecisions,
+                  },
+                  {
+                    id: 'lints' as const,
+                    label: 'Lint 检查',
+                    count: filteredLints.length,
+                    alertDot: cleanupSummary.scopedLints > 0 ? 'bg-amber-500' : '',
+                    cleanupCount: cleanupSummary.scopedLints,
+                  },
+                ].map((t) => {
                 const active = govLayer === t.id;
                 return (
                   <button
@@ -2673,17 +3055,28 @@ export function AgentMindView({
                   onClick={() => setScopePickerOpen((v) => !v)}
                   className="h-7 px-2.5 rounded-lg bg-zinc-50 dark:bg-surface-secondary/70 border border-zinc-200/85 dark:border-border/75 hover:border-zinc-300 dark:hover:border-zinc-600 inline-flex items-center gap-1.5 text-[11px] text-foreground transition-colors cursor-pointer"
                 >
-                  {activeScopeOption?.maxBytes >= ANTIGRAVITY_FILE_BYTES_WARN && (
+                  {activeScopeOption?.maxBytes >= ANTIGRAVITY_FILE_BYTES_WARN ? (
                     <span
                       className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                         getFileSizeStatus(activeScopeOption.maxBytes).dotClass
                       }`}
                     />
-                  )}
+                  ) : cleanupSummary.items.length > 0 ? (
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-amber-500" title="存在长期零违规可清理项" />
+                  ) : null}
                   <span className="text-muted">作用域</span>
                   <span className="font-mono font-semibold">
                     {govScope === 'global' ? '全局通用' : govScope}
                   </span>
+                  {activeScopeOption?.hasGit === false && (
+                    <span
+                      className="inline-flex items-center gap-0.5 px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[9.5px] font-medium"
+                      title="该项目目录未检测到 .git 仓库，Stop Hook 文档门禁与提交前代码审核将静默跳过"
+                    >
+                      <ShieldAlert className="w-2.5 h-2.5" />
+                      无 Git
+                    </span>
+                  )}
                   {isGovScopeReadOnly && <Lock className="w-3 h-3 text-amber-500" />}
                   <ChevronDown className="w-3.5 h-3.5 text-muted" />
                 </button>
@@ -2754,9 +3147,23 @@ export function AgentMindView({
                                   {opt.role === 'test-bed' && (
                                     <Lock className="w-3 h-3 text-amber-500 shrink-0" />
                                   )}
+                                  {opt.hasGit === false && (
+                                    <span
+                                      className="inline-flex items-center gap-0.5 px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[9.5px] shrink-0"
+                                      title="未检测到 .git 仓库：Stop Hook 文档门禁将静默跳过"
+                                    >
+                                      <ShieldAlert className="w-2.5 h-2.5" />
+                                      无 Git
+                                    </span>
+                                  )}
                                 </div>
 
                                 <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-mono text-muted">
+                                  {(cleanupSummary.byScope.get(opt.code) || 0) > 0 && (
+                                    <span className="px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 font-sans">
+                                      可清理 {cleanupSummary.byScope.get(opt.code)}
+                                    </span>
+                                  )}
                                   <span>
                                     规则 {opt.rulesCount} · Decision {opt.decisionsCount} · Lint {opt.lintsCount}
                                   </span>
@@ -2786,6 +3193,58 @@ export function AgentMindView({
               </div>
             </div>
           </div>
+
+          {cleanupSummary.items.length > 0 && (
+            <div className="px-4 py-2 bg-amber-500/7 dark:bg-amber-500/8 border-b border-amber-500/20 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                <ShieldAlert className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span className="font-medium text-amber-800 dark:text-amber-300">
+                  发现 {cleanupSummary.items.length} 项长期 0 违规检查器可评估清理：
+                </span>
+                <div className="flex flex-wrap items-center gap-1">
+                  {cleanupSummary.items.slice(0, 6).map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => navigateToChecker({ decision: item.decision, lint: item.lint })}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/85 dark:bg-surface border border-amber-500/30 hover:border-amber-500 text-[10.5px] text-amber-800 dark:text-amber-300 transition-colors cursor-pointer"
+                      title={`点击定位到 ${item.scopeLabel} / ${item.name}（累计评估 ${item.evalCount} 次，0 违规）`}
+                    >
+                      <span className="font-mono text-[9.5px] text-amber-700/80 dark:text-amber-400/80">
+                        [{item.scopeLabel}]
+                      </span>
+                      <span className="font-medium truncate max-w-[160px]">{item.name}</span>
+                      <span className="font-mono text-[9.5px] opacity-80">
+                        {item.evalCount}次·0违
+                      </span>
+                    </button>
+                  ))}
+                  {cleanupSummary.items.length > 6 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSubTab('observability');
+                        setCheckerPerfFilter('CLEANUP');
+                      }}
+                      className="text-[10.5px] font-medium text-amber-700 dark:text-amber-300 hover:underline px-1 cursor-pointer"
+                    >
+                      +{cleanupSummary.items.length - 6} 项查看全部 →
+                    </button>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSubTab('observability');
+                  setCheckerPerfFilter('CLEANUP');
+                }}
+                className="text-[10.5px] font-medium text-amber-800 dark:text-amber-300 hover:underline shrink-0 cursor-pointer"
+              >
+                效能表对比清理 →
+              </button>
+            </div>
+          )}
 
           {/* --------------------------------------------------------------- */}
           {/* Layer 1: Markdown 规则 (单卡扁平内联：常驻融入式预算分布 + 文件) */}
@@ -3080,6 +3539,30 @@ export function AgentMindView({
           )}
 
           {/* --------------------------------------------------------------- */}
+          {/* Layer 1.5: 仓库双层治理文档 (docs/evergreen · records · deferred) */}
+          {/* --------------------------------------------------------------- */}
+          {govLayer === 'docs' && (
+            <div className="min-h-[540px]">
+              <RepoDocsBrowser
+                docs={scopedRepoDocs}
+                allRepoDocs={allRepoDocs}
+                variant="all"
+                showRepoBadge={govScope === 'global'}
+                emptyHint={
+                  govScope === 'global'
+                    ? '已登记仓库下暂未扫描到 docs/ 文档'
+                    : `仓库 ${govScope} 下暂未扫描到 docs/ 文档`
+                }
+                callTauri={callTauri}
+                pushToast={pushToast}
+                renderArticle={(content, onOpenDocLink) => (
+                  <MarkdownArticle content={content} onOpenDocLink={onOpenDocLink} />
+                )}
+              />
+            </div>
+          )}
+
+          {/* --------------------------------------------------------------- */}
           {/* Layer 2: Decision 决策 (*.decision.json 结构化语义裁决配置)       */}
           {/* --------------------------------------------------------------- */}
           {govLayer === 'decisions' && (
@@ -3250,9 +3733,9 @@ export function AgentMindView({
                             >
                               评估 {d.eval_count ?? 0} · 拦截 {d.hit_count ?? 0}
                             </span>
-                            {d.enabled && (d.eval_count ?? 0) >= 5 && (d.hit_count ?? 0) === 0 && (
-                              <span className="text-[9.5px] px-1.5 py-[1px] rounded bg-amber-500/8 text-amber-700 dark:text-amber-400 border border-amber-500/20">
-                                0 拦截 · 可考虑退役
+                            {isDecisionCleanupCandidate(d) && (
+                              <span className="text-[9.5px] px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/30 font-medium">
+                                0 违规 · 可删除
                               </span>
                             )}
                             {!d.enabled && d.retired_at && (
@@ -3436,6 +3919,37 @@ export function AgentMindView({
                               </div>
                             )}
 
+                            {isDecisionCleanupCandidate(scopedActiveDecisionEntry) && (
+                              <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[11.5px]">
+                                <div className="flex items-start gap-2 min-w-0 flex-1">
+                                  <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                                  <div className="text-amber-900 dark:text-amber-200 leading-snug">
+                                    <span className="font-semibold">长期零违规 · 建议删除：</span>
+                                    <span>
+                                      该 Decision 累计已评估 {scopedActiveDecisionEntry.eval_count ?? 0} 次且 0 次违规，说明约束已被稳定内化，删除可节省大模型评审配额。
+                                    </span>
+                                  </div>
+                                </div>
+                                {canDeleteSelectedDecision && selectedDecisionKey && (
+                                  <div className="shrink-0">
+                                    <InlineDeleteButton
+                                      confirming={confirmDeleteDecision}
+                                      deleting={deletingFile}
+                                      onRequest={() => setConfirmDeleteDecision(true)}
+                                      onCancel={() => setConfirmDeleteDecision(false)}
+                                      onConfirm={() =>
+                                        executeDeleteFile(
+                                          selectedDecisionKey.relPath,
+                                          'decision',
+                                          selectedDecisionKey.repoCode
+                                        )
+                                      }
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
                             <div className="rounded-xl border border-zinc-200/80 dark:border-border/70 px-3 py-2 bg-zinc-50/40 dark:bg-surface-secondary/15 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                               <span className="font-mono text-muted">
                                 累计评估 {scopedActiveDecisionEntry.eval_count ?? 0} 次 · 累计拦截 {scopedActiveDecisionEntry.hit_count ?? 0} 次
@@ -3526,13 +4040,13 @@ export function AgentMindView({
           )}
 
           {/* --------------------------------------------------------------- */}
-          {/* Layer 3: Lint 检查 (scripts/lints/*.py 确定性脚本只读浏览)        */}
+          {/* Layer 3: Lint 检查 (scripts/lints/*.py / *.mjs 确定性脚本浏览)     */}
           {/* --------------------------------------------------------------- */}
           {govLayer === 'lints' && (
             <div className="flex flex-col">
               <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11.5px] font-medium text-foreground">
-                  项目确定性结构检查 ({filteredLints.length} 项 · scripts/lints/*.py)
+                  项目确定性结构检查 ({filteredLints.length} 项 · scripts/lints/*.py / *.mjs)
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
                   {(selectedLint?.repo || filteredLints[0]?.repo) && (
@@ -3555,7 +4069,7 @@ export function AgentMindView({
                   )}
                   <span className="inline-flex items-center gap-1 text-[10.5px] text-muted">
                     <Lock className="w-3 h-3" />
-                    脚本只读展示（零误报机械防线，提交前自动运行）
+                    源码只读展示（零误报机械防线，可安全删除独立过期检查）
                   </span>
                 </div>
               </div>
@@ -3565,8 +4079,8 @@ export function AgentMindView({
                   {filteredLints.length === 0 ? (
                     <div className="py-16 px-4 text-center text-[11.5px] text-muted">
                       {govScope === 'global'
-                        ? '全局层面不运行单仓静态扫描；请在右上角「作用域」下拉中选择具体项目查看 scripts/lints/*.py'
-                        : `${govScope} 暂无 Python Lint 检查项 (scripts/lints/*.py)`}
+                        ? '全局层面不运行单仓静态扫描；请在右上角「作用域」下拉中选择具体项目查看 scripts/lints/'
+                        : `${govScope} 暂无 Lint 检查项 (scripts/lints/*.py / *.mjs)`}
                     </div>
                   ) : (
                     filteredLints.map((lint) => {
@@ -3574,6 +4088,8 @@ export function AgentMindView({
                         selectedLint?.id === lint.id &&
                         selectedLint?.repo === lint.repo &&
                         selectedLint?.rel_path === lint.rel_path;
+                      const displayName =
+                        lint.name.endsWith('.mjs') || lint.name.endsWith('.py') ? lint.name : `${lint.name}()`;
                       return (
                         <div
                           key={`${lint.repo}::${lint.rel_path}::${lint.id}`}
@@ -3586,7 +4102,7 @@ export function AgentMindView({
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-[12px] font-mono font-semibold text-foreground truncate">
-                              {lint.name}()
+                              {displayName}
                             </span>
                             <span className="text-[9.5px] font-mono px-1.5 py-[1px] rounded bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/70 text-muted shrink-0">
                               {lint.repo}
@@ -3605,6 +4121,11 @@ export function AgentMindView({
                             >
                               检测 {lint.eval_count ?? 0} · 拦截 {lint.hit_count ?? 0}
                             </span>
+                            {isLintCleanupCandidate(lint) && (
+                              <span className="text-[9.5px] px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/30 font-medium">
+                                0 违规 · 待评估清理
+                              </span>
+                            )}
                           </div>
                           {lint.description && (
                             <p className="mt-1.5 text-[11.5px] text-muted leading-relaxed">
@@ -3634,9 +4155,60 @@ export function AgentMindView({
                           <span className="text-[10.5px] font-mono text-muted">
                             检测 {selectedLint.eval_count ?? 0} · 拦截 {selectedLint.hit_count ?? 0}
                           </span>
-                          <span className="text-[10.5px] font-mono text-muted">Python Read-Only</span>
+                          <span className="text-[10.5px] font-mono text-muted">
+                            {selectedLint.rel_path.toLowerCase().endsWith('.mjs') ? 'Node.js Read-Only' : 'Python Read-Only'}
+                          </span>
+                          {selectedLint.deletable && (
+                            <InlineDeleteButton
+                              confirming={confirmDeleteLint}
+                              deleting={deletingFile}
+                              onRequest={() => setConfirmDeleteLint(true)}
+                              onCancel={() => setConfirmDeleteLint(false)}
+                              onConfirm={() =>
+                                executeDeleteFile(
+                                  selectedLint.rel_path,
+                                  'lint',
+                                  selectedLint.scope === 'global' ? '' : selectedLint.repo
+                                )
+                              }
+                            />
+                          )}
                         </div>
                       </div>
+                      {isLintCleanupCandidate(selectedLint) && (
+                        <div className="mx-4 mt-3 rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[11.5px]">
+                          <div className="flex items-start gap-2 min-w-0 flex-1">
+                            <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                            <div className="text-amber-900 dark:text-amber-200 leading-snug">
+                              <span className="font-semibold">长期零违规 · 评估是否清理：</span>
+                              <span>
+                                已检测 {selectedLint.eval_count ?? 0} 次且 0 次违规。若属于临时迁移防线可移除；若属于长期架构防复发锁则代表防线健康，可继续保留。
+                                {!selectedLint.deletable &&
+                                  (selectedLint.editable === false
+                                    ? '（当前为只读测试靶场，禁止删除）'
+                                    : `（位于聚合脚本 ${selectedLint.file_name}#L${selectedLint.line_number}，需在源码中移除对应函数，禁止删除整文件）`)}
+                              </span>
+                            </div>
+                          </div>
+                          {selectedLint.deletable && (
+                            <div className="shrink-0">
+                              <InlineDeleteButton
+                                confirming={confirmDeleteLint}
+                                deleting={deletingFile}
+                                onRequest={() => setConfirmDeleteLint(true)}
+                                onCancel={() => setConfirmDeleteLint(false)}
+                                onConfirm={() =>
+                                  executeDeleteFile(
+                                    selectedLint.rel_path,
+                                    'lint',
+                                    selectedLint.scope === 'global' ? '' : selectedLint.repo
+                                  )
+                                }
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <div className="p-4 flex-1 overflow-auto max-h-[560px]">
                         {loadingLintSource ? (
                           <div className="py-12 text-center text-[11.5px] text-muted">正在加载源码...</div>
@@ -3652,7 +4224,8 @@ export function AgentMindView({
               </div>
             </div>
           )}
-        </section>
+          </section>
+        </>
       )}
 
       {/* ================================================================= */}
@@ -3661,7 +4234,25 @@ export function AgentMindView({
       {subTab === 'reviews' && (
         <>
           {activeReviewView === 'list' && (
-            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
+            <div className="flex flex-col gap-3">
+              <PortalHero
+                icon={<FileCheck2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+                eyebrow="DEEPSEEK HARNESS · REVIEW"
+                title="DSH 架构终审与因果链闭环归档"
+                description="聚合本机 DeepSeek Harness 对跨模块改动、状态机与并发边界的深度终审报告，支持按仓库和裁决状态快速追踪复核记录。"
+                metrics={[
+                  { label: '归档总数', value: reviewStats.total },
+                  { label: '通过 PASSED', value: reviewStats.passed, tone: 'emerald' },
+                  {
+                    label: '拦截 VIOLATED',
+                    value: reviewStats.violated,
+                    tone: reviewStats.violated > 0 ? 'rose' : 'default',
+                  },
+                  { label: '覆盖仓库', value: availableReviewRepos.length, tone: 'blue' },
+                ]}
+              />
+
+              <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
               <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-[12.5px] font-semibold text-foreground">DSH 终审归档</h2>
@@ -3781,7 +4372,8 @@ export function AgentMindView({
                   </div>
                 )}
               </div>
-            </section>
+              </section>
+            </div>
           )}
 
           {activeReviewView === 'detail' && openedReview && (
@@ -3938,7 +4530,25 @@ export function AgentMindView({
       {subTab === 'proposals' && (
         <>
           {!openedProposal ? (
-            <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
+            <div className="flex flex-col gap-3">
+              <PortalHero
+                icon={<Sparkles className="w-4 h-4 text-amber-500" />}
+                eyebrow="GROK · WORKFLOW PROPOSALS"
+                title="每日工作流演进提案工作台"
+                description="沉淀每日深度复盘产出的架构与体验改进提案，支持全文批注、采纳状态流转并一键拉起 Antigravity 会话持续推进。"
+                metrics={[
+                  { label: '提案总数', value: proposalStats.total },
+                  {
+                    label: '待推进',
+                    value: proposalStats.pendingOnly,
+                    tone: proposalStats.pendingOnly > 0 ? 'amber' : 'default',
+                  },
+                  { label: '推进中', value: proposalStats.inProgress, tone: 'blue' },
+                  { label: '已采纳', value: proposalStats.adopted, tone: 'emerald' },
+                ]}
+              />
+
+              <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
               <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-[12.5px] font-semibold text-foreground">每日 Grok AI 提升提案</h2>
@@ -4011,6 +4621,7 @@ export function AgentMindView({
                     textClass: 'text-muted',
                   };
                   const isAdvancing = advancingProposalName === p.file_name;
+                  const savedAnnCount = loadProposalReview(p.file_name).annotations.length;
                   return (
                     <div
                       key={p.file_name}
@@ -4044,6 +4655,11 @@ export function AgentMindView({
                             {p.date || formatReviewTime('', p.modified_ts)}
                           </span>
                           {p.proposal_count > 0 && <span>{p.proposal_count} 项建议</span>}
+                          {savedAnnCount > 0 && (
+                            <span className="px-1.5 py-0 rounded-full bg-amber-500/12 text-amber-700 dark:text-amber-300 font-sans">
+                              {savedAnnCount} 条划词批注
+                            </span>
+                          )}
                           {p.source_subject && <span className="truncate max-w-[320px]">来源: {p.source_subject}</span>}
                           <span className="truncate">logs/grok-proposals/{p.file_name}</span>
                         </div>
@@ -4078,7 +4694,8 @@ export function AgentMindView({
                   </div>
                 )}
               </div>
-            </section>
+              </section>
+            </div>
           ) : (
             <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
               <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
@@ -4233,7 +4850,23 @@ export function AgentMindView({
                     {displayedProposalBody || '（空提案）'}
                   </pre>
                 ) : (
-                  <MarkdownArticle content={displayedProposalBody || '（空提案）'} />
+                  <ProposalDetailAnnotator
+                    fileName={openedProposal.file_name}
+                    title={openedProposal.title}
+                    absPath={openedProposal.abs_path}
+                    annotations={proposalAnnotations}
+                    overallNote={proposalOverallNote}
+                    onChangeAnnotations={handleUpdateProposalAnnotations}
+                    onChangeOverallNote={handleUpdateProposalOverallNote}
+                    onAdvanceWithAnnotations={() => handleAdvanceInAntigravity(openedProposal)}
+                    advancing={advancingProposalName === openedProposal.file_name}
+                    pushToast={pushToast}
+                  >
+                    <MarkdownArticle
+                      content={displayedProposalBody || '（空提案）'}
+                      annotations={proposalAnnotations}
+                    />
+                  </ProposalDetailAnnotator>
                 )}
               </div>
             </section>
@@ -4404,6 +5037,43 @@ export function AgentMindView({
             </div>
           </section>
 
+          {/* 2b. Decisions API Token 体积与 Diff 分块负载趋势 */}
+          <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 p-4 flex flex-col gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-[12.5px] font-semibold text-foreground">
+                  Decisions API Token 与分块负载趋势
+                </h3>
+                <p className="text-[10.5px] text-muted mt-0.5">
+                  追踪 `a8-judge` / `stop_hook` 实际送审 Token 体积与 Diff 分块数（警戒线：单次 &gt; 30k tokens 或分块 ≥ 3）
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono text-muted shrink-0">
+                <span className="px-2 py-0.5 rounded-md bg-surface-secondary/70 border border-zinc-200/75 dark:border-border/70">
+                  累计 {formatCompactTokens(telemetry?.total_tokens_evaluated)} tok
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-surface-secondary/70 border border-zinc-200/75 dark:border-border/70">
+                  单次均耗 {telemetry?.avg_judge_tokens ? `${formatCompactTokens(telemetry.avg_judge_tokens)} tok` : '—'}
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded-md border ${
+                    (telemetry?.max_judge_tokens || 0) > 30000
+                      ? 'bg-amber-500/12 border-amber-500/35 text-amber-700 dark:text-amber-300'
+                      : 'bg-surface-secondary/70 border-zinc-200/75 dark:border-border/70'
+                  }`}
+                >
+                  单次峰值 {telemetry?.max_judge_tokens ? `${formatCompactTokens(telemetry.max_judge_tokens)} tok` : '—'}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-surface-secondary/70 border border-zinc-200/75 dark:border-border/70">
+                  分块 {telemetry?.total_diff_chunks || 0} · 调用 {telemetry?.total_api_calls || 0}
+                </span>
+              </div>
+            </div>
+            <div className="h-[170px] w-full">
+              <EChartBox option={tokenLoadOption} className="w-full h-full" />
+            </div>
+          </section>
+
           {/* 3. 第三行：最近门禁与裁决事件流 */}
           <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
             <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2.5">
@@ -4496,6 +5166,15 @@ export function AgentMindView({
                               ev.violated_ids.length > 2 ? `(+${ev.violated_ids.length - 2})` : ''
                             }`
                           : '',
+                        ev.tokens_evaluated && ev.tokens_evaluated > 0
+                          ? `tok=${formatCompactTokens(ev.tokens_evaluated)}`
+                          : '',
+                        ev.diff_chunks_count && ev.diff_chunks_count > 0
+                          ? `块=${ev.diff_chunks_count}`
+                          : '',
+                        ev.api_calls_count && ev.api_calls_count > 1
+                          ? `调=${ev.api_calls_count}`
+                          : '',
                       ].filter(Boolean);
                       return (
                         <tr
@@ -4552,7 +5231,7 @@ export function AgentMindView({
             )}
           </section>
 
-          {/* 3b. Decision & Lint 检查器命中追踪与退役治理 */}
+          {/* 3b. Decision & Lint 检查器命中追踪与退役/清理治理 */}
           <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden">
             <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -4560,17 +5239,54 @@ export function AgentMindView({
                   检查器效能追踪 (Decision & Lint 命中排行)
                 </h3>
                 <span className="text-[10.5px] text-muted">
-                  长期 0 拦截的 Decision 可一键退役（保留 JSON 归档与历史，停止进入裁判配额）
+                  长期 0 违规项自动标黄提醒清理（Decision ≥ {DECISION_CLEANUP_MIN_EVAL} 次 · Lint ≥ {LINT_CLEANUP_MIN_EVAL} 次）
                 </span>
               </div>
-              <span className="text-[10.5px] font-mono text-muted">
-                共 {checkerPerfRows.length} 项
-              </span>
+              <div className="flex items-center gap-1.5 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setCheckerPerfFilter('ALL')}
+                  className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                    checkerPerfFilter === 'ALL'
+                      ? 'bg-zinc-100 dark:bg-surface-secondary font-semibold text-foreground'
+                      : 'text-muted hover:text-foreground'
+                  }`}
+                >
+                  全部 ({checkerPerfRows.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCheckerPerfFilter('CLEANUP')}
+                  className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer inline-flex items-center gap-1 ${
+                    checkerPerfFilter === 'CLEANUP'
+                      ? 'bg-amber-500/15 font-semibold text-amber-800 dark:text-amber-300'
+                      : cleanupSummary.items.length > 0
+                        ? 'bg-amber-500/8 text-amber-700 dark:text-amber-400 hover:bg-amber-500/14'
+                        : 'text-muted hover:text-foreground'
+                  }`}
+                >
+                  <span>建议清理</span>
+                  <span className="font-mono text-[10px]">({cleanupSummary.items.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCheckerPerfFilter('HIT')}
+                  className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                    checkerPerfFilter === 'HIT'
+                      ? 'bg-zinc-100 dark:bg-surface-secondary font-semibold text-foreground'
+                      : 'text-muted hover:text-foreground'
+                  }`}
+                >
+                  曾拦截 ({checkerPerfRows.filter((r) => r.hit_count > 0).length})
+                </button>
+              </div>
             </div>
 
-            {checkerPerfRows.length === 0 ? (
+            {checkerPerfFilteredRows.length === 0 ? (
               <div className="py-10 text-center text-[11.5px] text-muted">
-                暂无可追踪的 Decision 或 Lint 检查器
+                {checkerPerfFilter === 'CLEANUP'
+                  ? '当前暂无达到长期零违规阈值的可清理检查器'
+                  : '暂无匹配的 Decision 或 Lint 检查器'}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -4587,10 +5303,14 @@ export function AgentMindView({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200/65 dark:divide-border/50">
-                    {checkerPerfRows.map((row) => (
+                    {checkerPerfFilteredRows.map((row) => (
                       <tr
                         key={row.key}
-                        className="hover:bg-zinc-50/70 dark:hover:bg-surface-secondary/30 transition-colors"
+                        className={`transition-colors ${
+                          row.cleanupCandidate
+                            ? 'bg-amber-500/4 hover:bg-amber-500/8'
+                            : 'hover:bg-zinc-50/70 dark:hover:bg-surface-secondary/30'
+                        }`}
                       >
                         <td className="px-4 py-2 whitespace-nowrap">
                           <span className="px-1.5 py-0.5 rounded bg-surface-secondary/75 border border-zinc-200/75 dark:border-border/60 font-mono text-[10px] text-foreground">
@@ -4607,19 +5327,26 @@ export function AgentMindView({
                           {row.scopeLabel}
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
-                          {row.kind === 'lint' ? (
-                            <span className="text-[10.5px] text-emerald-600 dark:text-emerald-400">
-                              机械常驻
-                            </span>
-                          ) : row.enabled ? (
-                            <span className="text-[10.5px] text-emerald-600 dark:text-emerald-400">
-                              使用中
-                            </span>
-                          ) : (
-                            <span className="text-[10.5px] text-muted">
-                              已退役{row.retired_at ? ` · ${row.retired_at}` : ''}
-                            </span>
-                          )}
+                          <div className="inline-flex items-center gap-1.5">
+                            {row.kind === 'lint' ? (
+                              <span className="text-[10.5px] text-emerald-600 dark:text-emerald-400">
+                                机械常驻
+                              </span>
+                            ) : row.enabled ? (
+                              <span className="text-[10.5px] text-emerald-600 dark:text-emerald-400">
+                                使用中
+                              </span>
+                            ) : (
+                              <span className="text-[10.5px] text-muted">
+                                已退役{row.retired_at ? ` · ${row.retired_at}` : ''}
+                              </span>
+                            )}
+                            {row.cleanupCandidate && (
+                              <span className="text-[9.5px] px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/30 font-medium">
+                                {row.kind === 'decision' ? '可删除' : '待评估清理'}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-3 py-2 font-mono text-[11px] text-foreground whitespace-nowrap">
                           {row.eval_count}
@@ -4636,24 +5363,35 @@ export function AgentMindView({
                           </span>
                         </td>
                         <td className="px-4 py-2 text-right whitespace-nowrap">
-                          {row.decision && row.decision.editable && !row.decision.parse_error ? (
-                            <button
-                              onClick={() => void handleToggleDecisionEnabled(row.decision!)}
-                              className="px-2 py-0.5 rounded-md text-[10.5px] font-medium border border-zinc-200 dark:border-border/70 bg-white dark:bg-surface hover:bg-zinc-100 dark:hover:bg-surface-secondary text-foreground transition-colors cursor-pointer"
-                            >
-                              {row.enabled ? '退役' : '恢复'}
-                            </button>
-                          ) : row.lint ? (
-                            <button
-                              disabled={Boolean(runningLintRepo)}
-                              onClick={() => void handleRunRepoLints(row.lint!.repo)}
-                              className="px-2 py-0.5 rounded-md text-[10.5px] font-medium border border-zinc-200 dark:border-border/70 bg-white dark:bg-surface hover:bg-zinc-100 dark:hover:bg-surface-secondary text-foreground transition-colors cursor-pointer disabled:opacity-45"
-                            >
-                              {runningLintRepo === row.lint.repo ? '运行中...' : '运行检测'}
-                            </button>
-                          ) : (
-                            <span className="text-[10.5px] text-muted">—</span>
-                          )}
+                          <div className="inline-flex items-center gap-1.5">
+                            {row.cleanupCandidate && (
+                              <button
+                                type="button"
+                                onClick={() => navigateToChecker({ decision: row.decision, lint: row.lint })}
+                                className="px-2 py-0.5 rounded-md text-[10.5px] font-medium border border-amber-500/35 bg-amber-500/12 hover:bg-amber-500/20 text-amber-800 dark:text-amber-300 transition-colors cursor-pointer"
+                              >
+                                去清理 →
+                              </button>
+                            )}
+                            {row.decision && row.decision.editable && !row.decision.parse_error ? (
+                              <button
+                                onClick={() => void handleToggleDecisionEnabled(row.decision!)}
+                                className="px-2 py-0.5 rounded-md text-[10.5px] font-medium border border-zinc-200 dark:border-border/70 bg-white dark:bg-surface hover:bg-zinc-100 dark:hover:bg-surface-secondary text-foreground transition-colors cursor-pointer"
+                              >
+                                {row.enabled ? '退役' : '恢复'}
+                              </button>
+                            ) : row.lint ? (
+                              <button
+                                disabled={Boolean(runningLintRepo)}
+                                onClick={() => void handleRunRepoLints(row.lint!.repo)}
+                                className="px-2 py-0.5 rounded-md text-[10.5px] font-medium border border-zinc-200 dark:border-border/70 bg-white dark:bg-surface hover:bg-zinc-100 dark:hover:bg-surface-secondary text-foreground transition-colors cursor-pointer disabled:opacity-45"
+                              >
+                                {runningLintRepo === row.lint.repo ? '运行中...' : '运行检测'}
+                              </button>
+                            ) : (
+                              <span className="text-[10.5px] text-muted">—</span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -4672,6 +5410,37 @@ export function AgentMindView({
         <>
           {!activeProjectItem ? (
             <div className="flex flex-col gap-3">
+              <PortalHero
+                icon={<FolderGit2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
+                eyebrow="HOST TOPOLOGY · REPOSITORIES"
+                title="宿主机仓库拓扑与双层文档总览"
+                description="统一登记宿主机各仓库物理路径、角色定位与 Git 状态；点击任意仓库卡片即可直达该仓的常青文档、工作记录、暂缓/过期档案与仓库档案详情。"
+                metrics={[
+                  { label: '已登记仓库', value: overview?.projects.length || 0 },
+                  {
+                    label: 'Git 就绪',
+                    value: (overview?.projects || []).filter((p) => p.has_git !== false).length,
+                    tone: 'emerald',
+                  },
+                  {
+                    label: '无 Git 告警',
+                    value: (overview?.projects || []).filter((p) => p.has_git === false).length,
+                    tone:
+                      (overview?.projects || []).some((p) => p.has_git === false) ? 'amber' : 'default',
+                  },
+                  {
+                    label: '治理文档',
+                    value: allRepoDocs.length,
+                    tone: 'blue',
+                    hint: `常青 ${repoDocsStatsByRepo.evergreenTotal} · 记录 ${repoDocsStatsByRepo.recordTotal}${
+                      repoDocsStatsByRepo.deferredTotal > 0
+                        ? ` · 暂缓 ${repoDocsStatsByRepo.deferredTotal}`
+                        : ''
+                    }`,
+                  },
+                ]}
+              />
+
               {/* 全局索引 2 列 */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[
@@ -4711,7 +5480,9 @@ export function AgentMindView({
                 </div>
 
                 <div className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {(overview?.projects || []).map((proj) => (
+                  {(overview?.projects || []).map((proj) => {
+                    const docCounts = repoDocsStatsByRepo.byRepo.get(proj.code);
+                    return (
                     <div
                       key={proj.code}
                       onClick={() => openProjectCard(proj)}
@@ -4723,55 +5494,109 @@ export function AgentMindView({
                           openProjectCard(proj);
                         }
                       }}
-                      className="rounded-xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/75 hover:border-zinc-300 dark:hover:border-zinc-600 p-3.5 transition-colors cursor-pointer flex flex-col justify-between gap-2.5 min-h-[110px]"
+                      className="rounded-xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/75 hover:border-zinc-300 dark:hover:border-zinc-600 p-3.5 transition-colors cursor-pointer flex flex-col justify-between gap-2.5 min-h-[118px]"
                     >
                       <div className="flex flex-col gap-1">
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-[13px] font-semibold text-foreground truncate">{proj.code}</span>
-                          <span className="text-[10px] font-mono text-muted shrink-0">
-                            {ROLE_LABELS[proj.role] || proj.role.toUpperCase()}
-                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {proj.has_git === false && (
+                              <span
+                                className="inline-flex items-center gap-0.5 px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[9.5px] font-medium"
+                                title="未检测到 .git 仓库：Stop Hook 文档门禁与提交前代码审核将静默跳过"
+                              >
+                                <ShieldAlert className="w-2.5 h-2.5" />
+                                无 Git
+                              </span>
+                            )}
+                            <span className="text-[10px] font-mono text-muted">
+                              {ROLE_LABELS[proj.role] || proj.role.toUpperCase()}
+                            </span>
+                          </div>
                         </div>
                         <p className="text-[11px] text-muted leading-relaxed line-clamp-2">{proj.summary}</p>
                       </div>
 
-                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-zinc-200/60 dark:border-border/50 text-[10px] font-mono text-muted">
-                        <span className="truncate">{proj.physical_path}</span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigator.clipboard.writeText(proj.physical_path);
-                            pushToast(`已复制 ${proj.code} 物理路径`, 'success');
-                          }}
-                          title="复制物理路径"
-                          className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-surface-secondary text-muted hover:text-foreground shrink-0 cursor-pointer"
-                        >
-                          <Copy className="w-3 h-3" />
-                        </button>
+                      <div className="flex flex-col gap-1.5 pt-2 border-t border-zinc-200/60 dark:border-border/50">
+                        <div className="flex items-center justify-between gap-2 text-[10px] font-mono">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {proj.readme_rel_path ? (
+                              <span className="px-1.5 py-[1px] rounded bg-zinc-100 dark:bg-surface-secondary text-foreground border border-zinc-200/80 dark:border-border/70">
+                                README
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-[1px] rounded bg-zinc-50 dark:bg-surface-secondary/40 text-muted/70 border border-zinc-200/60 dark:border-border/50">
+                                无 README
+                              </span>
+                            )}
+                            {docCounts && docCounts.evergreen > 0 && (
+                              <span className="px-1.5 py-[1px] rounded bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25">
+                                常青 {docCounts.evergreen}
+                              </span>
+                            )}
+                            {docCounts && docCounts.total - docCounts.evergreen > 0 && (
+                              <span className="text-muted">docs {docCounts.total - docCounts.evergreen}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-muted">
+                          <span className="truncate">{proj.physical_path}</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(proj.physical_path);
+                              pushToast(`已复制 ${proj.code} 物理路径`, 'success');
+                            }}
+                            title="复制物理路径"
+                            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-surface-secondary text-muted hover:text-foreground shrink-0 cursor-pointer"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
             </div>
           ) : (
             <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden flex flex-col">
-              <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5 min-w-0">
+              {/* 顶栏：左侧路径面包屑与 Git 状态，右侧 主页 -> 常青文档 -> docs 文档 三段主导航（file 模式保留编辑器工具栏） */}
+              <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2 min-w-0">
                   <button
                     onClick={requestExitProject}
                     className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-muted hover:text-foreground transition-colors cursor-pointer shrink-0"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
-                    <span>返回仓库地图</span>
+                    <span>仓库地图</span>
                   </button>
                   <span className="text-zinc-300 dark:text-zinc-700">/</span>
-                  <span className="font-mono text-[11.5px] font-medium text-foreground truncate">
+                  <span className="font-mono text-[12px] font-semibold text-foreground truncate">
                     {activeProjectItem.kind === 'file'
                       ? activeProjectItem.relPath
-                      : activeProjectItem.project.detail_rel_path || activeProjectItem.project.code}
+                      : activeProjectItem.project.code}
                   </span>
-                  {projectDocPath &&
+                  {activeProjectItem.kind === 'repo' && (
+                    <>
+                      <span className="font-mono text-[10px] px-1.5 py-[1px] rounded bg-zinc-100 dark:bg-surface-secondary text-muted shrink-0">
+                        {ROLE_LABELS[activeProjectItem.project.role] || activeProjectItem.project.role.toUpperCase()}
+                      </span>
+                      {activeProjectItem.project.has_git === false && (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[10px] font-medium shrink-0"
+                          title="未检测到 .git 仓库：Hook 文档门禁与代码审核对此项目静默跳过"
+                        >
+                          <ShieldAlert className="w-3 h-3" />
+                          无 Git
+                        </span>
+                      )}
+                    </>
+                  )}
+                  {activeProjectItem.kind === 'file' &&
+                    projectDocPath &&
                     (isProjectDirty ? (
                       <span className="text-[10.5px] text-amber-600 dark:text-amber-400 shrink-0">未保存</span>
                     ) : (
@@ -4782,58 +5607,109 @@ export function AgentMindView({
                     ))}
                 </div>
 
-                {projectDocPath && (
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <div className="inline-flex items-center rounded-lg bg-zinc-100 dark:bg-surface-secondary p-0.5 text-[11px]">
-                      <button
-                        onClick={() => setProjectMode('preview')}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
-                          projectMode === 'preview'
-                            ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
-                            : 'text-muted hover:text-foreground'
-                        }`}
-                      >
-                        <Eye className="w-3 h-3" />
-                        <span>阅读</span>
-                      </button>
-                      <button
-                        onClick={() => setProjectMode('edit')}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
-                          projectMode === 'edit'
-                            ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
-                            : 'text-muted hover:text-foreground'
-                        }`}
-                      >
-                        <Edit3 className="w-3 h-3" />
-                        <span>编辑</span>
-                      </button>
+                {activeProjectItem.kind === 'repo' ? (
+                  <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                    <div className="inline-flex items-center rounded-lg bg-zinc-100 dark:bg-surface-secondary p-0.5 text-[11.5px]">
+                      {(
+                        [
+                          { id: 'home' as const, label: '主页' },
+                          {
+                            id: 'evergreen' as const,
+                            label: '常青文档',
+                            count: repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.evergreen || 0,
+                          },
+                          {
+                            id: 'docs' as const,
+                            label: 'docs 文档',
+                            count:
+                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.total || 0) -
+                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.evergreen || 0),
+                          },
+                        ]
+                      ).map((tab) => {
+                        const active = projectDetailTab === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setProjectDetailTab(tab.id)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md cursor-pointer transition-colors ${
+                              active
+                                ? 'bg-white dark:bg-surface font-semibold text-foreground shadow-2xs'
+                                : 'text-muted hover:text-foreground'
+                            }`}
+                          >
+                            <span>{tab.label}</span>
+                            {typeof tab.count === 'number' && (
+                              <span className="text-[10px] font-mono opacity-75">{tab.count}</span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
 
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      isPending={loadingProjectDoc}
-                      className="h-7 px-2.5 rounded-lg text-[11px]"
-                      onPress={() =>
-                        activeProjectItem.kind === 'file'
-                          ? openProjectFile(activeProjectItem.title, activeProjectItem.relPath)
-                          : openProjectCard(activeProjectItem.project)
-                      }
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(activeProjectItem.project.physical_path);
+                        pushToast(`已复制 ${activeProjectItem.project.code} 物理路径`, 'success');
+                      }}
+                      title="复制物理路径"
+                      className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-zinc-50 dark:bg-surface-secondary/60 border border-zinc-200/85 dark:border-border/70 font-mono text-[10px] text-muted hover:text-foreground cursor-pointer max-w-[220px]"
                     >
-                      重载
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      isPending={savingProjectDoc}
-                      isDisabled={!isProjectDirty && !savingProjectDoc}
-                      className="h-7 px-3 rounded-lg text-[11px]"
-                      onPress={handleSaveProjectDoc}
-                    >
-                      <Save className="w-3.5 h-3.5" />
-                      <span>保存 (Ctrl+S)</span>
-                    </Button>
+                      <span className="truncate">{activeProjectItem.project.physical_path}</span>
+                      <Copy className="w-3 h-3 shrink-0" />
+                    </button>
                   </div>
+                ) : (
+                  projectDocPath && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="inline-flex items-center rounded-lg bg-zinc-100 dark:bg-surface-secondary p-0.5 text-[11px]">
+                        <button
+                          onClick={() => setProjectMode('preview')}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                            projectMode === 'preview'
+                              ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                              : 'text-muted hover:text-foreground'
+                          }`}
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>阅读</span>
+                        </button>
+                        <button
+                          onClick={() => setProjectMode('edit')}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                            projectMode === 'edit'
+                              ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                              : 'text-muted hover:text-foreground'
+                          }`}
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          <span>编辑</span>
+                        </button>
+                      </div>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        isPending={loadingProjectDoc}
+                        className="h-7 px-2.5 rounded-lg text-[11px]"
+                        onPress={() => openProjectFile(activeProjectItem.title, activeProjectItem.relPath)}
+                      >
+                        重载
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        isPending={savingProjectDoc}
+                        isDisabled={!isProjectDirty && !savingProjectDoc}
+                        className="h-7 px-3 rounded-lg text-[11px]"
+                        onPress={handleSaveProjectDoc}
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>保存 (Ctrl+S)</span>
+                      </Button>
+                    </div>
+                  )
                 )}
               </div>
 
@@ -4844,12 +5720,14 @@ export function AgentMindView({
                     const ok = await handleSaveProjectDoc();
                     if (ok) {
                       setPendingProjectExit(false);
+                      setRepoMapDrawerOpen(false);
                       setActiveProjectItem(null);
                       setProjectDocPath('');
                     }
                   }}
                   onDiscardAndContinue={() => {
                     setPendingProjectExit(false);
+                    setRepoMapDrawerOpen(false);
                     setActiveProjectItem(null);
                     setProjectDocPath('');
                   }}
@@ -4857,112 +5735,246 @@ export function AgentMindView({
                 />
               )}
 
-              {activeProjectItem.kind === 'repo' && (
-                <div className="px-4 py-2.5 bg-zinc-50/70 dark:bg-surface-secondary/25 border-b border-zinc-200/75 dark:border-border/60 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                  <div className="flex flex-wrap items-center gap-2 min-w-0">
-                    <span className="font-semibold text-foreground">{activeProjectItem.project.code}</span>
-                    <span className="font-mono text-[10px] text-muted">
-                      {ROLE_LABELS[activeProjectItem.project.role] || activeProjectItem.project.role.toUpperCase()}
-                    </span>
-                    <span className="text-muted">· {activeProjectItem.project.summary}</span>
-                  </div>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(activeProjectItem.project.physical_path);
-                      pushToast(`已复制 ${activeProjectItem.project.code} 物理路径`, 'success');
-                    }}
-                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/70 font-mono text-[10px] text-foreground hover:bg-zinc-100 dark:hover:bg-surface-secondary cursor-pointer"
-                  >
-                    <span>{activeProjectItem.project.physical_path}</span>
-                    <Copy className="w-3 h-3 text-muted" />
-                  </button>
+              {activeProjectItem.kind === 'file' ? (
+                <div className="px-5 py-4">
+                  {projectMode === 'preview' ? (
+                    <MarkdownArticle content={projectDocContent} />
+                  ) : (
+                    <textarea
+                      value={projectDocContent}
+                      onChange={(e) => setProjectDocContent(e.target.value)}
+                      spellCheck={false}
+                      className="w-full min-h-[520px] font-mono text-[12px] text-foreground dark:text-slate-100 bg-transparent focus:outline-none resize-y leading-relaxed"
+                    />
+                  )}
                 </div>
-              )}
+              ) : projectDetailTab === 'home' ? (
+                <div className="flex flex-col">
+                  {/* 主页副栏：README 标识 + 右侧「仓库地图档案」入口按钮 */}
+                  <div className="px-5 py-2 border-b border-zinc-200/75 dark:border-border/55 bg-zinc-50/45 dark:bg-surface-secondary/15 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0 text-[11px]">
+                      <span className="font-mono font-medium text-foreground">
+                        {activeProjectItem.project.readme_rel_path || 'README.md'}
+                      </span>
+                      <span className="text-muted truncate">· {activeProjectItem.project.summary}</span>
+                    </div>
 
-              <div className="px-5 py-4">
-                {!projectDocPath ? (
-                  <div className="py-16 flex flex-col items-center justify-center gap-2 text-muted text-[11.5px]">
-                    <FolderGit2 className="w-6 h-6 opacity-40" />
-                    <span>该仓库暂未在 repos/ 下配置独立详情卡</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2.5 rounded-lg text-[11px]"
+                      onPress={() => setRepoMapDrawerOpen(true)}
+                    >
+                      <FolderGit2 className="w-3.5 h-3.5" />
+                      <span>仓库地图档案</span>
+                    </Button>
                   </div>
-                ) : projectMode === 'preview' ? (
-                  <MarkdownArticle content={projectDocContent} />
-                ) : (
-                  <textarea
-                    value={projectDocContent}
-                    onChange={(e) => setProjectDocContent(e.target.value)}
-                    spellCheck={false}
-                    className="w-full min-h-[520px] font-mono text-[12px] text-foreground dark:text-slate-100 bg-transparent focus:outline-none resize-y leading-relaxed"
-                  />
-                )}
-              </div>
+
+                  {/* 第一屏主内容：仓库自己的 README.md */}
+                  <div className="px-6 py-5 min-h-[520px]">
+                    {loadingRepoReadme ? (
+                      <div className="py-16 text-center text-[11.5px] text-muted">
+                        正在加载 {activeProjectItem.project.readme_rel_path || 'README.md'}...
+                      </div>
+                    ) : repoReadmeError ? (
+                      <div className="py-16 text-center text-[11.5px] text-rose-500">
+                        {repoReadmeError}
+                      </div>
+                    ) : !activeProjectItem.project.readme_rel_path ? (
+                      <div className="py-20 flex flex-col items-center justify-center gap-3 text-muted text-[12px]">
+                        <BookOpen className="w-7 h-7 opacity-30" />
+                        <span>{activeProjectItem.project.code} 根目录暂无 README.md</span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-3 rounded-lg text-[11px]"
+                          onPress={() => setRepoMapDrawerOpen(true)}
+                        >
+                          <FolderGit2 className="w-3.5 h-3.5" />
+                          <span>打开仓库地图档案</span>
+                        </Button>
+                      </div>
+                    ) : (
+                      <MarkdownArticle
+                        content={repoReadmeContent}
+                        onOpenDocLink={(href) => {
+                          const clean = href.split('#')[0].replace(/^\.\//, '').replace(/\\/g, '/').toLowerCase();
+                          if (clean.startsWith('docs/evergreen/')) {
+                            setProjectDetailTab('evergreen');
+                          } else if (clean.startsWith('docs/')) {
+                            setProjectDetailTab('docs');
+                          } else {
+                            pushToast(`外部或源码路径：${href}`, 'info');
+                          }
+                        }}
+                      />
+                    )}
+                  </div>
+
+                  {/* 仓库地图说明与关联信息抽屉（由主页按钮打开，不抢占第一屏 README 视觉焦点） */}
+                  {repoMapDrawerOpen && (
+                    <div
+                      className="fixed inset-0 z-50 flex justify-end bg-black/25 backdrop-blur-[1px]"
+                      onClick={() => {
+                        if (isProjectDirty) {
+                          setPendingProjectExit(true);
+                          return;
+                        }
+                        setRepoMapDrawerOpen(false);
+                      }}
+                    >
+                      <div
+                        className="w-full max-w-[700px] h-full bg-white dark:bg-surface border-l border-zinc-200 dark:border-border shadow-xl flex flex-col"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="px-4 py-3 border-b border-zinc-200/85 dark:border-border/70 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FolderGit2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                            <span className="text-[13px] font-semibold text-foreground truncate">
+                              仓库地图档案 · {activeProjectItem.project.code}
+                            </span>
+                            {projectDocPath && (
+                              <span className="font-mono text-[10.5px] text-muted truncate">
+                                ({projectDocPath})
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {projectDocPath && (
+                              <>
+                                <div className="inline-flex items-center rounded-lg bg-zinc-100 dark:bg-surface-secondary p-0.5 text-[11px]">
+                                  <button
+                                    onClick={() => setProjectMode('preview')}
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer ${
+                                      projectMode === 'preview'
+                                        ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                                        : 'text-muted hover:text-foreground'
+                                    }`}
+                                  >
+                                    <Eye className="w-3 h-3" />
+                                    <span>阅读</span>
+                                  </button>
+                                  <button
+                                    onClick={() => setProjectMode('edit')}
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md cursor-pointer ${
+                                      projectMode === 'edit'
+                                        ? 'bg-white dark:bg-surface font-medium text-foreground shadow-2xs'
+                                        : 'text-muted hover:text-foreground'
+                                    }`}
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                    <span>编辑</span>
+                                  </button>
+                                </div>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  isPending={loadingProjectDoc}
+                                  className="h-7 px-2.5 rounded-lg text-[11px]"
+                                  onPress={() => openProjectCard(activeProjectItem.project)}
+                                >
+                                  重载
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="primary"
+                                  isPending={savingProjectDoc}
+                                  isDisabled={!isProjectDirty && !savingProjectDoc}
+                                  className="h-7 px-2.5 rounded-lg text-[11px]"
+                                  onPress={handleSaveProjectDoc}
+                                >
+                                  <Save className="w-3.5 h-3.5" />
+                                  <span>保存</span>
+                                </Button>
+                              </>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isProjectDirty) {
+                                  setPendingProjectExit(true);
+                                  return;
+                                }
+                                setRepoMapDrawerOpen(false);
+                              }}
+                              className="p-1.5 rounded-lg text-muted hover:text-foreground hover:bg-zinc-100 dark:hover:bg-surface-secondary cursor-pointer"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {pendingProjectExit && (
+                          <UnsavedInlineBar
+                            busy={savingProjectDoc}
+                            onSaveAndContinue={async () => {
+                              const ok = await handleSaveProjectDoc();
+                              if (ok) {
+                                setPendingProjectExit(false);
+                                setRepoMapDrawerOpen(false);
+                              }
+                            }}
+                            onDiscardAndContinue={() => {
+                              setPendingProjectExit(false);
+                              setRepoMapDrawerOpen(false);
+                            }}
+                            onCancel={() => setPendingProjectExit(false)}
+                          />
+                        )}
+
+                        <div className="flex-1 overflow-y-auto px-5 py-4">
+                          {!projectDocPath ? (
+                            <div className="py-16 text-center text-[11.5px] text-muted">
+                              该仓库暂未在 repos/ 下配置独立档案
+                            </div>
+                          ) : projectMode === 'preview' ? (
+                            <MarkdownArticle content={projectDocContent} />
+                          ) : (
+                            <textarea
+                              value={projectDocContent}
+                              onChange={(e) => setProjectDocContent(e.target.value)}
+                              spellCheck={false}
+                              className="w-full min-h-[520px] font-mono text-[12px] text-foreground dark:text-slate-100 bg-transparent focus:outline-none resize-y leading-relaxed"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : projectDetailTab === 'evergreen' ? (
+                <RepoDocsBrowser
+                  variant="evergreen"
+                  docs={allRepoDocs.filter((d) => d.repo === activeProjectItem.project.code)}
+                  allRepoDocs={allRepoDocs}
+                  showRepoBadge={false}
+                  emptyHint={`${activeProjectItem.project.code} 暂无常青文档 (docs/evergreen/)`}
+                  callTauri={callTauri}
+                  pushToast={pushToast}
+                  renderArticle={(content, onOpenDocLink) => (
+                    <MarkdownArticle content={content} onOpenDocLink={onOpenDocLink} />
+                  )}
+                />
+              ) : (
+                <RepoDocsBrowser
+                  variant="docs"
+                  docs={allRepoDocs.filter((d) => d.repo === activeProjectItem.project.code)}
+                  allRepoDocs={allRepoDocs}
+                  showRepoBadge={false}
+                  emptyHint={`${activeProjectItem.project.code} docs/ 下暂无非常青文档`}
+                  callTauri={callTauri}
+                  pushToast={pushToast}
+                  renderArticle={(content, onOpenDocLink) => (
+                    <MarkdownArticle content={content} onOpenDocLink={onOpenDocLink} />
+                  )}
+                />
+              )}
             </section>
           )}
         </>
       )}
 
-      {/* ================================================================= */}
-      {/* Tab 4: 模型参数 (与映射页同款 rounded-2xl 容器) */}
-      {/* ================================================================= */}
-      {subTab === 'config' && (
-        <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden max-w-2xl">
-          <div className="px-4 py-2.5 border-b border-zinc-200/85 dark:border-border/60 flex items-center justify-between gap-2">
-            <div>
-              <h2 className="text-[12.5px] font-semibold text-foreground">Decisions API 裁决参数 (config.json)</h2>
-            </div>
-            <Button
-              size="sm"
-              variant="primary"
-              isPending={savingConfig}
-              className="h-7 px-3 rounded-lg text-[11px]"
-              onPress={handleSaveConfig}
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>保存配置</span>
-            </Button>
-          </div>
-
-          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3.5 text-[12px]">
-            <TextField value={cfgModel} onChange={setCfgModel}>
-              <Label className="text-[11px] font-medium text-foreground">裁决模型 (Model)</Label>
-              <InputGroup className="mt-1">
-                <InputGroup.Input placeholder="gemini-decision-1" className="font-mono text-[11.5px]" />
-              </InputGroup>
-            </TextField>
-
-            <TextField value={cfgThreshold} onChange={setCfgThreshold}>
-              <Label className="text-[11px] font-medium text-foreground">置信度阈值 (Confidence Threshold)</Label>
-              <InputGroup className="mt-1">
-                <InputGroup.Input placeholder="0.85" className="font-mono text-[11.5px]" />
-              </InputGroup>
-            </TextField>
-
-            <TextField value={cfgEndpoint} onChange={setCfgEndpoint} className="md:col-span-2">
-              <Label className="text-[11px] font-medium text-foreground">Decisions API Endpoint</Label>
-              <InputGroup className="mt-1">
-                <InputGroup.Input
-                  placeholder="https://generativelanguage.googleapis.com/..."
-                  className="font-mono text-[11.5px]"
-                />
-              </InputGroup>
-            </TextField>
-
-            <TextField value={cfgTimeout} onChange={setCfgTimeout}>
-              <Label className="text-[11px] font-medium text-foreground">请求超时（秒）</Label>
-              <InputGroup className="mt-1">
-                <InputGroup.Input placeholder="15" className="font-mono text-[11.5px]" />
-              </InputGroup>
-            </TextField>
-
-            <TextField value={cfgApiKey} onChange={setCfgApiKey}>
-              <Label className="text-[11px] font-medium text-foreground">API Key / Env 变量表达式</Label>
-              <InputGroup className="mt-1">
-                <InputGroup.Input placeholder="${GEMINI_API_KEY}" className="font-mono text-[11.5px]" />
-              </InputGroup>
-            </TextField>
-          </div>
-        </section>
-      )}
     </div>
   );
 }

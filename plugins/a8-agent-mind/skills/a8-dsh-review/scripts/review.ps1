@@ -272,33 +272,113 @@ function Get-DshDocumentedContext {
     }
     $lines = [System.IO.File]::ReadAllLines($agentsPath, $Utf8NoBom)
     $entries = New-Object System.Collections.Generic.List[object]
+    $pendingHeader = $null
+    $colMap = $null
     foreach ($raw in $lines) {
         $line = $raw.Trim()
-        if (-not $line.StartsWith("|") -or $line -notmatch "docs/") {
+        if (-not $line.StartsWith("|")) {
+            $pendingHeader = $null
+            $colMap = $null
             continue
         }
         $cells = $line.Trim("|") -split "\|"
-        if ($cells.Count -lt 5) {
+        if ($cells.Count -eq 0) {
             continue
         }
-        $first = $cells[0].Trim()
-        if ($first -match "^[-:]+$") {
+        $isSep = $true
+        foreach ($c in $cells) {
+            $ct = $c.Trim()
+            if ($ct -and ($ct -notmatch "^:?[-]{2,}:?$")) {
+                $isSep = $false
+                break
+            }
+        }
+        if ($isSep) {
+            if ($null -ne $pendingHeader) {
+                $colMap = @{}
+                for ($hi = 0; $hi -lt $pendingHeader.Count; $hi++) {
+                    $hn = ([regex]::Replace($pendingHeader[$hi], '[`*\s]', '')).ToLowerInvariant()
+                    if (-not $hn) { continue }
+                    if (-not $colMap.ContainsKey("type") -and $hn -match "类型|type") { $colMap["type"] = $hi }
+                    elseif (-not $colMap.ContainsKey("status") -and $hn -match "状态|status") { $colMap["status"] = $hi }
+                    elseif (-not $colMap.ContainsKey("assoc") -and $hn -match "源码|关联|code|source|scope") { $colMap["assoc"] = $hi }
+                    elseif (-not $colMap.ContainsKey("summary") -and $hn -match "用途|说明|摘要|职责|summary|desc|purpose") { $colMap["summary"] = $hi }
+                    elseif (-not $colMap.ContainsKey("module") -and $hn -match "模块|域|domain|module") { $colMap["module"] = $hi }
+                    elseif (-not $colMap.ContainsKey("doc") -and $hn -match "文档|路径|doc|path") { $colMap["doc"] = $hi }
+                }
+            }
             continue
         }
-        $m = [regex]::Match($first, "(docs/[^\s`\)\]]+?\.md)", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-        if (-not $m.Success) {
+
+        $docCellIdx = -1
+        $docMatch = $null
+        for ($ci = 0; $ci -lt $cells.Count; $ci++) {
+            $m = [regex]::Match($cells[$ci], "(docs[/\\][^\s`\)\]<>\""]+?\.md)", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if ($m.Success) {
+                $docCellIdx = $ci
+                $docMatch = $m
+                break
+            }
+        }
+        if ($null -eq $docMatch) {
+            $pendingHeader = $cells
+            $colMap = $null
             continue
         }
-        $relDoc = $m.Groups[1].Value -replace "\\", "/"
-        $docType = $cells[1].Trim('`', '*', ' ')
-        $status = $cells[3].Trim('`', '*', ' ')
-        $summary = ([regex]::Replace($cells[4], '`([^`]*)`', '$1')).Trim()
-        $assoc = if ($cells.Count -gt 5) { $cells[5] } else { "" }
+        if ($cells.Count -lt 3) {
+            continue
+        }
+
+        $relDoc = $docMatch.Groups[1].Value -replace "\\", "/"
+        $useMap = ($null -ne $colMap -and $colMap.Count -gt 0)
+        if ($useMap) {
+            $docType = if ($colMap.ContainsKey("type") -and $colMap["type"] -lt $cells.Count) { $cells[$colMap["type"]].Trim('`', '*', ' ') } else { "" }
+            $status = if ($colMap.ContainsKey("status") -and $colMap["status"] -lt $cells.Count) { $cells[$colMap["status"]].Trim('`', '*', ' ') } else { "" }
+            $sumIdx = if ($colMap.ContainsKey("summary") -and $colMap["summary"] -lt $cells.Count) { $colMap["summary"] } else { $cells.Count - 1 }
+            $summary = ([regex]::Replace($cells[$sumIdx], '`([^`]*)`', '$1')).Trim()
+        } else {
+            $otherIndices = @()
+            for ($oi = 0; $oi -lt $cells.Count; $oi++) {
+                if ($oi -ne $docCellIdx) { $otherIndices += $oi }
+            }
+            $docType = $cells[$otherIndices[0]].Trim('`', '*', ' ')
+            if ($cells.Count -le 4) {
+                $status = ""
+            } else {
+                $status = $cells[$otherIndices[2]].Trim('`', '*', ' ')
+            }
+            $summary = ([regex]::Replace($cells[$otherIndices[-1]], '`([^`]*)`', '$1')).Trim()
+        }
+        if (-not $docType) {
+            $docType = if ($relDoc -match "(?i)/evergreen/") { "EVERGREEN" } else { "SPEC" }
+        }
+        if (-not $status -and $docType -match "^(?i)EVERGREEN$") {
+            $status = "ACTIVE"
+        }
+
         $assocPaths = @()
-        foreach ($pm in [regex]::Matches($assoc, '`([^`]+)`')) {
-            $cand = $pm.Groups[1].Value.Trim().TrimEnd('/').Replace("\", "/").ToLowerInvariant()
-            if ($cand.Contains("/") -or $cand.Contains(".")) {
-                $assocPaths += $cand
+        $targetIndices = $null
+        if ($useMap -and ($colMap.ContainsKey("assoc") -or $colMap.ContainsKey("module"))) {
+            $targetIndices = @()
+            if ($colMap.ContainsKey("assoc") -and $colMap["assoc"] -lt $cells.Count) { $targetIndices += $colMap["assoc"] }
+            if ($colMap.ContainsKey("module") -and $colMap["module"] -lt $cells.Count) { $targetIndices += $colMap["module"] }
+        }
+        for ($ci = 0; $ci -lt $cells.Count; $ci++) {
+            if ($ci -eq $docCellIdx) { continue }
+            if ($null -ne $targetIndices) {
+                if ($targetIndices -notcontains $ci) { continue }
+            } elseif ($useMap) {
+                if (($colMap.ContainsKey("type") -and $colMap["type"] -eq $ci) -or
+                    ($colMap.ContainsKey("status") -and $colMap["status"] -eq $ci) -or
+                    ($colMap.ContainsKey("summary") -and $colMap["summary"] -eq $ci)) { continue }
+            }
+            foreach ($pm in [regex]::Matches($cells[$ci], '`([^`]+)`')) {
+                $cand = $pm.Groups[1].Value.Trim().TrimEnd('/').Replace("\", "/").ToLowerInvariant()
+                if ($cand -and ($cand -notmatch '\s') -and ($cand -notmatch '^\d+(?:\.\d+)+$') -and ($cand -ne ".") -and ($cand -ne "..") -and ($cand.Contains("/") -or $cand.Contains(".")) -and -not $cand.StartsWith("http") -and -not $cand.StartsWith("docs/")) {
+                    if ($assocPaths -notcontains $cand) {
+                        $assocPaths += $cand
+                    }
+                }
             }
         }
         $entries.Add([PSCustomObject]@{
@@ -336,7 +416,7 @@ function Get-DshDocumentedContext {
                 }
             }
         }
-        if ($score -eq 0 -and ($ent.DocType -match "^(ADR|SPEC)$") -and $idx -lt 2) {
+        if ($score -eq 0 -and ($ent.DocType -match "^(ADR|SPEC|EVERGREEN|GUIDE)$") -and $idx -lt 2) {
             $score = 1
         }
         if ($score -gt 0) {
@@ -348,7 +428,8 @@ function Get-DshDocumentedContext {
     $buf.Add("### 已备案架构决策与设计文档（AGENTS.md & docs/，由 review.ps1 自动注入）")
     $buf.Add("> **审查纪律**：以下设计考量已在仓库 `docs/` 中明确论证并生效；若代码实现与既有决策权衡一致，**严禁重复将既定权衡判为 `VIOLATED`**，仅核查是否真正闭环及是否存在未解决的真实因果链缺陷。")
     foreach ($ent in ($entries | Select-Object -First 8)) {
-        $buf.Add("- [$($ent.DocType)] ``$($ent.RelPath)`` ($($ent.Status)): $($ent.Summary)")
+        $statusText = if ($ent.Status) { " ($($ent.Status))" } else { "" }
+        $buf.Add("- [$($ent.DocType)] ``$($ent.RelPath)``${statusText}: $($ent.Summary)")
     }
 
     $topMatched = $scored | Sort-Object -Property Score -Descending | Select-Object -First 2

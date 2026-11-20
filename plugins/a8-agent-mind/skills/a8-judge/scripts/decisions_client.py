@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -96,8 +97,20 @@ def _normalize_id_list(raw_ids) -> list[str]:
     return out
 
 
-def append_harness_metric(event: dict, max_entries: int = 200) -> None:
-    """Appends a bounded observability record to harness_metrics.jsonl."""
+CHECKER_METRIC_SOURCES = ("a8_judge", "repo_lint")
+
+
+def append_harness_metric(
+    event: dict,
+    max_entries: int = 200,
+    max_checker_entries: int = 1000,
+) -> None:
+    """Appends a bounded observability record to harness_metrics.jsonl.
+
+    Retains separate rolling windows for high-frequency hook events (`max_entries`)
+    and checker evaluations (`a8_judge` / `repo_lint`, `max_checker_entries`) so
+    chat turns never evict long-term checker hit statistics.
+    """
     try:
         metrics_file = resolve_plugin_data_dir() / "harness_metrics.jsonl"
         now_dt = datetime.now()
@@ -118,17 +131,61 @@ def append_harness_metric(event: dict, max_entries: int = 200) -> None:
             record["evaluated_ids"] = evaluated_ids
         if violated_ids:
             record["violated_ids"] = violated_ids
-        existing: list[str] = []
+        tokens_evaluated = int(event.get("tokens_evaluated") or 0)
+        api_calls_count = int(event.get("api_calls_count") or 0)
+        diff_chunks_count = int(event.get("diff_chunks_count") or 0)
+        if tokens_evaluated > 0:
+            record["tokens_evaluated"] = tokens_evaluated
+        if api_calls_count > 0:
+            record["api_calls_count"] = api_calls_count
+        if diff_chunks_count > 0:
+            record["diff_chunks_count"] = diff_chunks_count
+
+        rows: list[tuple[int, str, bool]] = []
         if metrics_file.is_file():
-            existing = [
+            raw_lines = [
                 ln.strip()
                 for ln in metrics_file.read_text(encoding="utf-8", errors="replace").splitlines()
                 if ln.strip()
             ]
-        existing.append(json.dumps(record, ensure_ascii=False))
-        if len(existing) > max_entries:
-            existing = existing[-max_entries:]
-        metrics_file.write_text("\n".join(existing) + "\n", encoding="utf-8")
+            for idx, ln in enumerate(raw_lines):
+                is_checker = False
+                try:
+                    obj = json.loads(ln)
+                    if isinstance(obj, dict) and obj.get("source") in CHECKER_METRIC_SOURCES:
+                        is_checker = True
+                except ValueError:
+                    is_checker = False
+                rows.append((idx, ln, is_checker))
+
+        new_line = json.dumps(record, ensure_ascii=False)
+        rows.append((len(rows), new_line, record["source"] in CHECKER_METRIC_SOURCES))
+
+        checker_indices = [r[0] for r in rows if r[2]][-max_checker_entries:]
+        other_indices = [r[0] for r in rows if not r[2]][-max_entries:]
+        keep = set(checker_indices) | set(other_indices)
+        kept_lines = [r[1] for r in rows if r[0] in keep]
+
+        payload = "\n".join(kept_lines) + "\n"
+        tmp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=str(metrics_file.parent),
+                prefix="harness_metrics_",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp:
+                tmp.write(payload)
+                tmp_path = Path(tmp.name)
+            os.replace(tmp_path, metrics_file)
+        finally:
+            if tmp_path is not None and tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
     except Exception:
         # Telemetry must never abort core hook or judge execution
         pass
@@ -626,6 +683,11 @@ def evaluate_decisions(
         if not item["api_res"].get("ok"):
             api_res = item["api_res"]
             extra = {k: v for k, v in api_res.items() if k not in ("ok", "status", "summary")}
+            partial_tokens = sum(
+                int(((it["api_res"].get("response") or {}).get("usage") or {}).get("total_input_tokens", 0) or 0)
+                for it in executed
+                if it["api_res"].get("ok")
+            )
             append_harness_metric(
                 {
                     "source": "a8_judge",
@@ -633,6 +695,9 @@ def evaluate_decisions(
                     "repo": repo_label,
                     "verdict": "ERROR",
                     "confidence": 0.0,
+                    "tokens_evaluated": partial_tokens,
+                    "api_calls_count": len(executed),
+                    "diff_chunks_count": len(diff_chunks),
                 }
             )
             return fail_closed_verdict(api_res["status"], api_res["summary"], **extra)
@@ -776,6 +841,9 @@ def evaluate_decisions(
                 "confidence": 0.0,
                 "evaluated_ids": evaluated_ids,
                 "violated_ids": violated_ids,
+                "tokens_evaluated": tokens_evaluated,
+                "api_calls_count": len(executed),
+                "diff_chunks_count": len(diff_chunks),
             }
         )
         return fail_closed_verdict(
@@ -792,6 +860,9 @@ def evaluate_decisions(
             "confidence": round(overall_confidence, 4),
             "evaluated_ids": evaluated_ids,
             "violated_ids": violated_ids,
+            "tokens_evaluated": tokens_evaluated,
+            "api_calls_count": len(executed),
+            "diff_chunks_count": len(diff_chunks),
         }
     )
     return verdict_obj
