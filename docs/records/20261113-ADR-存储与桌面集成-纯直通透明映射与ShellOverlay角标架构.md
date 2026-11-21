@@ -9,7 +9,7 @@
 
 ## 1. 问题与目标
 
-- **要解决的问题**：早期直通模式为让 Windows 资源管理器显示图标而注入 `FILE_ATTRIBUTE_READONLY` 与虚拟 `desktop.ini`（`mount_direct`），导致 IDE、Git 或构建工具误判目录只读或扫描到幽灵文件，破坏目录透明性；同时早期文件夹图标硬编码开发机路径。
+- **要解决的问题**：早期直通模式为让 Windows 资源管理器显示图标而注入 `FILE_ATTRIBUTE_READONLY` 与虚拟 `desktop.ini`（`mount_direct`），导致 IDE、Git 或构建工具误判目录只读或扫描到多余的隐藏文件，破坏目录透明性；同时早期文件夹图标硬编码开发机路径。
 - **设计目标**：彻底清除 `desktop.ini` 目录伪装，回归纯 `bindflt` 零拷贝内核直通，并采用独立 Explorer COM Shell Icon Overlay 扩展实现无侵入角标及跨机器自动注册。
 
 ## 2. 核心设计与结论

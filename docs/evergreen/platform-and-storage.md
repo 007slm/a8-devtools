@@ -1,6 +1,6 @@
 # 平台架构、CowFS 存储引擎与桌面角标（常青文档）
 
-> **所属域**：平台底座、写时复制存储引擎与 Explorer 角标扩展  
+> **所属域**：平台基础架构、写时复制存储引擎与 Explorer 角标扩展（专有术语见 [项目术语表](../glossary.md)）  
 > **适用源码**：`Cargo.toml`、`modules/cowfs/`、`modules/cowlink_overlay/`  
 > **相关记录（渐进式披露）**：
 > - [多模块 Cargo Workspace 演进决策](../records/20261022-ADR-架构演进-a8-devtools多模块工作台与cowfs集成.md)
@@ -25,25 +25,25 @@
 
 ```text
 <source_repo>/
-├── src/                               # 只读源码底座（零污染）
+├── src/                               # 只读原始源码（零污染）
 └── .cowdiff/                          # 变体存储容器（支持单源多工作区）
     └── <folder_slug>_<8位hex>/        # WorkspaceMeta::compute_path_hash(target_dir)
         ├── meta.json                  # 自完整元数据（source_dir/diff_dir/target_dir/mode/active/pid）
-        └── diff/                      # Upper Layer 物理增量与 .cow_deleted.<name> 墓碑文件
+        └── diff/                      # Upper Layer 物理增量与 .cow_deleted.<name> 删除标记文件
 ```
 
-### 2.1 路径哈希与元数据真理源
+### 2.1 路径哈希与元数据唯一事实源
 - **`compute_path_hash(target_dir)`**（`modules/cowfs/src/config.rs`）：路径转小写并统一斜杠为 `/` 后计算 64 位摘要截取低 32 位生成 8 位 Hex，拼接为 `<folder_slug>_<8_char_hash>`（如 `client_dev_4a91c0e3`）。
-- **双写与真理源优先级**：
+- **双写与唯一事实源优先级**：
   - 本机快速索引镜像于 `%LOCALAPPDATA%\cowlink\workspaces\<pathHash>\meta.json`，供 GUI/CLI 秒级列举；
   - 源目录 `.cowdiff\<pathHash>\meta.json` 为**自完整最高事实源**（发生分歧以源内为准）；跨机拷贝源仓库时调用 `scan_source_cowdiff` 自动发现并导入本机全局索引；差异数据与源目录同盘同速，C 盘零占用。
 
 ### 2.2 路径解析状态机与驱动不变量（`LayerState` / `DirectoryMerger`）
-- **路径解析结果（`PathResolution`）**：`Whiteout`（自身或祖先目录被白颜墓碑删除）、`Upper(PathBuf)`（增量层已修改/新增）、`Lower(PathBuf)`（底座只读存在）、`NotFound`。
+- **路径解析结果（`PathResolution`）**：`Whiteout`（自身或祖先目录已被删除标记隐藏）、`Upper(PathBuf)`（差异层已修改/新增）、`Lower(PathBuf)`（原始源目录只读存在）、`NotFound`。
 - **核心不变量**：
   1. **零重入死锁隔离（Zero Re-entrancy）**：物理存储层（Lower 与 `.cowdiff` Upper）**绝对不能**位于虚拟挂载点（`target_dir`）内部；WinFsp 用户态进程通过普通 Win32 API 读写源内 `.cowdiff`，彻底绕开挂载点重入。
   2. **根级静默遮蔽**：在路径解析层（`LayerState::resolve`）与目录合并遍历层（`DirectoryMerger::read_directory`）对 `.cowdiff` 与 `.cowlink` 执行根级静默过滤，工作区内的 IDE、Git 与构建工具永远不可见自身增量。
-  3. **白颜删除语义（Whiteout）**：在工作区删除底座文件时，不在只读底座物理删除，而在 Upper 对应父目录生成 `.cow_deleted.<filename>`；遍历目录时优先提取白颜标记并屏蔽 Lower 同名项。
+  3. **删除标记语义（Whiteout）**：在工作区删除原始文件时，不在只读源目录物理删除，而在 Upper 对应父目录生成 `.cow_deleted.<filename>` 删除标记；遍历目录时优先提取删除标记并隐藏 Lower 同名项。
   4. **原子写时复制（Copy-Up）**：写操作触发 Copy-Up 时采用细粒度锁与原子落盘（`modules/cowfs/src/cow/copy_up.rs`），不阻塞无关文件并发读取。
 
 ---

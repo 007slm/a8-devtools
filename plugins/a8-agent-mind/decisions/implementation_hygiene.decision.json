@@ -13,16 +13,22 @@
     "Phase",
     "State",
     "Status",
-    "docs/"
+    "docs/",
+    "//",
+    "/*",
+    "TODO",
+    "FIXME",
+    "兼容",
+    "兜底"
   ],
   "file_patterns": [],
   "question": {
     "type": "choice",
-    "instructions": "Evaluate Implementation Hygiene, Official-Primitive Simplicity, and Plain Readability: (1) Single implementation path & official primitives first — when the standard library, database, or mature dependency already provides an official native capability, use it directly instead of inventing complex custom application-layer mechanisms or dual-track converters; (2) Exception crime-scene preservation — propagate unhandleable exceptions cleanly without useless try/catch wrappers or log/print-only swallowed catch blocks; (3) Plain Naming & Accessible Docs — for self-designed code and documentation where the developer owns the naming and wording choice (as opposed to referencing external interfaces, protocols, schemas, or third-party APIs not named by this codebase), state enums and identifiers must use simple, everyday English words familiar to mainland Chinese developers (e.g., INIT, SNAPSHOT, SYNCING, READY, DIRTY, ERROR, STOPPED rather than obscure words like STALE or cryptic abbreviations), and docs/comments must explain conditions and handling in plain, direct language without esoteric jargon.",
+    "instructions": "Evaluate Implementation Hygiene, Official-Primitive Simplicity, Plain Readability, and Comment Discipline: (1) Single implementation path & official primitives first — when the standard library, database, or mature dependency already provides an official native capability, use it directly instead of inventing complex custom application-layer mechanisms or dual-track converters; (2) Exception crime-scene preservation — propagate unhandleable exceptions cleanly without useless try/catch wrappers or log/print-only swallowed catch blocks; (3) Plain Naming, Accessible Docs & Glossary Discipline — for self-designed code and documentation where the developer owns the naming and wording choice (as opposed to referencing external interfaces, protocols, schemas, or third-party APIs not named by this codebase), state enums and identifiers must use simple, everyday English words familiar to mainland Chinese developers (e.g., INIT, SNAPSHOT, SYNCING, READY, DIRTY, ERROR, STOPPED rather than obscure words like STALE or cryptic abbreviations), and docs/comments must explain conditions and handling in plain, direct language; any project-specific term or shorthand used in AGENTS.md, docs/evergreen/, or docs/records/ must either be defined in docs/glossary.md in plain language or explained directly in plain language instead of dropping undefined jargon (e.g., 双通道, 三平面, 流式折叠, 时序拍扁, 黑板上下文); (4) Comment-as-Code-Smell Gate — code must explain itself via clear naming and control flow (without fragmenting code into excessive tiny helper functions); reject newly introduced or retained redundant comments that merely repeat visible code, excuse comments rationalizing hacks (e.g., TODO/temporary/workaround/fallback/for-compatibility/test-stub instead of fixing the root cause or recording in docs/deferred/ or an issue), and stale comments left inconsistent with the modified code; allow only plain-language comments recording non-obvious Why, invariants, or boundary constraints.",
     "criteria": {
-      "passed": "Uses a single clean path and official native primitives where available; preserves exception causes without useless or swallowed catch blocks; self-owned state enums, identifiers, and docs use simple everyday words and plain direct explanations so code and docs remain easy to read and maintain.",
-      "violated": "Reinvents complex custom mechanisms when an official native primitive suffices, introduces dual-track logic, swallows exceptions in catch blocks with only logs/nulls, OR chooses obscure words (such as STALE), cryptic abbreviations, or esoteric jargon in self-designed state enums, identifiers, or docs."
+      "passed": "Uses a single clean path and official native primitives where available; preserves exception causes without useless or swallowed catch blocks; self-owned state enums, identifiers, and docs use simple everyday words and plain direct explanations; comments only record non-obvious Why/invariants without redundant narration, hack excuses, or stale statements.",
+      "violated": "Reinvents complex custom mechanisms when an official native primitive suffices, introduces dual-track logic, swallows exceptions in catch blocks with only logs/nulls, chooses obscure words (such as STALE) or esoteric jargon, OR adds/leaves redundant narration comments, hack-excuse comments (TODO/temporary/fallback/compatibility), or stale comments contradicting the code."
     }
   },
-  "why": "核心正交架构红线：优先采用官方标准原语并保持唯一路径、保留异常第一现场；自研代码状态命名与设计文档必须用大陆程序员常用的简单直白单词与大白话表达，确保易读易维护。"
+  "why": "核心正交架构红线：优先采用官方标准原语并保持唯一路径、保留异常第一现场；自研代码状态命名与设计文档必须用大陆程序员常用的简单直白单词与大白话表达；注释即代码异味，禁止用赘述/借口/过时注释破坏代码库。"
 }

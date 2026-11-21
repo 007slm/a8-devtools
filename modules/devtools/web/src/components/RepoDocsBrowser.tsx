@@ -13,7 +13,7 @@ import {
 
 export interface RepoDocEntry {
   repo: string;
-  doc_tier: 'evergreen' | 'record' | 'deferred' | 'other' | string;
+  doc_tier: 'glossary' | 'evergreen' | 'record' | 'deferred' | 'other' | string;
   doc_type: string;
   title: string;
   date: string;
@@ -37,6 +37,12 @@ interface RepoDocsBrowserProps {
 }
 
 function getDocKindTag(doc: RepoDocEntry): { label: string; cls: string } {
+  if (doc.doc_tier === 'glossary') {
+    return {
+      label: '术语表',
+      cls: 'bg-cyan-500/12 text-cyan-700 dark:text-cyan-400 border-cyan-500/25',
+    };
+  }
   if (doc.doc_tier === 'evergreen') {
     return {
       label: '常青',
@@ -132,9 +138,9 @@ function resolveRelativeDocPath(currentRelPath: string, href: string): string {
 
 /**
  * 结构化文档浏览器：
- * - variant="evergreen"：仅聚焦常青架构文档（点击文内回链可顺藤下钻并原位返回）
- * - variant="docs"：仅列出非常青的 docs/ 文档（工作记录 / 暂缓 / 废弃等），不重复列常青
- * - variant="all"：全部 docs/ 平铺视图，靠简洁 Tag 直观表达类型与状态
+ * - variant="evergreen"：聚焦常青架构文档与置顶共享术语表（点击文内回链可顺藤下钻并原位返回）
+ * - variant="docs"：仅列出非常青/非术语表的 docs/ 文档（工作记录 / 暂缓 / 废弃等），不重复列常青与术语表
+ * - variant="all"：全部 docs/ 平铺视图，靠简洁 Tag 直观表达类型与状态（术语表置顶）
  */
 export function RepoDocsBrowser({
   docs,
@@ -155,8 +161,12 @@ export function RepoDocsBrowser({
   const [docError, setDocError] = useState<string | null>(null);
 
   const baseDocs = useMemo(() => {
-    if (variant === 'evergreen') return docs.filter((d) => d.doc_tier === 'evergreen');
-    if (variant === 'docs') return docs.filter((d) => d.doc_tier !== 'evergreen');
+    if (variant === 'evergreen') {
+      return docs.filter((d) => d.doc_tier === 'glossary' || d.doc_tier === 'evergreen');
+    }
+    if (variant === 'docs') {
+      return docs.filter((d) => d.doc_tier !== 'evergreen' && d.doc_tier !== 'glossary');
+    }
     return docs;
   }, [docs, variant]);
 
@@ -168,6 +178,7 @@ export function RepoDocsBrowser({
         d.title.toLowerCase().includes(kw) ||
         d.rel_path.toLowerCase().includes(kw) ||
         d.doc_type.toLowerCase().includes(kw) ||
+        getDocKindTag(d).label.toLowerCase().includes(kw) ||
         d.status.toLowerCase().includes(kw) ||
         d.date.toLowerCase().includes(kw) ||
         d.repo.toLowerCase().includes(kw)

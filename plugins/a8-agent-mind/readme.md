@@ -6,8 +6,8 @@
 
 ## 解决的核心痛点
 
-1. **架构红线 AI 自主守门 (The Conscience)**：彻底告别 ArchUnit 的死板与高误判，结合语法元特征自适应路由与 Google Gemini Decisions API (`gemini-decision-1`) 零输出 Token 概率校准裁决代码物理意图与生命周期闭环；由 `mind-rules.md` 驱动 AI 在涉及 4 大正交红线的代码变更交卷前**自主择机调用一次 `a8-judge`**，无需依赖人工调用；
-2. **双层文档与地图随会话治理 (The Blueprint)**：全局 `mind-rules.md` 确立 **常青文档 (`docs/evergreen/*.md`) + 按日期工作记录 (`docs/records/YYYYMMDD-*.md`) + 暂缓区 (`docs/deferred/`)** 分域结构；日常简单修改免建档，触及系统真相时由 `Stop` Hook 经 Decisions API 判定后交由隔离上下文子代理 `docs-curator` 对照真实源码同步常青文档与 `AGENTS.md`（直接挂接常青索引）；
+1. **架构红线 AI 自主守门 (The Conscience)**：彻底告别 ArchUnit 的死板与高误判，结合语法元特征自适应路由与 Google Gemini Decisions API (`gemini-decision-1`) 零输出 Token 概率校准裁决代码物理意图与生命周期闭环；由 `mind-rules.md` 驱动 AI 在涉及 4 个核心架构维度的代码变更交卷前**自主择机调用一次 `a8-judge`**，无需依赖人工调用；
+2. **双层文档、共享术语表与地图随会话治理 (The Blueprint)**：全局 `mind-rules.md` 确立 **共享术语表 (`docs/glossary.md`) + 常青文档 (`docs/evergreen/*.md`) + 按日期工作记录 (`docs/records/YYYYMMDD-*.md`) + 暂缓区 (`docs/deferred/`)** 分域结构；不在术语表中的非通用概念须补入术语表或用普通话直接解释，严禁未定义黑话；日常简单修改免建档，触及系统真相时由 `Stop` Hook 经 Decisions API 判定后交由隔离上下文子代理 `docs-curator` 对照真实源码同步常青文档与 `AGENTS.md`（直接挂接常青索引）；
 3. **后置品味轻提示 + 主动经验精炼 (The Growth)**：回合结束时 `Stop` Hook 会自动屏蔽 `/plan` 规划、待审批计划与运行中后台任务，仅在代码落地验证后且命中既有规则未覆盖的高维工程品味时通过 `ASK_USER_UI` 轻提示审批（绝不静默写盘，具体 Bug Fix 归入 `docs/`）；主动调用 `/a8-improve` 时一方面捕捉五维纠偏信号（含跨历史 `/a8-improve <sessions>`），另一方面同步清理无效、冲突与重复规则；
 4. **独立界面验证与 DSH 极速终审 (`a8-ui-verify` / `a8-dsh-review`)**：标准化目标仓库 `scripts/tests/ui-verify/` 与 `logs/ui-verify/`，提供 `/a8-ui-verify` 一键界面验证；DSH 终审默认 `medium` 推理深度并预打包 diff 摘要；
 5. **上下文防火墙 (Context Firewall)**：研发期测试静音，杜绝海量测试报错冲垮主会话；全量单测与静态审查隔离在 Subagent 沙箱中用完即焚，彻底根除拆东墙补西墙的降智死循环。

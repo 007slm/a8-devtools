@@ -1351,6 +1351,9 @@ fn parse_doc_meta(raw: &str, file_name: &str) -> (String, String, String, String
 
 fn classify_repo_doc_tier(rel_lower: &str, date: &str, status: &str) -> (&'static str, &'static str) {
     let sub = rel_lower.strip_prefix("docs/").unwrap_or(rel_lower);
+    if sub == "glossary.md" {
+        return ("glossary", "GLOSSARY");
+    }
     if sub.starts_with("evergreen/") {
         return ("evergreen", "EVERGREEN");
     }
@@ -1407,7 +1410,7 @@ fn collect_repo_docs_recursive(
         let raw = std::fs::read_to_string(&path).unwrap_or_default();
         let (title, date, parsed_type, status) = parse_doc_meta(&raw, name);
         let (tier, fallback_type) = classify_repo_doc_tier(&rel_lower, &date, &status);
-        let doc_type = if tier == "evergreen" || parsed_type.is_empty() {
+        let doc_type = if tier == "evergreen" || tier == "glossary" || parsed_type.is_empty() {
             fallback_type.to_string()
         } else {
             parsed_type
@@ -1443,10 +1446,11 @@ fn scan_repo_docs(projects: &[HostProjectCardDto]) -> Vec<RepoDocEntryDto> {
     }
     let tier_rank = |tier: &str| -> u8 {
         match tier {
-            "evergreen" => 0,
-            "record" => 1,
-            "deferred" => 2,
-            _ => 3,
+            "glossary" => 0,
+            "evergreen" => 1,
+            "record" => 2,
+            "deferred" => 3,
+            _ => 4,
         }
     };
     docs.sort_by(|a, b| {
@@ -4141,6 +4145,7 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         std::fs::create_dir_all(project_repo.join("docs").join("evergreen")).unwrap();
         std::fs::create_dir_all(project_repo.join("docs").join("records")).unwrap();
         std::fs::create_dir_all(project_repo.join("docs").join("deferred")).unwrap();
+        std::fs::write(project_repo.join("docs").join("glossary.md"), "# 项目术语表\n").unwrap();
         std::fs::write(project_repo.join("docs").join("evergreen").join("core.md"), "# 核心常青\n").unwrap();
         std::fs::write(
             project_repo.join("docs").join("records").join("20261120-ADR-core-test.md"),
@@ -4158,6 +4163,10 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         )
         .unwrap();
         let scanned_docs = scan_repo_docs(&projects);
+        let sample_docs: Vec<&RepoDocEntryDto> = scanned_docs.iter().filter(|d| d.repo == "sample-repo").collect();
+        assert_eq!(sample_docs[0].doc_tier, "glossary");
+        assert_eq!(sample_docs[0].doc_type, "GLOSSARY");
+        assert_eq!(sample_docs[0].title, "项目术语表");
         assert!(scanned_docs.iter().any(|d| d.repo == "sample-repo" && d.doc_tier == "evergreen" && d.title == "核心常青"));
         assert!(scanned_docs.iter().any(|d| d.repo == "sample-repo" && d.doc_tier == "record" && d.doc_type == "ADR" && d.date == "2026-11-20" && d.status == "已落地（当时有效）"));
         assert!(scanned_docs.iter().any(|d| d.repo == "sample-repo" && d.doc_tier == "deferred" && d.doc_type == "SPEC" && d.status.starts_with("已废弃")));

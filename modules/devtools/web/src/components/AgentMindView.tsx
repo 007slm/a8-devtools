@@ -1815,33 +1815,39 @@ export function AgentMindView({
   }, [allRepoDocs, govScope]);
 
   const scopedDocTierCounts = useMemo(() => {
+    let glossary = 0;
     let evergreen = 0;
     let record = 0;
     let deferred = 0;
     for (const d of scopedRepoDocs) {
-      if (d.doc_tier === 'evergreen') evergreen += 1;
+      if (d.doc_tier === 'glossary') glossary += 1;
+      else if (d.doc_tier === 'evergreen') evergreen += 1;
       else if (d.doc_tier === 'record') record += 1;
       else if (d.doc_tier === 'deferred') deferred += 1;
     }
-    return { evergreen, record, deferred, total: scopedRepoDocs.length };
+    return { glossary, evergreen, record, deferred, total: scopedRepoDocs.length };
   }, [scopedRepoDocs]);
 
   const repoDocsStatsByRepo = useMemo(() => {
     const byRepo = new Map<
       string,
-      { evergreen: number; record: number; deferred: number; total: number }
+      { glossary: number; evergreen: number; record: number; deferred: number; total: number }
     >();
+    let glossaryTotal = 0;
     let evergreenTotal = 0;
     let recordTotal = 0;
     let deferredTotal = 0;
     for (const d of allRepoDocs) {
       let cur = byRepo.get(d.repo);
       if (!cur) {
-        cur = { evergreen: 0, record: 0, deferred: 0, total: 0 };
+        cur = { glossary: 0, evergreen: 0, record: 0, deferred: 0, total: 0 };
         byRepo.set(d.repo, cur);
       }
       cur.total += 1;
-      if (d.doc_tier === 'evergreen') {
+      if (d.doc_tier === 'glossary') {
+        cur.glossary += 1;
+        glossaryTotal += 1;
+      } else if (d.doc_tier === 'evergreen') {
         cur.evergreen += 1;
         evergreenTotal += 1;
       } else if (d.doc_tier === 'record') {
@@ -1852,7 +1858,7 @@ export function AgentMindView({
         deferredTotal += 1;
       }
     }
-    return { byRepo, evergreenTotal, recordTotal, deferredTotal };
+    return { byRepo, glossaryTotal, evergreenTotal, recordTotal, deferredTotal };
   }, [allRepoDocs]);
 
   const activeRuleEntry = useMemo(
@@ -2976,7 +2982,7 @@ export function AgentMindView({
                 label: '治理文档',
                 value: scopedDocTierCounts.total,
                 tone: 'emerald',
-                hint: `常青 ${scopedDocTierCounts.evergreen} · 记录 ${scopedDocTierCounts.record}${
+                hint: `${scopedDocTierCounts.glossary > 0 ? `术语 ${scopedDocTierCounts.glossary} · ` : ''}常青 ${scopedDocTierCounts.evergreen} · 记录 ${scopedDocTierCounts.record}${
                   scopedDocTierCounts.deferred > 0 ? ` · 暂缓 ${scopedDocTierCounts.deferred}` : ''
                 }`,
               },
@@ -5432,7 +5438,7 @@ export function AgentMindView({
                     label: '治理文档',
                     value: allRepoDocs.length,
                     tone: 'blue',
-                    hint: `常青 ${repoDocsStatsByRepo.evergreenTotal} · 记录 ${repoDocsStatsByRepo.recordTotal}${
+                    hint: `${repoDocsStatsByRepo.glossaryTotal > 0 ? `术语 ${repoDocsStatsByRepo.glossaryTotal} · ` : ''}常青 ${repoDocsStatsByRepo.evergreenTotal} · 记录 ${repoDocsStatsByRepo.recordTotal}${
                       repoDocsStatsByRepo.deferredTotal > 0
                         ? ` · 暂缓 ${repoDocsStatsByRepo.deferredTotal}`
                         : ''
@@ -5529,13 +5535,20 @@ export function AgentMindView({
                                 无 README
                               </span>
                             )}
+                            {docCounts && docCounts.glossary > 0 && (
+                              <span className="px-1.5 py-[1px] rounded bg-cyan-500/12 text-cyan-700 dark:text-cyan-400 border border-cyan-500/25">
+                                术语表
+                              </span>
+                            )}
                             {docCounts && docCounts.evergreen > 0 && (
                               <span className="px-1.5 py-[1px] rounded bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25">
                                 常青 {docCounts.evergreen}
                               </span>
                             )}
-                            {docCounts && docCounts.total - docCounts.evergreen > 0 && (
-                              <span className="text-muted">docs {docCounts.total - docCounts.evergreen}</span>
+                            {docCounts && docCounts.total - docCounts.evergreen - docCounts.glossary > 0 && (
+                              <span className="text-muted">
+                                docs {docCounts.total - docCounts.evergreen - docCounts.glossary}
+                              </span>
                             )}
                           </div>
                         </div>
@@ -5616,14 +5629,17 @@ export function AgentMindView({
                           {
                             id: 'evergreen' as const,
                             label: '常青文档',
-                            count: repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.evergreen || 0,
+                            count:
+                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.evergreen || 0) +
+                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.glossary || 0),
                           },
                           {
                             id: 'docs' as const,
                             label: 'docs 文档',
                             count:
                               (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.total || 0) -
-                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.evergreen || 0),
+                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.evergreen || 0) -
+                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.glossary || 0),
                           },
                         ]
                       ).map((tab) => {
@@ -5799,7 +5815,7 @@ export function AgentMindView({
                         content={repoReadmeContent}
                         onOpenDocLink={(href) => {
                           const clean = href.split('#')[0].replace(/^\.\//, '').replace(/\\/g, '/').toLowerCase();
-                          if (clean.startsWith('docs/evergreen/')) {
+                          if (clean === 'docs/glossary.md' || clean.startsWith('docs/evergreen/')) {
                             setProjectDetailTab('evergreen');
                           } else if (clean.startsWith('docs/')) {
                             setProjectDetailTab('docs');

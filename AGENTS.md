@@ -1,7 +1,7 @@
 # a8-devtools 仓库大地图与全局文档索引 (AGENTS.md)
 
 > **系统定位**：面向 Windows 的高性能开发者百宝箱平台（a8-devtools）。采用多模块 Cargo Workspace 架构，内嵌纯白桌面工作台，集成 WinFsp 写时复制文件系统（`cowfs`）、Explorer 角标扩展（`cowlink_overlay`）及通用智能体治理插件（`a8-agent-mind`）。
-> **两级查找与渐进式加载准则**：查找模块、代码或文档时，先查本仓 `AGENTS.md` 并按需阅读命中的 `docs/evergreen/` 常青文档（仅在深挖历史背景或排障细节时顺回链打开 `docs/records/`）；跨仓库资源请查全局仓库地图（[`plugins/a8-agent-mind/repos.md`](file:///e:/a8-devtools/plugins/a8-agent-mind/repos.md) / `%USERPROFILE%/.gemini/config/plugins/a8-agent-mind/repos.md`）。
+> **两级查找与渐进式加载准则**：查找模块、代码或文档时，先查本仓 `AGENTS.md` 与共享 [项目术语表](docs/glossary.md)，并按需阅读命中的 `docs/evergreen/` 常青文档（仅在深挖历史背景或排障细节时顺回链打开 `docs/records/`）；跨仓库资源请查全局仓库地图（[`plugins/a8-agent-mind/repos.md`](file:///e:/a8-devtools/plugins/a8-agent-mind/repos.md) / `%USERPROFILE%/.gemini/config/plugins/a8-agent-mind/repos.md`）。
 
 ---
 
@@ -17,7 +17,7 @@ flowchart LR
 
     subgraph CowFS["modules/cowfs & cowlink_overlay"]
         WinFsp["cowfs.exe & libcowfs<br/>WinFsp / bindflt 直通"]
-        State["LayerState & CopyUp<br/>三层解析与遮蔽"]
+        State["LayerState & CopyUp<br/>读写分层解析与隐藏"]
         Overlay["cowlink_overlay.dll<br/>Explorer 角标扩展"]
     end
 
@@ -49,10 +49,11 @@ flowchart LR
 
 ## 三、核心常青文档索引表 (Evergreen Docs Index)
 
-> **双层渐进式防截断规范**：此处仅直接挂接按域整理的常青文档（`docs/evergreen/`，总文件严控 `< 20,000 B` 防 Antigravity `24 KB` 截断）；各常青文档内部按需以回链指向关键工作记录（`docs/records/`）。
+> **双层渐进式防截断与术语表规范**：常青文档与工作记录共用 [项目术语表 (`docs/glossary.md`)](docs/glossary.md)（不在术语表中的非通用概念，要么补入术语表、要么用普通话直接写清）。此处仅直接挂接按域整理的常青文档（`docs/evergreen/`，单文件与术语表均严控 `< 20,000 B` 防 Antigravity `24 KB` 截断）；各常青文档内部按需以回链指向关键工作记录（`docs/records/`）。
 
 | 文档路径 | 类型 | 域/模块 | 关联源码 | 核心用途 |
 | :--- | :--- | :--- | :--- | :--- |
+| [项目术语表](docs/glossary.md) | GLOSSARY | 全仓共享术语 | 全仓库 | 常青文档与工作记录共用的项目专有概念普通话定义（写文档前先对齐） |
 | [平台架构与存储引擎](docs/evergreen/platform-and-storage.md) | EVERGREEN | 存储与桌面集成 | `Cargo.toml`, `modules/cowfs/`, `modules/cowlink_overlay/` | Cargo Workspace 单向分层、`.cowdiff` 存储与状态机、零重入与 `bindflt` 角标契约 |
 | [桌面工作台与网速引擎](docs/evergreen/desktop-tray-and-settings.md) | EVERGREEN | 桌面工作台 | `modules/devtools/src/main.rs`, `modules/devtools/src/net_speed.rs`, `modules/devtools/src/taskbar_window.rs`, `modules/devtools/src/settings.rs`, `modules/devtools/src/sidecar.rs` | Win32 零黑窗、单实例唤醒、网速采集、Win11 UIA 网速条与开机自启设置 |
 | [三端看板与研发工作流](docs/evergreen/dashboard-and-workflows.md) | EVERGREEN | 工作台与插件看板 | `modules/devtools/web/`, `modules/devtools/ui/`, `modules/devtools/src/agent_mind.rs`, `modules/devtools/src/sidecar.rs`, `plugins/a8-agent-mind/sidecars/panel/main.mjs` | 三端同源 IIFE 构建与防白屏不变量、Origin/Token 边界、代码审核与 Grok 提案联动 |
@@ -71,7 +72,7 @@ flowchart LR
 3. **驱动隔离与死锁免疫原则 (Zero Re-entrancy)**：
    - 物理存储层（Upper/Lower）绝对不能位于虚拟挂载点（Mount Point）内部；
    - 虚拟文件系统必须在解析层与遍历层对 `.cowdiff` 和 `.cowlink` 执行根级静默过滤，禁止工作区透视自身增量。
-4. **双层文档与验证交卷门槛**：
-   - **双层文档**：普通小改靠单测与行内注释；重大变更写 `docs/records/` 后由 `docs-curator` 核验源码并同步 `docs/evergreen/` 与 `AGENTS.md`；
+4. **双层文档、术语表与验证交卷门槛**：
+   - **双层文档与术语表**：普通小改靠单测与行内注释；重大变更写 `docs/records/` 后由 `docs-curator` 核验源码并同步 `docs/evergreen/` 与 `AGENTS.md`；文档写作遵循术语表二选一原则（不在 [`docs/glossary.md`](docs/glossary.md) 中的非通用概念，要么补入术语表并用普通话讲清，要么在正文直接用普通话解释）；
    - **Rust 门禁**：`cargo test --workspace` 与 `cargo check --workspace` 全绿；
    - **前端与结构门禁**：`modules/devtools/web` 执行 `npm run build`（`tsc -b && vite build`）；根目录执行 `node scripts/lints/check_swallowed_exceptions.mjs`、`node scripts/lints/check_workspace_hygiene.mjs`、`node scripts/lints/check_work_records.mjs`、`py -3 scripts/lints/check_plugin_agents.py` 与 `py -3 scripts/lints/check_stop_hook_invariants.py` 全绿通过。

@@ -13,7 +13,7 @@
 ## 1. 问题与目标
 
 - **要解决的问题**：实测单层按日期追加模式下，`e:/a8-turbo/docs` 膨胀至 89 个文件（`1,050.9 KB`）、`docs/INDEX.md` 达 `56,678 B`（超 Antigravity 单文件 `24 KB` 截断上限两倍以上），且过程文档与已废除方案互相打架；同时 `stop_reflect.py` 无法识别“只写记录未更新常青文档”，且 `judge_router.py` / `review.ps1` 原要求 5 列表而静默跳过 4 列表 `AGENTS.md`。
-- **设计目标**：建立常青文档与按日期工作记录正交分离的双层体系，引入隔离上下文 `docs-curator` 以真实源码核验同步常青真源，并修通 `AGENTS.md` ↔ `a8-judge` / `dsh-reviewer` 路由。
+- **设计目标**：建立常青文档与按日期工作记录职责分离的双层体系，引入隔离上下文 `docs-curator` 以真实源码核验同步常青真源，并修通 `AGENTS.md` ↔ `a8-judge` / `dsh-reviewer` 路由。
 
 ## 2. 核心设计与结论
 
@@ -21,7 +21,7 @@
    - `docs/evergreen/*.md`：按业务域沉淀当前生效、无损、零重复的系统真相，直挂根目录 `AGENTS.md`（`< 20,000 B`）；
    - `docs/records/YYYYMMDD-<TYPE>-<MODULE>-<SUBJECT>.md`：承载决策权衡、故障复盘与规格，不挂 `AGENTS.md`，全部登记至 `docs/INDEX.md`（常规局部改动仅靠单测与注释，严禁滥建）；
    - `docs/deferred/*.md`：未落地或暂停设计单独隔离；
-   - **否决替代方案**：否决在常青文档用一行式墓碑表丢掉历史触发条件；否决主会话改码后顺手原地糊常青文档；否决把常规 Bug 一律建 `*.decision.json`。
+   - **否决替代方案**：否决在常青文档用一行式过时清单表丢掉历史触发条件；否决主会话改码后顺手原地糊常青文档；否决把常规 Bug 一律建 `*.decision.json`。
 2. **渐进式披露回链与 `docs-curator` 闭环**：
    - 常青文档在对应章节挂载指向关键 `../records/YYYYMMDD-....md` 的回链供按需下钻；
    - `stop_reflect.py` 按 `_classify_doc_path_role` 区分 `evergreen` / `record` / `deferred` / `index` / `non_doc`，当本轮改动记录或非文档源码却未更新常青文档时触发 `EVERGREEN_SYNC_QUESTION`，需要同步时指令主会话调用 `invoke_subagent(TypeName="docs-curator", Workspace="inherit", ...)`；

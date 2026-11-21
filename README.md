@@ -12,7 +12,7 @@
 
 <p align="center">
   <b>极速 · 轻量 · 纯粹 · 零黑窗</b><br>
-  集成了自主研发的 WinFsp 写时复制文件系统（CowFS）、Hosts 原生维护与环境诊断等能力的开发者效率底座。
+  集成了自主研发的 WinFsp 写时复制文件系统（CowFS）、Hosts 原生维护与环境诊断等能力的开发者效率平台。
 </p>
 
 [功能亮点](#-核心功能矩阵) •
@@ -32,7 +32,7 @@
 专为**“基于同一份大型代码仓库并行派生多个独立开发分支”**场景设计：
 - **秒级挂载 (< 0.5s)**：无论底层源码库是 10GB 还是 100GB，新建工作区耗时不足半秒，初始磁盘占用为 **0**；
 - **源内自完整 `.cowdiff` 变体池**：差异数据物理持久化在源目录内部的 `.cowdiff/{pathHash}/`，支持单源码派生多个独立目标工作区；差异与源码同盘同速，**C 盘系统盘 0 物理占用**，支持整包随源码归档迁移；
-- **白颜墓碑标记（Whiteout）**：工作区中删除源文件自动生成虚拟白颜标记，底层文件保持 0 污染，卸载或重新挂载后完整保留状态；
+- **删除标记（Whiteout）**：工作区中删除源文件自动在差异层生成 `.cow_deleted.<文件名>` 标记文件，原始源码保持 0 污染，卸载或重新挂载后完整保留状态；
 - **驱动级内核隔离与反穿透**：底层文件系统自动屏蔽 `.cowdiff` 自身，彻底杜绝工作区透视增量数据或引起递归死锁。
 
 ### 2. 🌐 Hosts 原生极速维护引擎
@@ -70,14 +70,14 @@ graph TD
         CLI["src/main.rs (cowfs.exe CLI 驱动)"]
         WinFspContext["src/winfsp_fs/ (WinFsp 回调派发器)"]
         CopyUp["src/cow/copy_up.rs (单文件原子写时复制)"]
-        Whiteout["src/cow/whiteout.rs (墓碑标记管理器)"]
+        Whiteout["src/cow/whiteout.rs (删除标记管理器)"]
         Readdir["src/cow/readdir.rs (目录合并与屏蔽)"]
         State["src/cow/state.rs (三层路径状态机)"]
         Meta["src/config.rs (自完整源内 .cowdiff 契约)"]
     end
 
     subgraph Storage["底层物理呈现与虚拟文件系统"]
-        SourceRepo["源代码目录 (只读基底 Lower Layer)"]
+        SourceRepo["源代码目录 (只读源目录 Lower Layer)"]
         CowDiff["源目录/.cowdiff/{pathHash}/ (私有增量 Upper Layer)"]
         MountPoint["虚拟挂载点 (工作区呈现 Merged Layer)"]
         HostsFile["C:/Windows/System32/drivers/etc/hosts"]
@@ -105,7 +105,7 @@ graph TD
 
 ```text
 E:\repo_root\
-├── src/                          # 原始工程代码（只读基底，100% 零污染）
+├── src/                          # 原始工程代码（只读源目录，100% 零污染）
 ├── Cargo.toml
 └── .cowdiff/                     # 变体存储池（支持多工作区物理隔离）
     ├── ws_feature_a_4f92c10a/    # 工作区 A（Slug + PathHash）
@@ -113,7 +113,7 @@ E:\repo_root\
     │   └── diff/                 # 物理增量文件层（Upper）
     │       ├── modified_app.rs   # 修改文件
     │       ├── new_feature.rs    # 新增文件
-    │       └── .cow_deleted.xxx  # 白颜删除标记
+    │       └── .cow_deleted.xxx  # Whiteout 删除标记
     └── ws_bugfix_b_9a87bf12/     # 工作区 B（独立增量）
         ├── meta.json
         └── diff/

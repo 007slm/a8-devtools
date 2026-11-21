@@ -1,6 +1,6 @@
 # a8-agent-mind 设计与演进架构规范 (design.md)
 
-> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、显式状态机、标准工程目录与双层仓库地图随会话自动治理 (`mind-rules.md`)”**、**“后置高维品味轻提示与文档门禁钩子 (`hooks.json` + `stop_reflect.py`，屏蔽未收口回合、废除静默写盘，仅以 `ASK_USER_UI` 与 `DOCS_MAINTENANCE` 提示)”**、**“AI 自主择机红线终审 (`a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，构建职责正交、自动闭环的智能体心智中枢。
+> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、共享术语表、显式状态机、标准工程目录与双层仓库地图随会话自动治理 (`mind-rules.md`)”**、**“后置高维品味轻提示与文档门禁钩子 (`hooks.json` + `stop_reflect.py`，屏蔽未收口回合、废除静默写盘，仅以 `ASK_USER_UI` 与 `DOCS_MAINTENANCE` 提示)”**、**“AI 自主择机红线终审 (`a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，构建职责清晰、自动闭环的智能体心智中枢。
 
 ---
 
@@ -16,27 +16,27 @@
 
 ### 1.2 彻底抛弃 ArchUnit 等静态符号匹配
 - **传统工具死穴**：依靠类名是否包含 `Compat`、是否有 `@Deprecated` 注解进行正则猜度。在真实复杂工程中，必然把正常协议驱动封装误判为违规、把 Protobuf 编译器自动生成的桩代码全部误报，却防不住改换名称的隐蔽违规。
-- **语义裁决哲学**：架构红线是**高维的物理因果链与生命周期闭环**（如“是否破坏单一事实源”、“是否为了照顾旧系统私自保留双轨死代码”）。必须由具备上下文推理能力的 Judge 结合语义概率判定完成闭环。
+- **语义裁决哲学**：架构红线是**高维的物理因果链与生命周期闭环**（如“是否破坏单一事实源”、“是否为了照顾旧系统私自保留新旧并存死代码”）。必须由具备上下文推理能力的 Judge 结合语义概率判定完成闭环。
 
 ### 1.3 Google Gemini Decisions API (`gemini-decision-1`) 零输出 Token 概率校准裁决
 插件裁决引擎已全面切换至官方 **Google Gemini Decisions API (`gemini-decision-1`)**：
-- **零输出 Token 结构化判定 (Zero Output Token)**：不生成开放式冗余文本，直接对 4 大正交维度输出布尔选项与校准概率分布 (`confidence` / `probabilities`)；
+- **零输出 Token 结构化判定 (Zero Output Token)**：不生成开放式冗余文本，直接对 4 个互不重叠的核心维度输出布尔选项与校准概率分布 (`confidence` / `probabilities`)；
 - **低延迟高确定性**：通过 `skills/a8-judge/scripts/decisions_client.py` 原生对接 `/v1beta/decisions`，毫秒级定音；
 - **严格 Schema 约束**：裁决结果严格映射并校验为 `skills/a8-judge/schemas/verdict.json` 定义的 `ArchitectureVerdict`，杜绝格式幻觉。
 
 ### 1.4 语法元特征与 `docs/` 指针路由 + 全自由度终审流水线
 既做到“只评相关维度、节省上下文”，又做到“结合设计文档避免误报、全仓核验准确定音”：
 1. **步骤一：变更指针与设计文档路由 (`judge_router.py`)**：
-   - 提取当前 Git Diff 语法元特征与真正触及的正交关注点 (`activated_categories`)，并兼容解析目标仓库 `AGENTS.md`（支持 4/5/6+ 列常青/SPEC 索引表，含表头自动识别与全列源码路径提取）输出命中文档清单 (`relevant_docs`)；
+   - 提取当前 Git Diff 语法元特征与真正触及的检查维度 (`activated_categories`)，并兼容解析目标仓库 `AGENTS.md`（支持 4/5/6+ 列常青/SPEC 索引表，含表头自动识别与全列源码路径提取）输出命中文档清单 (`relevant_docs`)；
 2. **步骤二：Decisions API 先验初筛 + `arch-judge` 全自由终审**：
    - 将 Git Diff 仅作为变更指针：`decisions_client.py` 为每个分片前置 `Documented Design Context` 向 `gemini-decision-1` 发起先验初筛，最终由具备完整工具权限的 `arch-judge` 结合项目 `AGENTS.md`、`docs/`、源码全貌与调用链作出终审；
    - **Antigravity `agents/*.md` 工具下发契约**：插件定义独立执行权子代理时，frontmatter 必须同时显式声明 `subagent: true`、`mainAgent: false` 与单行 `tools: [read_file, edit_file, write_file, run_command, manage_task, search_web]`；缺少 `mainAgent: false` 或使用多行 YAML `tools:` 列表会被运行时静默降级为无 `run_command` 的 9 工具只读集。
 
 ---
 
-## 2. 4 大正交关注点与通用元特征路由 (Zero Project Hardcoding)
+## 2. 4 个核心检查维度与通用元特征路由 (Zero Project Hardcoding)
 
-为了防止“一锅端导致大模型注意力稀释丢检查项”，同时防止“逐条检查导致 Token 浪费与延迟暴增”，将全量规则划分为 4 个物理正交维度，并基于 **代码变更的语法元特征** 自动路由：
+为了防止“一锅端导致大模型注意力稀释丢检查项”，同时防止“逐条检查导致 Token 浪费与延迟暴增”，将全量规则划分为 4 个互不重叠的检查维度，并基于 **代码变更的语法元特征** 自动路由：
 
 ```text
                                   Git Diff 原始变动
@@ -53,7 +53,7 @@
 
 ---
 
-## 3. 正交分工机制：AI 自主地图文档与红线终审 + `/a8-dsh-review` + `/a8-improve` 主动沉淀规则
+## 3. 职责分工机制：AI 自主地图文档与红线终审 + `/a8-dsh-review` + `/a8-improve` 主动沉淀规则
 
 为了避免混淆“日常必尽的自主治理义务”与“高谨慎度的人工规则演化”，系统将各项能力清晰解耦：
 
@@ -116,7 +116,7 @@
 - **宿主语义 Tokens**：完全使用 `--card`, `--background`, `--foreground`, `--muted-foreground`, `--border` 等动态变量，自适应暗黑/浅色模式；
 - **排版原则**：
   - 必须紧凑（高度收敛在 250px~360px 区间），信息密度高；
-  - `a8-judge` 报表：采用 2x2 网格呈现 4 大正交维度状态（`0 违规` 绿色微徽章与 Google Decisions API 置信度），带有 `<details>` 变动溯源清单；
+  - `a8-judge` 报表：采用 2x2 网格呈现 4 个核心维度状态（`0 违规` 绿色微徽章与 Google Decisions API 置信度），带有 `<details>` 变动溯源清单；
   - `a8-improve` 复盘卡片：顶部呈现模式标签（`规则沉淀 / 规则清理`）与任务主题，中部双栏呈现“五维纠偏信号捕获”和“规则动作与作用域（通用规范 / 项目红线 / 项目 Lint / 清理失效或重复）”，底部预览标准 `git diff` 规则/检查补丁，并引导按编号精确落盘。
 
 ---
@@ -153,7 +153,7 @@ E:\a8-devtools\plugins\a8-agent-mind/
 │   │       ├── judge_router.py     # 纯通用语法元特征路由器
 │   │       └── decisions_client.py # Google Gemini Decisions API 客户端
 │   ├── a8-dsh-review/              # 【能力2：DSH 有界终审 Loop (/a8-dsh-review)】
-│   │   ├── SKILL.md                # 2~3 轮上限 + YAGNI (F×S < 10) 熔断与双通道交付协议
+│   │   ├── SKILL.md                # 2~3 轮上限 + YAGNI (F×S < 10) 熔断与会话回传+报告归档协议
 │   │   └── scripts/
 │   │       └── review.ps1          # 双流分离、跨仓会话自动映射与 reviews/*.md 归档脚本
 │   ├── a8-improve/                 # 【能力3：经验沉淀与规则库清理 (/a8-improve)】
@@ -173,7 +173,7 @@ E:\a8-devtools\plugins\a8-agent-mind/
 
 在全新会话中接管本插件开发时，请遵循以下流程：
 
-1. **读取本文件 (`design.md`) 与 [rules/mind-rules.md](rules/mind-rules.md)**：理解当前的 4 大正交维度、Google Decisions API 集成方式与执行契约；
+1. **读取本文件 (`design.md`) 与 [rules/mind-rules.md](rules/mind-rules.md)**：理解当前的 4 个核心检查维度、Google Decisions API 集成方式与执行契约；
 2. **规则演进与维护**：
    - 通用架构红线、文档与双层仓库地图自动治理总则统一在 [rules/mind-rules.md](rules/mind-rules.md) 维护（`judge_router.py` 自动扫描 `rules/*.md` 加载）；
 3. **测试路由与裁决链路**：

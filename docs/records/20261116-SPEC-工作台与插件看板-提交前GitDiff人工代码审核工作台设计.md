@@ -14,7 +14,7 @@
 
 ## 2. 核心设计与结论
 
-1. **正交一级入口挂载**：桌面端左侧导航栏（`activeTab = 'code-review'`）与命令面板、独立 Web（`:18765`）及 Sidecar 顶栏双模块切换器（支持 `?tab=code-review`）共享同一 `CodeReviewTab` 组件，与 `AgentMindView` 职责正交。
+1. **独立一级入口挂载**：桌面端左侧导航栏（`activeTab = 'code-review'`）与命令面板、独立 Web（`:18765`）及 Sidecar 顶栏双模块切换器（支持 `?tab=code-review`）共享同一 `CodeReviewTab` 组件，与 `AgentMindView` 职责相互独立。
 2. **控制面协议与安全/截断边界**：
    - Tauri Command `get_repo_git_diff` ↔ HTTP `POST /api/agent-mind/git/diff`（入参 `{ repo_code, scope?: "all" | "staged" | "unstaged" }`，返参 `GitReviewDiffDto`）；
    - 通过 `resolve_registered_repo_root` 仅放行 `repos.md` 已登记仓库；Rust 端固定 `creation_flags(0x08000000)`、Node 端 `windowsHide: true` 且统一附带 `-c core.quotePath=false` 防黑窗与中文转义；

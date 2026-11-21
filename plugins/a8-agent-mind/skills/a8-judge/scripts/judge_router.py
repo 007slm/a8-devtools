@@ -1026,35 +1026,39 @@ def get_relevant_docs_for_files(
 def load_documented_decisions_context(
     workspace_dir: Path | None,
     changed_files: list[str],
-    max_chars: int = 1600,
+    max_chars: int | None = None,
 ) -> str:
     """
-    Loads compact documented design-decision context from workspace AGENTS.md & docs/
-    matching the current diff files so Gemini Decisions API avoids re-flagging approved trade-offs.
+    Loads full matched Evergreen/design docs from workspace AGENTS.md & docs/
+    for the current diff files so Decisions API / Judges see intact contracts
+    and intentional trade-offs without artificial snippet truncation.
     """
     if not workspace_dir:
         return ""
     ws = Path(workspace_dir)
-    guide = get_relevant_docs_for_files(ws, changed_files, limit=3)
+    guide = get_relevant_docs_for_files(ws, changed_files, limit=4)
     if not guide["relevant_docs"]:
         return ""
 
     chunks: list[str] = []
     total_len = 0
     for row in guide["relevant_docs"]:
-        highlights = _extract_doc_highlights(ws / row["rel_path"], max_chars=360)
+        doc_path = ws / row["rel_path"]
+        try:
+            full_text = doc_path.read_text(encoding="utf-8", errors="replace").strip() if doc_path.is_file() else ""
+        except OSError:
+            full_text = ""
         status_part = f" ({row['status']})" if row.get("status") else ""
-        entry = f"- [{row['doc_type']}] {row['rel_path']}{status_part}: {row['summary']}"
-        if highlights:
-            entry += f" | Key points: {highlights}"
-        if total_len + len(entry) + 1 > max_chars:
+        header = f"### [{row['doc_type']}] {row['rel_path']}{status_part} — {row['summary']}"
+        entry = f"{header}\n{full_text}" if full_text else header
+        if max_chars is not None and total_len + len(entry) + 2 > max_chars:
             remain = max_chars - total_len - 4
             if remain > 60:
                 chunks.append(entry[:remain].rstrip() + "...")
             break
         chunks.append(entry)
-        total_len += len(entry) + 1
-    return "\n".join(chunks)
+        total_len += len(entry) + 2
+    return "\n\n".join(chunks)
 
 
 def main():

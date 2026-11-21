@@ -969,6 +969,7 @@ function parseRepoDocMeta(raw, fileName) {
 
 function classifyRepoDocTier(relLower, date, status) {
   const sub = relLower.startsWith('docs/') ? relLower.slice(5) : relLower;
+  if (sub === 'glossary.md') return { tier: 'glossary', fallbackType: 'GLOSSARY' };
   if (sub.startsWith('evergreen/')) return { tier: 'evergreen', fallbackType: 'EVERGREEN' };
   if (sub.startsWith('deferred/')) {
     return { tier: 'deferred', fallbackType: 'DEFERRED' };
@@ -1014,7 +1015,7 @@ function collectRepoDocsRecursive(repoRoot, dir, repoCode, out) {
     }
     const { title, date, parsedType, status } = parseRepoDocMeta(raw, ent.name);
     const { tier, fallbackType } = classifyRepoDocTier(relLower, date, status);
-    const doc_type = tier === 'evergreen' || !parsedType ? fallbackType : parsedType;
+    const doc_type = tier === 'evergreen' || tier === 'glossary' || !parsedType ? fallbackType : parsedType;
     const { estimated_tokens } = estimateMarkdownTokens(raw);
     out.push({
       repo: repoCode,
@@ -1042,7 +1043,8 @@ function scanRepoDocs(repos) {
       collectRepoDocsRecursive(phys, docsDir, proj.code, docs);
     }
   }
-  const tierRank = (t) => (t === 'evergreen' ? 0 : t === 'record' ? 1 : t === 'deferred' ? 2 : 3);
+  const tierRank = (t) =>
+    t === 'glossary' ? 0 : t === 'evergreen' ? 1 : t === 'record' ? 2 : t === 'deferred' ? 3 : 4;
   docs.sort(
     (a, b) =>
       a.repo.localeCompare(b.repo) ||

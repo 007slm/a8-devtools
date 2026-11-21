@@ -9,7 +9,7 @@
 
 ## 1. 问题与目标
 
-- **要解决的问题**：桌面端、`18765` Rust 看板与 `a8-agent-mind` 插件 Antigravity Sidecar 复用同一份前端静态产物后，在 Sidecar WebView、自定义协议宿主与离线 WebView2 环境下先后暴露 4 类 100% 白屏故障，且曾残留旧版手写 `sidecars/panel/index.html` 双轨文件。
+- **要解决的问题**：桌面端、`18765` Rust 看板与 `a8-agent-mind` 插件 Antigravity Sidecar 复用同一份前端静态产物后，在 Sidecar WebView、自定义协议宿主与离线 WebView2 环境下先后暴露 4 类 100% 白屏故障，且曾残留旧版手写 `sidecars/panel/index.html` 独立副本。
 - **设计目标**：根治三端静态资源拒载、协议跨域 403、缺失宿主预加载桥接与渲染异常吞没问题，确立单一 `modules/devtools/ui` 构建产物与三端无差别运行不变量。
 
 ## 2. 核心设计与结论
@@ -21,7 +21,7 @@
    - `main.mjs` 与 `sidecar.rs` 将非 `/api/` 的 `GET` / `HEAD` 静态资源与 `OPTIONS` 置于 Origin 检查之前（`Cache-Control: no-store`）；
    - 仅 `/api/` 接口校验 `Origin`：放行无 `Origin`、`Origin: null`、本地自定义协议与本机回环，对外部网页 Origin 返回 `403`，CORS 放行 `X-Sidecar-Token`。
 3. **`preload.js` 桥接与单一 UI 产物源**：
-   - `index.html` 先于主脚本加载 `./preload.js`（`main.mjs` 优先托管宿主 `sidecar_sdk/preload.js`，非宿主环境回退静默兜底 `public/preload.js`）；删除遗留 `sidecars/panel/index.html` 双轨文件。
+   - `index.html` 先于主脚本加载 `./preload.js`（`main.mjs` 优先托管宿主 `sidecar_sdk/preload.js`，非宿主环境回退静默兜底 `public/preload.js`）；删除遗留 `sidecars/panel/index.html` 独立副本。
 4. **渲染错误边界与独立模式判定**：
    - `main.tsx` 包裹 `RootErrorBoundary`、禁用会触发运行时崩溃的 HeroUI v2 扁平属性；`App.tsx` 通过 `isStandaloneSidecar` 隔离桌面端轮询。
 

@@ -1,6 +1,6 @@
 # 桌面工作台、任务栏网速条与系统设置（常青文档）
 
-> **所属域**：`a8-devtools.exe` 原生桌面宿主、网速采集、任务栏悬浮条、单实例与设置中心  
+> **所属域**：`a8-devtools.exe` 原生桌面宿主、网速采集、任务栏悬浮条、单实例与设置中心（专有术语见 [项目术语表](../glossary.md)）  
 > **适用源码**：`modules/devtools/src/main.rs`、`modules/devtools/src/net_speed.rs`、`modules/devtools/src/taskbar_window.rs`、`modules/devtools/src/settings.rs`、`modules/devtools/src/sidecar.rs`  
 > **相关记录（渐进式披露）**：
 > - [Windows 任务栏托盘与实时网速监控引擎规范](../records/20261108-SPEC-工作台模块-Windows任务栏托盘与实时网速监控引擎.md)
@@ -42,7 +42,7 @@
 ## 4. 全局设置与开机自启（`settings.rs`）
 
 - **持久化路径**：`%LOCALAPPDATA%\cowlink\devtools_settings.json`（数据结构 `AppSettings`：`autostart`、`taskbar_speed_enabled`、`sample_interval_secs`、`fullscreen_hide`）。
-- **开机自启动真理源**：通过 Win32 原生 API（`RegOpenKeyExW` / `RegSetValueExW` / `RegDeleteValueW`）直接读写 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` 键 `a8-devtools`（值为带双引号包裹的 `"{current_exe_path}"`），每次读取以注册表实际存在与否为唯一事实源。
+- **开机自启动唯一事实源**：通过 Win32 原生 API（`RegOpenKeyExW` / `RegSetValueExW` / `RegDeleteValueW`）直接读写 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` 键 `a8-devtools`（值为带双引号包裹的 `"{current_exe_path}"`），每次读取以注册表实际存在与否为唯一事实源。
 
 ---
 

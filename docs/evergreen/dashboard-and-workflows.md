@@ -1,6 +1,6 @@
 # 三端同源看板、代码审核与 Grok 每日提案联动（常青文档）
 
-> **所属域**：前端单一构建产物、三端同源适配、提交前 Git Diff 代码审核与 Grok 每日提案闭环  
+> **所属域**：前端单一构建产物、三端同源适配、提交前 Git Diff 代码审核与 Grok 每日提案闭环（专有术语见 [项目术语表](../glossary.md)）  
 > **适用源码**：`modules/devtools/web/`、`modules/devtools/ui/`、`modules/devtools/src/agent_mind.rs`、`modules/devtools/src/sidecar.rs`、`plugins/a8-agent-mind/sidecars/panel/main.mjs`  
 > **相关记录（渐进式披露）**：
 > - [三端同源 Dashboard 白屏根因与防踩坑指南](../records/20261114-BUG-工作台与插件看板-三端同源Dashboard白屏根因与防踩坑指南.md)
@@ -26,7 +26,7 @@
 
 ### 1.1 防白屏核心不变量（强制守恒）
 1. **经典 IIFE 单包输出**：`vite.config.ts` 固定 `base: './'`、IIFE 单包 `assets/index.js`（CSS 运行时内联注入），并通过 `classicSidecarHtmlPlugin()` 剥离 `<script>` 与 `<link>` 的 `type="module"` 和 `crossorigin` 属性，防止自定义协议 WebView（`plugin://`、`vscode-webview://`、`Origin: null`）因 CORS 或 Hash 缓存失配白屏。
-2. **`preload.js` 桥接与单一产物约束**：`index.html` 在主脚本前加载 `./preload.js`（`main.mjs` 优先读取宿主 `sidecar_sdk/preload.js`，非宿主环境回退 `public/preload.js` 静默兜底）；禁止再存在独立手写 `sidecars/panel/index.html` 双轨文件，构建产物缺失时直接返回 `503`。
+2. **`preload.js` 桥接与单一产物约束**：`index.html` 在主脚本前加载 `./preload.js`（`main.mjs` 优先读取宿主 `sidecar_sdk/preload.js`，非宿主环境回退 `public/preload.js` 静默兜底）；禁止再存在独立手写 `sidecars/panel/index.html` 独立副本，构建产物缺失时直接返回 `503`。
 3. **顶层容错与环境隔离**：`main.tsx` 永久包裹 `RootErrorBoundary`；`App.tsx` 通过 `isStandaloneSidecar` 在独立看板模式下跳过桌面端 `get_workspaces` / `get_net_speed` 轮询。
 4. **Origin 与鉴权分流边界（`sidecar.rs` & `main.mjs`）**：
    - 非 `/api/` 的 `GET` / `HEAD` 静态资源与 `OPTIONS` 预检**不经过 Origin 拦截**，下发 `Access-Control-Allow-Origin: *` 与 `Cache-Control: no-store`；
@@ -37,7 +37,7 @@
 
 ## 2. 独立一级入口：提交前 Git Diff 代码审核（`CodeReviewTab`）
 
-- **正交定位**：作为一级入口与「心智治理（`AgentMindView`）」并列（桌面左侧主导航 + 独立 Web 顶栏切换 `心智治理` | `代码审核`，支持 `?tab=code-review` 直达）。
+- **独立并列定位**：作为一级入口与「心智治理（`AgentMindView`）」并列（桌面左侧主导航 + 独立 Web 顶栏切换 `心智治理` | `代码审核`，支持 `?tab=code-review` 直达）。
 - **控制面契约**：Tauri Command `get_repo_git_diff` ↔ HTTP `POST /api/agent-mind/git/diff`，入参 `{ repo_code, scope?: "all" | "staged" | "unstaged" }`，返参 `GitReviewDiffDto`。
 - **非 Git 仓库健康标识（`has_git`）**：
   - `agent_mind.rs`（`HostProjectCardDto.has_git` via `has_git_repo`）与 `main.mjs`（`parseReposMd` `has_git` via `hasGitRepo`）通过无进程遍历项目路径祖先目录的 `.git` 判定是否为 Git 仓库，且显式跳过驱动器根目录（如 `C:\.git`）防误判；
@@ -72,15 +72,15 @@
   - **仓库 `README` 探测**：Rust（`agent_mind.rs` `detect_repo_readme` → `HostProjectCardDto.readme_rel_path`）与 Sidecar（`main.mjs` `detectRepoReadme` → `parseReposMd` `readme_rel_path`）按 `["README.md", "readme.md"]` 顺序探测已登记仓库根目录常规文件，缺失时返回空串；
   - **递归扫描 `docs/`**：`scan_repo_docs` ↔ `scanRepoDocs` 递归扫描 `repos.md` 已登记仓库的 `docs/**/*.md`（跳过 `.git`、`node_modules`、`target`、`.cowdiff`、`.cowlink`），输出 `RepoDocEntryDto` 挂载至 `AgentMindOverviewDto.repo_docs`；
   - `parse_doc_meta` ↔ `parseRepoDocMeta`：仅扫描前 20 行提取首个 `#` 标题（缺失回退文件名）与唯一标准前缀 `- **状态**：`（最长 48 字符，已移除 `决策状态` 等非标旧头兜底），并从文件名 `YYYYMMDD-<TYPE>` 提取 `date` 与 `doc_type`；
-  - `classify_repo_doc_tier` ↔ `classifyRepoDocTier`：严格按 `evergreen/`（`evergreen`）、`deferred/`（`deferred`）、`records/` 或带日期前缀（当状态以 `已废弃` 或 `已暂缓` 开头时自动归入 `deferred`，其余归 `record`）以及 `other` 四类归档（已移除 `docs/INDEX.md`、`archive/`、`history/` 等旧分类兜底）；统计 `size_bytes` 与 `estimated_tokens`（前端 `size_bytes >= 20000` 显示 24 KB 截断预警），排序为 `repo` 升序 → tier 优先级（`evergreen`、`record`、`deferred`、`other`）→ `date` / `modified_ts` 降序 → `rel_path` 升序。
+  - `classify_repo_doc_tier` ↔ `classifyRepoDocTier`：严格按 `glossary.md`（`glossary` / `GLOSSARY`）、`evergreen/`（`evergreen`）、`deferred/`（`deferred`）、`records/` 或带日期前缀（当状态以 `已废弃` 或 `已暂缓` 开头时自动归入 `deferred`，其余归 `record`）以及 `other` 五类归档（已移除 `docs/INDEX.md`、`archive/`、`history/` 等旧分类兜底）；统计 `size_bytes` 与 `estimated_tokens`（前端 `size_bytes >= 20000` 显示 24 KB 截断预警），排序为 `repo` 升序 → tier 优先级（`glossary`、`evergreen`、`record`、`deferred`、`other`）→ `date` / `modified_ts` 降序 → `rel_path` 升序。
 - **只读与写入隔离边界（`is_allowed_repo_governance_rel` ↔ `isAllowedRepoGovernanceRel`）**：
   - 仓库作用域调用 `read_agent_mind_file`（`POST /api/agent-mind/read`）传入 `repo_code` + `rel_path` 且 `writable == false` 时，放行仓库根目录 `README.md`（大小写不敏感匹配 `readme.md`）、`docs/**/*.md` 与 `scripts/lints/*.py|.mjs` 的只读读取；
   - 写入边界（`writable == true`）仍严格锁定 `AGENTS.md`/`GEMINI.md`、`.agents/rules/*.md` 与 `scripts/lints/*.decision.json`，严禁经由面板或文档浏览器修改仓库 `README.md` 或 `docs/`。
 - **仓库详情三段结构与 Tag 化文档浏览器（`AgentMindView.tsx` & `RepoDocsBrowser.tsx`）**：
-  - **仓库卡片与详情三段主导航（`projects`）**：卡片角标展示 `README`/`无 README`、`常青 N` 与非常青 `docs M`（精确统计 `total - evergreen`，以及 `无 Git` 预警）；点击进入仓库详情默认打开 **`主页`**（首屏直呈仓库 `README.md`，点击文内 `docs/evergreen/` 或 `docs/` 链接自动切换对应页签），副栏右侧提供 **`仓库地图档案`** 抽屉按钮（滑出阅读/编辑 `repos/*.md`，含未保存退出守卫）；顶栏右侧可切换 **`常青文档`**（`<RepoDocsBrowser variant="evergreen" />`，计数 `evergreen`）与 **`docs 文档`**（`<RepoDocsBrowser variant="docs" />`，仅展示 `doc_tier !== 'evergreen'` 的非常青 `docs/` 文档、不重复列出常青，角标精确统计 `total - evergreen`）；
-  - **去分类 Tab、左栏一键收起与 Tag 化表达（`RepoDocsBrowser.tsx`）**：在 `心智治理 (rules)` 的 `治理文档` 子标签（`variant="all"`，全局模式显示 `showRepoBadge`）与仓库详情复用同一浏览器组件，移除冗余分类分页 Tab，仅在 `variant !== 'evergreen'` 或文档数 `> 6` 时展示搜索框（匹配标题、路径、类型、状态、日期或仓库），左侧列表通过统一 Tag（`常青` / `已废弃` / `暂缓` / `ADR` / `BUG` / `SPEC` / `DOC`，叠加 `部分失效` 徽标）直观表达类型与时效状态；阅读区顶栏左侧提供 `PanelLeftClose` / `PanelLeftOpen`（`listOpen` 状态）按钮，支持一键收起左侧文档列表切换为 `lg:col-span-12` 全宽沉浸阅读；
+  - **仓库卡片与详情三段主导航（`projects`）**：卡片角标展示 `README`/`无 README`、`术语表`（存在 `docs/glossary.md` 时显示）、`常青 N` 与非常青 `docs M`（精确统计 `total - evergreen - glossary`，以及 `无 Git` 预警）；点击进入仓库详情默认打开 **`主页`**（首屏直呈仓库 `README.md`，点击文内 `docs/glossary.md`、`docs/evergreen/` 或 `docs/` 链接自动切换对应页签），副栏右侧提供 **`仓库地图档案`** 抽屉按钮（滑出阅读/编辑 `repos/*.md`，含未保存退出守卫）；顶栏右侧可切换 **`常青文档`**（`<RepoDocsBrowser variant="evergreen" />`，置顶展示 `术语表` + `常青文档`，计数 `evergreen + glossary`）与 **`docs 文档`**（`<RepoDocsBrowser variant="docs" />`，仅展示工作记录与暂缓/废弃等非常青文档，角标精确统计 `total - evergreen - glossary`）；
+  - **去分类 Tab、左栏一键收起与 Tag 化表达（`RepoDocsBrowser.tsx`）**：在 `心智治理 (rules)` 的 `治理文档` 子标签（`variant="all"`，全局模式显示 `showRepoBadge`）与仓库详情复用同一浏览器组件，移除冗余分类分页 Tab，仅在 `variant !== 'evergreen'` 或文档数 `> 6` 时展示搜索框（匹配标题、路径、类型、Tag 标签、状态、日期或仓库），左侧列表通过统一 Tag（`术语表` / `常青` / `已废弃` / `暂缓` / `ADR` / `BUG` / `SPEC` / `DOC`，叠加 `部分失效` 徽标）直观表达类型与时效状态；阅读区顶栏左侧提供 `PanelLeftClose` / `PanelLeftOpen`（`listOpen` 状态）按钮，支持一键收起左侧文档列表切换为 `lg:col-span-12` 全宽沉浸阅读；
   - **失效警示与跨层回链下钻**：对状态以 `已废弃` 或 `部分失效` 开头的工作记录在阅读区顶部渲染 `ShieldAlert` 失效告警横幅；`variant="evergreen"` 传入完整 `allRepoDocs` 池，点击常青文档内相对回链（如 `../records/...md`）可原位下钻阅读记录全文并通过顶栏 `返回` 历史栈回退。
-- **Markdown 架构图渲染（`MermaidBlock.tsx`）**：采用 `beautiful-mermaid`（ELK 正交布局）同步渲染纯 SVG，经 `sanitizeAndNormalizeSvg` 剥离外链字体 `@import`、切换本机字体栈并拦截 `<script` 标签，同时支持拖拽平移、多档缩放/全屏与导出 `diagram.svg`。
+- **Markdown 架构图渲染（`MermaidBlock.tsx`）**：采用 `beautiful-mermaid`（ELK 折线自动布局）同步渲染纯 SVG，经 `sanitizeAndNormalizeSvg` 剥离外链字体 `@import`、切换本机字体栈并拦截 `<script` 标签，同时支持拖拽平移、多档缩放/全屏与导出 `diagram.svg`。
 
 ---
 
