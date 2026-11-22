@@ -1,6 +1,6 @@
 # a8-agent-mind 设计与演进架构规范 (design.md)
 
-> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、共享术语表、显式状态机、标准工程目录与双层仓库地图随会话自动治理 (`mind-rules.md`)”**、**“后置高维品味轻提示与文档门禁钩子 (`hooks.json` + `stop_reflect.py`，屏蔽未收口回合、废除静默写盘，仅以 `ASK_USER_UI` 与 `DOCS_MAINTENANCE` 提示)”**、**“AI 自主择机红线终审 (`a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，构建职责清晰、自动闭环的智能体心智中枢。
+> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、共享术语表、验证地图 (`docs/verify.md`)、显式状态机与双层仓库地图随会话自动治理 (`mind-rules.md`)”**、**“全阶段自主工程工作流内功 (`a8-workflow`)”**、**“事前提示词深化与重写 (`/a8-prompt`)”**、**“后置高维品味轻提示与文档门禁钩子 (`hooks.json` + `stop_reflect.py`)”**、**“AI 自主择机红线终审 (`a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**、**“UI 设计规范 (`a8-ui-design`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，构建职责清晰、拒绝命令碎片化、随会话自动闭环的智能体心智中枢（严控 7 大核心技能：3 个自动内功 + 4 个手动大招）。
 
 ---
 
@@ -8,9 +8,9 @@
 
 ### 1.1 智能体心智的三层模型 (The Tripartite Mind)
 1. **理智与戒律 (Super-ego / 高风险自主终审)**：遵循全局 `mind-rules.md`，仅当代码改动触及跨模块边界、状态机/并发重构或兼容层清理等高架构风险时，由 AI 在交卷前**自主择机调用一次 `a8-judge`**（常规局部功能、UI 与微调免检且禁止同任务频繁增量复核，亦支持 `/a8-judge` 显式发起），通过语法元特征自适应路由与 Google Gemini Decisions API 零输出 Token 概率校准裁决执行冷酷审查；
-2. **认知与记忆仓库地图 (Memory / 双层文档与隔离整合)**：由全局 `mind-rules.md` 强制驱动，确立 **常青文档 (`docs/evergreen/*.md`) + 按日期工作记录 (`docs/records/YYYYMMDD-*.md`) + 暂缓区 (`docs/deferred/`)** 双层分域体系；开发期仅写轻量工作记录（简单修复靠单测与注释），同步更新根目录 `AGENTS.md`（仅挂常青索引表）与 `repos.md`，由隔离上下文子代理 **`docs-curator`** 对照真实源码整合更新常青文档并挂载渐进式披露回链；
-3. **后置品味轻提示与双层文档同步 (`Stop` Hook + `docs-curator` + `/a8-improve`)**：
-   - 回合结束时，由插件根目录 `hooks.json` 触发 `hooks/stop_reflect.py`（严格屏蔽 `/plan`、待审批计划、问答中断及运行中后台任务/子代理，并用 `last_taste_step` 单调水位跨轮保留未消费纠偏信号）：彻底废除未经确认静默写盘，仅在真实仓内非文档代码落地结算且注入既有规则摘要后经 Decisions API 双门禁确认为全新高维工程品味（非具体 Bug Fix 细节）时，才弹出 `ASK_USER_UI` 确认卡交用户拍板；同时执行 `DOCS_MAINTENANCE` 与 `evergreen_sync_needed` 裁决——写完工作记录（`docs/records/`）不会绕过常青同步，常规局部修改免阻断，需同步常青真源时指令主会话调用 `docs-curator` 并以时序/指纹防止无限重入；
+2. **认知与记忆仓库地图 (Memory / 快慢双轨文档治理)**：由全局 `mind-rules.md` 强制驱动，确立 **常青文档 (`docs/evergreen/*.md`) + 按日期工作记录 (`docs/records/YYYYMMDD-*.md`) + 暂缓区 (`docs/deferred/`)** 双层分域体系；日间开发写完轻量工作记录（简单修复靠单测与注释）后，直接在当前对话利用既有上下文顺手轻更新 `docs/evergreen/`、`docs/verify.md` 与根目录 `AGENTS.md`（不额外起 `docs-sync` 子代理）；每晚 20:00 定时任务通过 `scripts/scan_docs_sync.mjs` 增量扫描 `repos.md` 在管仓，仅针对有变动或体检异常的仓库按 **`docs-sync`** 慢轨规范对照真实源码全量整理补齐；
+3. **后置品味轻提示与日间快轨文档门禁 (`Stop` Hook + `/a8-improve`)**：
+   - 回合结束时，由插件根目录 `hooks.json` 触发 `hooks/stop_reflect.py`（严格屏蔽 `/plan`、待审批计划、问答中断及运行中后台任务/子代理，并用 `last_taste_step` 单调水位跨轮保留未消费纠偏信号）：彻底废除未经确认静默写盘，仅在真实仓内非文档代码落地结算且注入既有规则摘要后经 Decisions API 双门禁确认为全新高维工程品味（非具体 Bug Fix 细节）时，才弹出 `ASK_USER_UI` 确认卡交用户拍板；同时执行 `DOCS_MAINTENANCE` 轻守护——只要本轮写过 `docs/records/` 或常青/地图文档即视作履行日常职责直接放行（`0` 次冗余 API），仅对完全未维护文档的非平凡改码提醒当前对话原地写记录并顺手轻更新常青（严禁额外起 `docs-sync`）；
    - 当用户需要跨会话深度复盘、全面审视经验，或清理无效/冲突/重复规则时，主动调用 `/a8-improve` 一体化完成沉淀与精简。
 4. **独立界面验证 (`/a8-ui-verify`)**：标准化目标仓库 `scripts/tests/ui-verify/` 脚本目录与 `logs/ui-verify/` 产物目录，由用户按需触发全链路浏览器验证。
 
@@ -60,8 +60,8 @@
 ```text
                     【日常编码 / 任务收尾】
                               │
-   自动履行 (mind-rules.md)   ├──► 1. 重大变更先写轻量工作记录 (docs/records/)；简单修 Bug 靠单测/注释
-                              │       （Stop Hook 判定 evergreen_sync_needed 时唤起 docs-curator 同步常青文档与 AGENTS.md）
+   自动履行 (mind-rules.md)   ├──► 1. 日间快轨：重大变更写轻量工作记录 (docs/records/) 并顺手轻改常青文档
+                              │       （写过即放行，不起 docs-sync 子代理；每晚 20:00 定时任务全量兜底梳理）
                               │
                               ▼    2. 触及 4 大红线的代码变更交卷前，AI 自主择机调用一次：
         ┌────────────────────────────────────────────┐
@@ -117,7 +117,7 @@
 - **排版原则**：
   - 必须紧凑（高度收敛在 250px~360px 区间），信息密度高；
   - `a8-judge` 报表：采用 2x2 网格呈现 4 个核心维度状态（`0 违规` 绿色微徽章与 Google Decisions API 置信度），带有 `<details>` 变动溯源清单；
-  - `a8-improve` 复盘卡片：顶部呈现模式标签（`规则沉淀 / 规则清理`）与任务主题，中部双栏呈现“五维纠偏信号捕获”和“规则动作与作用域（通用规范 / 项目红线 / 项目 Lint / 清理失效或重复）”，底部预览标准 `git diff` 规则/检查补丁，并引导按编号精确落盘。
+  - `a8-improve` 复盘卡片：无外框贴边嵌入式 Master-Detail 布局（`<= 450px` 紧凑定高），顶部展示量化收益徽章，左侧为可勾选的防线等级/规则清理清单，右侧支持「现状痛点→提升效果（含作用域就地拍板）」与「变更补丁 Diff」双视图切换，底部随勾选与拍板联动生成并一键复制精确确认指令。
 
 ---
 
@@ -130,7 +130,10 @@ E:\a8-devtools\plugins\a8-agent-mind/
 ├── config.json                     # Google Decisions API (gemini-decision-1) 配置
 ├── hooks/
 │   └── stop_reflect.py             # 未收口回合屏蔽 + 高维品味双门禁 (ASK_USER_UI / DOCS_MAINTENANCE)
+├── scripts/
+│   └── scan_docs_sync.mjs          # 每晚 20:00 定时梳理前置增量扫描与静态健康体检
 ├── decisions/                      # 全局结构化 Decision 规范 (*.decision.json，无损分批送审)
+├── templates/                      # work-record 模板与 nightly-evergreen-docs-sync 定时任务模板
 ├── design.md                       # 【核心设计与架构规范】（本文件）
 ├── readme.md                       # 跨仓库安装与使用指南
 ├── repos.md                        # 宿主机全局仓库地图索引
@@ -142,9 +145,15 @@ E:\a8-devtools\plugins\a8-agent-mind/
 ├── reviews/                        # DSH 每次架构终审按项目子目录隔离归档 (reviews/<repo>/*.md，已纳入 .gitignore)
 ├── agents/
 │   ├── arch-judge.md               # 专职语义裁决 Subagent（全工具自主调查）
-│   ├── docs-curator.md             # 专职双层文档整合与常青真源核验 Subagent
+│   ├── docs-sync.md                # 夜间慢轨 / 手工触发常青真源全量梳理 Subagent
 │   └── dsh-reviewer.md             # 插件自完整 DSH 资深架构终审 Subagent
 ├── skills/
+│   ├── a8-workflow/                # 【能力0：全阶段自主工程工作流总控与 5 份场景指南】(自动触发 / /a8-workflow)
+│   │   ├── SKILL.md                # 接单门禁、5 场景指南路由、子代理隔离与 A8 交卷收口
+│   │   ├── guides/                 # analyze / bug-fix / perf / feature / long-task
+│   │   └── references/             # pstack-source-map.md (85 项来源映射与升级台账)
+│   ├── a8-prompt/                  # 【事前打磨：提示词专家级深化与重写】(/a8-prompt，仅改写Prompt并停步)
+│   │   └── SKILL.md                # 轻量贴合仓内地图答专家 4 问，做深不做大，重写即停
 │   ├── a8-judge/                   # 【能力1：AI 自主择机架构红线裁决 (a8-judge / /a8-judge)】
 │   │   ├── SKILL.md                # 元特征路由 + Google Decisions API 裁决规约
 │   │   ├── schemas/
@@ -159,10 +168,10 @@ E:\a8-devtools\plugins\a8-agent-mind/
 │   ├── a8-improve/                 # 【能力3：经验沉淀与规则库清理 (/a8-improve)】
 │   │   ├── SKILL.md                # 五维信号、作用域拆分、失效/重复清理与防膨胀规约
 │   │   └── templates/
-│   │       └── retro_card.html     # Generative UI 紧凑复盘卡片模板
+│   │       └── improve_card.html   # Generative UI 紧凑复盘卡片模板
 │   ├── a8-ui-verify/               # 【能力4：独立自动化 UI 验证 (/a8-ui-verify)】
 │   │   └── SKILL.md                # scripts/tests/ui-verify/ 与 logs/ui-verify/ 验证协议
-│   └── a8-ui-polish/               # 【能力5：UI 设计审美原则】
+│   └── a8-ui-design/               # 【能力5：UI 设计感与工业美学规范】
 └── rules/
     └── mind-rules.md               # 【全局核心】架构设计哲学、文档与双层仓库地图自动治理总则
 ```

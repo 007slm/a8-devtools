@@ -68,14 +68,18 @@ def check_stop_hook_invariants(repo_root: Path = REPO_ROOT) -> list[str]:
     source_path = repo_root / "plugins" / "a8-agent-mind" / "hooks" / "stop_reflect.py"
     src_text = source_path.read_text(encoding="utf-8")
 
-    # 1. 不存在 AUTO_LINT 或 AUTO_DECISION 静默写盘分支
-    for forbidden in ("AUTO_LINT", "AUTO_DECISION"):
+    # 1. 不存在已废除的静默写盘分支与每回合 docs-sync 强行调度常数
+    for forbidden in ("AUTO_LINT", "AUTO_DECISION", "EVERGREEN_SYNC_QUESTION", 'TypeName="docs-sync"'):
         if forbidden in src_text:
-            violations.append(f"stop_reflect.py 仍包含已废除的静默写盘分支标识: {forbidden}")
+            violations.append(f"stop_reflect.py 仍包含已废除标识: {forbidden}")
 
     mod = _load_stop_reflect()
-    if hasattr(mod, "_build_reason_auto_lint") or hasattr(mod, "_build_reason_auto_decision"):
-        violations.append("stop_reflect.py 仍存在 _build_reason_auto_lint 或 _build_reason_auto_decision 函数")
+    if (
+        hasattr(mod, "_build_reason_auto_lint")
+        or hasattr(mod, "_build_reason_auto_decision")
+        or hasattr(mod, "_build_reason_evergreen_sync")
+    ):
+        violations.append("stop_reflect.py 仍存在已废除的 _build_reason_* 函数")
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
@@ -337,9 +341,9 @@ def check_stop_hook_invariants(repo_root: Path = REPO_ROOT) -> list[str]:
         if (
             res7.get("decision") != "continue"
             or "DOCS_MAINTENANCE" not in reason7
-            or 'Workspace="inherit"' not in reason7
-            or f'Workspace="{ws_dir}"' in reason7
-            or f'Prompt="针对目标仓库 {ws_dir.resolve()}' not in reason7
+            or str(ws_dir.resolve()) not in reason7
+            or "invoke_subagent" in reason7
+            or "严禁" not in reason7
             or calls7 != 1
         ):
             violations.append(f"Invariant 7 失败 (marker prose hijacked turn boundary): res={res7}, api_calls={calls7}")
@@ -378,7 +382,7 @@ def check_stop_hook_invariants(repo_root: Path = REPO_ROOT) -> list[str]:
                 f"Invariant 8 失败 (subagent raw_decode / shard isolation): res={res8}, api_calls={calls8}, states={merged_states}"
             )
 
-        # 9. 编写 docs/records/*.md 工作记录 + 源码修改不得绕过常青文档判定；Decisions API 判定 evergreen_sync_needed=yes 时须指导调用 docs-curator
+        # 9. 快轨直通：编写 docs/records/*.md 工作记录 + 源码修改直接放行（0 次 API 调用，不阻塞也不强制起 docs-sync）
         (ws_dir / "docs" / "evergreen").mkdir(parents=True, exist_ok=True)
         (ws_dir / "docs" / "records").mkdir(parents=True, exist_ok=True)
         t9 = tmp_dir / "t9.jsonl"
@@ -386,109 +390,99 @@ def check_stop_hook_invariants(repo_root: Path = REPO_ROOT) -> list[str]:
             t9,
             [
                 {"step_index": 60, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "实现状态机并写工作记录"},
-                {"step_index": 61, "type": "PLANNER_RESPONSE", "content": "已更新源码和按日期工作记录。"},
+                {"step_index": 61, "type": "PLANNER_RESPONSE", "content": "已更新源码、按日期工作记录并顺手轻改常青摘要。"},
             ],
         )
-        captured_questions_9: list[dict] = []
-
-        def api_t9(input_summary, questions, *args, **kwargs):
-            captured_questions_9.append(dict(questions))
-            return _api_ok({"evergreen_sync_needed": {"choice": "yes", "confidence": 0.94}})
-
         res9, calls9 = run_eval(
             "conv-record-sync",
             t9,
             "实现状态机并写工作记录",
-            api_t9,
+            lambda *a, **kw: _api_ok({}),
             mutate_fn=lambda d: (
                 _write_repo_file(d, "src/StateMachine.rs"),
                 _write_repo_file(d, "docs/records/20261120-SPEC-engine-state.md", "# 工作记录\n新增 READY -> SYNCING 状态机契约。\n"),
             ),
         )
-        reason9 = res9.get("reason", "")
-        if (
-            res9.get("decision") != "continue"
-            or "DOCS_MAINTENANCE" not in reason9
-            or "docs-curator" not in reason9
-            or 'Workspace="inherit"' not in reason9
-            or f'Workspace="{ws_dir}"' in reason9
-            or f'Prompt="针对目标仓库 {ws_dir.resolve()}' not in reason9
-            or calls9 != 1
-            or "evergreen_sync_needed" not in (captured_questions_9[0] if captured_questions_9 else {})
-        ):
-            violations.append(
-                f"Invariant 9 失败 (record must not bypass evergreen sync): res={res9}, api_calls={calls9}, q={captured_questions_9}"
-            )
+        if res9 != {} or calls9 != 0:
+            violations.append(f"Invariant 9 失败 (record fast-track should pass cleanly with 0 API calls): res={res9}, api_calls={calls9}")
 
-        # 10. 编写 docs/records/*.md 后 Decisions API 明确判定 evergreen_sync_needed=no (>=阈值) -> 放行不阻断
+        # 10. 编写 docs/records/*.md 且存在纠偏品味信号 -> 仅询问 taste 问题（不问 docs_maintenance_needed），可触发 ASK_USER_UI
         t10 = tmp_dir / "t10.jsonl"
         _write_transcript(
             t10,
             [
-                {"step_index": 70, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "修一个小拼写并留条记录"},
-                {"step_index": 71, "type": "PLANNER_RESPONSE", "content": "已处理完毕。"},
+                {"step_index": 70, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "红线：以后严禁在路径里硬编码盘符"},
+                {"step_index": 71, "type": "PLANNER_RESPONSE", "content": "已重构并写好工作记录。"},
             ],
         )
+        captured_questions_10: list[dict] = []
+
+        def api_t10(input_summary, questions, *args, **kwargs):
+            captured_questions_10.append(dict(questions))
+            return _api_ok(
+                {
+                    "has_high_level_taste_lesson": {"choice": "yes", "confidence": 0.95},
+                    "is_distinct_from_bugfix_detail": {"choice": "yes", "confidence": 0.94},
+                    "rule_scope": {"choice": "universal", "confidence": 0.92},
+                }
+            )
+
         res10, calls10 = run_eval(
-            "conv-record-exempt",
+            "conv-record-with-taste",
             t10,
-            "修一个小拼写并留条记录",
-            lambda *a, **kw: _api_ok({"evergreen_sync_needed": {"choice": "no", "confidence": 0.95}}),
+            "红线：以后严禁在路径里硬编码盘符",
+            api_t10,
             mutate_fn=lambda d: (
                 _write_repo_file(d, "src/Helper.rs"),
-                _write_repo_file(d, "docs/records/20261120-BUG-typo.md", "# 记录\n修复文案拼写。\n"),
+                _write_repo_file(d, "docs/records/20261120-SPEC-path-rule.md", "# 记录\n移除硬编码路径。\n"),
             ),
         )
-        if res10 != {} or calls10 != 1:
-            violations.append(f"Invariant 10 失败 (evergreen_sync_needed=no should pass): res={res10}, api_calls={calls10}")
+        q10 = captured_questions_10[0] if captured_questions_10 else {}
+        reason10 = res10.get("reason", "")
+        if (
+            res10.get("decision") != "continue"
+            or "ASK_USER_UI" not in reason10
+            or "DOCS_MAINTENANCE" in reason10
+            or "docs_maintenance_needed" in q10
+            or "has_high_level_taste_lesson" not in q10
+            or calls10 != 1
+        ):
+            violations.append(f"Invariant 10 失败 (record bypasses docs check without blocking taste): res={res10}, q={q10}, api_calls={calls10}")
 
-        # 11. 在源码/工作记录之后已完成调用 docs-curator 子代理 -> 放行不重复触发（防死循环）
+        # 11. 仅改非文档文件且未写工作记录 -> DOCS_MAINTENANCE 指导当前上下文轻量化直写（严禁 invoke_subagent）
         t11 = tmp_dir / "t11.jsonl"
         _write_transcript(
             t11,
             [
-                {"step_index": 80, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "实现状态机并同步文档"},
-                {
-                    "step_index": 81,
-                    "type": "PLANNER_RESPONSE",
-                    "tool_calls": [
-                        {"name": "edit_file", "args": {"Path": str(ws_dir / "src" / "StateMachine.rs")}},
-                    ],
-                },
-                {
-                    "step_index": 82,
-                    "type": "PLANNER_RESPONSE",
-                    "tool_calls": [
-                        {"name": "invoke_subagent", "args": {"TypeName": "docs-curator", "Role": "Evergreen Docs Curator"}},
-                    ],
-                },
-                {
-                    "step_index": 83,
-                    "type": "GENERIC",
-                    "status": "DONE",
-                    "content": 'Created the following subagent: {"conversationId":"sub-curator-1"}',
-                },
-                {
-                    "step_index": 84,
-                    "type": "GENERIC",
-                    "status": "DONE",
-                    "content": "[Message] sender=sub-curator-1 已核验源码，无需修改常青文档",
-                },
-                {"step_index": 85, "type": "PLANNER_RESPONSE", "content": "已核验常青文档。"},
+                {"step_index": 80, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "实现状态机"},
+                {"step_index": 81, "type": "PLANNER_RESPONSE", "content": "已完成状态机重构。"},
             ],
         )
+        captured_questions_11: list[dict] = []
+
+        def api_t11(input_summary, questions, *args, **kwargs):
+            captured_questions_11.append(dict(questions))
+            return _api_ok({"docs_maintenance_needed": {"choice": "yes", "confidence": 0.95}})
+
         res11, calls11 = run_eval(
-            "conv-curator-done",
+            "conv-docs-incontext",
             t11,
-            "实现状态机并同步文档",
-            lambda *a, **kw: _api_ok({}),
-            mutate_fn=lambda d: (
-                _write_repo_file(d, "src/StateMachine2.rs"),
-                _write_repo_file(d, "docs/records/20261120-SPEC-sm2.md", "# 记录\n"),
-            ),
+            "实现状态机",
+            api_t11,
+            mutate_fn=lambda d: _write_repo_file(d, "src/StateMachine2.rs"),
         )
-        if res11 != {} or calls11 != 0:
-            violations.append(f"Invariant 11 失败 (docs-curator loop prevention): res={res11}, api_calls={calls11}")
+        q11 = captured_questions_11[0] if captured_questions_11 else {}
+        reason11 = res11.get("reason", "")
+        if (
+            res11.get("decision") != "continue"
+            or "DOCS_MAINTENANCE" not in reason11
+            or "invoke_subagent" in reason11
+            or "docs-sync" not in reason11
+            or "严禁" not in reason11
+            or "evergreen_sync_needed" in q11
+            or calls11 != 1
+        ):
+            violations.append(f"Invariant 11 失败 (in-context docs guidance): res={res11}, q={q11}, api_calls={calls11}")
 
         # 12. 直接更新 docs/evergreen/*.md + 源码（哪怕是子代理写的磁盘变更）-> 放行不重复阻断
         t12 = tmp_dir / "t12.jsonl"
@@ -538,36 +532,33 @@ def check_stop_hook_invariants(repo_root: Path = REPO_ROOT) -> list[str]:
         if res13.get("decision") != "continue" or "DOCS_MAINTENANCE" not in res13.get("reason", "") or calls13 != 1:
             violations.append(f"Invariant 13 失败 (workspace under docs/ + non-md asset): res={res13}, api_calls={calls13}")
 
-        # 14. invoke_subagent(TypeName="docs-curator") 若 status=ERROR，严禁当作已同步放行
+        # 14. 调用非文档子代理（如 research）且未更新任何 docs/ -> 仍须触发 DOCS_MAINTENANCE
         t14 = tmp_dir / "t14.jsonl"
         _write_transcript(
             t14,
             [
-                {"step_index": 110, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "实现状态机并写记录"},
+                {"step_index": 110, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "实现状态机"},
                 {
                     "step_index": 112,
                     "type": "PLANNER_RESPONSE",
-                    "status": "ERROR",
+                    "status": "DONE",
                     "tool_calls": [
-                        {"name": "invoke_subagent", "args": {"TypeName": "docs-curator"}},
+                        {"name": "invoke_subagent", "args": {"TypeName": "research"}},
                     ],
                 },
             ],
         )
         res14, calls14 = run_eval(
-            "conv-curator-error",
+            "conv-unrelated-subagent",
             t14,
-            "实现状态机并写记录",
-            lambda *a, **kw: _api_ok({"evergreen_sync_needed": {"choice": "yes", "confidence": 0.92}}),
-            mutate_fn=lambda d: (
-                _write_repo_file(d, "src/StateMachine4.rs"),
-                _write_repo_file(d, "docs/records/20261120-SPEC-err.md", "# 记录\n"),
-            ),
+            "实现状态机",
+            lambda *a, **kw: _api_ok({"docs_maintenance_needed": {"choice": "yes", "confidence": 0.92}}),
+            mutate_fn=lambda d: _write_repo_file(d, "src/StateMachine4.rs"),
         )
         if res14.get("decision") != "continue" or "DOCS_MAINTENANCE" not in res14.get("reason", "") or calls14 != 1:
-            violations.append(f"Invariant 14 失败 (errored docs-curator must not bypass): res={res14}, api_calls={calls14}")
+            violations.append(f"Invariant 14 失败 (unrelated subagent must not bypass): res={res14}, api_calls={calls14}")
 
-        # 15. docs_maintenance_needed=no (>=阈值) 且 evergreen_sync_needed=no (低于阈值) 时，常规局部修改仍应放行
+        # 15. docs_maintenance_needed=no (>=阈值) 时，常规局部修改直接放行
         t15 = tmp_dir / "t15.jsonl"
         _write_transcript(
             t15,
@@ -582,12 +573,11 @@ def check_stop_hook_invariants(repo_root: Path = REPO_ROOT) -> list[str]:
             "修一个小文案",
             lambda *a, **kw: _api_ok({
                 "docs_maintenance_needed": {"choice": "no", "confidence": 0.94},
-                "evergreen_sync_needed": {"choice": "no", "confidence": 0.72},
             }),
             mutate_fn=lambda d: _write_repo_file(d, "src/Label.rs"),
         )
         if res15 != {} or calls15 != 1:
-            violations.append(f"Invariant 15 失败 (trivial fix with low-conf evergreen=no should pass): res={res15}, api_calls={calls15}")
+            violations.append(f"Invariant 15 失败 (trivial fix docs=no should pass): res={res15}, api_calls={calls15}")
 
         # 16. 严格 Git 模式：非 Git 目录即便改了磁盘文件且 transcript 有记录，Hook 必须静默返回 {} 且 0 次 API 调用
         non_git_ws = tmp_dir / "plain-folder"
@@ -639,7 +629,7 @@ def check_stop_hook_invariants(repo_root: Path = REPO_ROOT) -> list[str]:
         _write_transcript(
             t18,
             [
-                {"step_index": 150, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "/boost 重构网关鉴权并写工作记录"},
+                {"step_index": 150, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "/boost 重构网关鉴权"},
                 {
                     "step_index": 151,
                     "type": "PLANNER_RESPONSE",
@@ -653,21 +643,19 @@ def check_stop_hook_invariants(repo_root: Path = REPO_ROOT) -> list[str]:
 
         def api_t18(input_summary, questions, *args, **kwargs):
             captured_summary_18.append(input_summary)
-            return _api_ok({"evergreen_sync_needed": {"choice": "yes", "confidence": 0.96}})
+            return _api_ok({"docs_maintenance_needed": {"choice": "yes", "confidence": 0.96}})
 
         res18, calls18 = run_eval(
             "conv-deepcoder-delta",
             t18,
-            "/boost 重构网关鉴权并写工作记录",
+            "/boost 重构网关鉴权",
             api_t18,
-            mutate_fn=lambda d: (
-                _write_repo_file(d, "src/AuthGateway.rs", "pub fn verify() {}\n"),
-                _write_repo_file(d, "docs/records/20261120-SPEC-auth.md", "# Auth\n新增 Token 校验契约。\n"),
-            ),
+            mutate_fn=lambda d: _write_repo_file(d, "src/AuthGateway.rs", "pub fn verify() {}\n"),
         )
         if (
             res18.get("decision") != "continue"
-            or "docs-curator" not in res18.get("reason", "")
+            or "DOCS_MAINTENANCE" not in res18.get("reason", "")
+            or "invoke_subagent" in res18.get("reason", "")
             or calls18 != 1
             or "AuthGateway.rs" not in (captured_summary_18[0] if captured_summary_18 else "")
         ):
@@ -700,6 +688,73 @@ def check_stop_hook_invariants(repo_root: Path = REPO_ROOT) -> list[str]:
         if res19.get("decision") != "continue" or "DOCS_MAINTENANCE" not in res19.get("reason", "") or calls19 != 1:
             violations.append(f"Invariant 19 失败 (git commit inside turn missed): res={res19}, api_calls={calls19}")
 
+        # 20. docs/verify.md 与 docs/glossary.md 显式归类为 "evergreen"；更新验证地图或术语表视为有效常青维护，防止 Stop Hook 死循环
+        ws_root_parts = [mod._normalize_path_parts(str(ws_dir))]
+        docs_parent_root_parts = [mod._normalize_path_parts(str(docs_parent_ws))]
+        role_cases = [
+            (mod._classify_doc_path_role("docs/verify.md", has_evergreen_dir=True), "docs/verify.md"),
+            (mod._classify_doc_path_role("docs/glossary.md", has_evergreen_dir=True), "docs/glossary.md"),
+            (mod._classify_doc_path_role("docs/verify.md", has_evergreen_dir=False), "docs/verify.md (no evergreen dir)"),
+            (mod._classify_doc_path_role("docs/glossary.md", has_evergreen_dir=False), "docs/glossary.md (no evergreen dir)"),
+            (
+                mod._classify_doc_path_role(str(ws_dir / "docs" / "Verify.md"), workspace_roots_parts=ws_root_parts, has_evergreen_dir=True),
+                "abs docs/Verify.md",
+            ),
+            (
+                mod._classify_doc_path_role(str(ws_dir / "docs" / "Glossary.md"), workspace_roots_parts=ws_root_parts, has_evergreen_dir=True),
+                "abs docs/Glossary.md",
+            ),
+            (
+                mod._classify_doc_path_role(str(docs_parent_ws / "docs" / "verify.md"), workspace_roots_parts=docs_parent_root_parts, has_evergreen_dir=True),
+                "docs-parent docs/verify.md",
+            ),
+        ]
+        for actual_role, label in role_cases:
+            if actual_role != "evergreen":
+                violations.append(f"Invariant 20a 失败 ({label} expected 'evergreen', got {actual_role!r})")
+
+        t20_verify = tmp_dir / "t20_verify.jsonl"
+        _write_transcript(
+            t20_verify,
+            [
+                {"step_index": 170, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "修改校验规则并同步验证地图"},
+                {"step_index": 171, "type": "PLANNER_RESPONSE", "content": "已更新源码与 docs/verify.md。"},
+            ],
+        )
+        res20v, calls20v = run_eval(
+            "conv-verify-map",
+            t20_verify,
+            "修改校验规则并同步验证地图",
+            lambda *a, **kw: _api_ok({"docs_maintenance_needed": {"choice": "yes", "confidence": 0.99}}),
+            mutate_fn=lambda d: (
+                _write_repo_file(d, "src/VerifyTarget.rs", "pub fn verify() {}\n"),
+                _write_repo_file(d, "docs/verify.md", "# 验证地图\n"),
+            ),
+        )
+        if res20v != {} or calls20v != 0:
+            violations.append(f"Invariant 20b 失败 (docs/verify.md update blocked): res={res20v}, api_calls={calls20v}")
+
+        t20_glossary = tmp_dir / "t20_glossary.jsonl"
+        _write_transcript(
+            t20_glossary,
+            [
+                {"step_index": 180, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "新增概念并更新术语表"},
+                {"step_index": 181, "type": "PLANNER_RESPONSE", "content": "已更新源码与 docs/glossary.md。"},
+            ],
+        )
+        res20g, calls20g = run_eval(
+            "conv-glossary-map",
+            t20_glossary,
+            "新增概念并更新术语表",
+            lambda *a, **kw: _api_ok({"docs_maintenance_needed": {"choice": "yes", "confidence": 0.99}}),
+            mutate_fn=lambda d: (
+                _write_repo_file(d, "src/GlossaryTarget.rs", "pub fn term() {}\n"),
+                _write_repo_file(d, "docs/glossary.md", "# 项目术语表\n"),
+            ),
+        )
+        if res20g != {} or calls20g != 0:
+            violations.append(f"Invariant 20c 失败 (docs/glossary.md update blocked): res={res20g}, api_calls={calls20g}")
+
     return violations
 
 
@@ -710,7 +765,7 @@ def main() -> int:
         for item in violations:
             print(f"  - {item}")
         return 1
-    print(f"[PASS] {CHECK_ID} (19 invariants verified)")
+    print(f"[PASS] {CHECK_ID} (20 invariants verified)")
     return 0
 
 

@@ -3,7 +3,7 @@
  * 工作记录结构与双层文档卫生检查 (WORK_RECORD_SCHEMA)
  *
  * 依据 plugins/a8-agent-mind/templates/work-record.md 强制校验：
- *   1. docs/ 下仅允许 evergreen / records / deferred 目录与共享术语表 glossary.md（<= 20,000 B），严禁其他游离或已废弃文档（含 INDEX.md）；
+ *   1. docs/ 下仅允许 evergreen / records / deferred 目录与共享根文档 glossary.md、verify.md（<= 20,000 B），严禁其他游离或已废弃文档（含 INDEX.md）；
  *   2. docs/records/*.md 命名符合 YYYYMMDD-(SPEC|ADR|BUG)-*.md，且首行标题规范；
  *   3. 固定 4 项元数据头（日期 / 状态 / 域 / 取代）完整且状态属于 5 枚举之一；
  *   4. 状态为 已废弃 / 部分失效 时，必须在 ## 1. 之前包含醒目失效横幅；
@@ -36,8 +36,8 @@ const REQUIRED_SECTIONS = [
   '## 4. 对常青文档的影响',
 ];
 
-const ALLOWED_ROOT_DOCS = new Set(['glossary.md']);
-const GLOSSARY_MAX_BYTES = 20_000;
+const ALLOWED_ROOT_DOCS = new Set(['glossary.md', 'verify.md']);
+const ROOT_DOC_MAX_BYTES = 20_000;
 
 function checkDocsDirectoryLayout(docsRoot, failures) {
   for (const ent of fs.readdirSync(docsRoot, { withFileTypes: true })) {
@@ -50,12 +50,12 @@ function checkDocsDirectoryLayout(docsRoot, failures) {
     if (ent.isFile() && ent.name.toLowerCase().endsWith('.md')) {
       if (ALLOWED_ROOT_DOCS.has(ent.name.toLowerCase())) {
         const size = fs.statSync(path.join(docsRoot, ent.name)).size;
-        if (size > GLOSSARY_MAX_BYTES) {
-          failures.push(`docs/${ent.name} 体积 ${size} B 超过 ${GLOSSARY_MAX_BYTES} B 上限，请精简释义防上下文截断`);
+        if (size > ROOT_DOC_MAX_BYTES) {
+          failures.push(`docs/${ent.name} 体积 ${size} B 超过 ${ROOT_DOC_MAX_BYTES} B 上限，请精简内容防上下文截断`);
         }
         continue;
       }
-      failures.push(`docs/${ent.name} 为游离或已废弃文档，请移除或归入 evergreen/、records/、deferred/（docs/ 根目录仅允许共享术语表 glossary.md）`);
+      failures.push(`docs/${ent.name} 为游离或已废弃文档，请移除或归入 evergreen/、records/、deferred/（docs/ 根目录仅允许 glossary.md 与 verify.md）`);
     }
   }
 }

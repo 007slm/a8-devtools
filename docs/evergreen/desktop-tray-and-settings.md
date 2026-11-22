@@ -46,7 +46,7 @@
 
 ---
 
-## 5. 非目标与重新评估条件（Reconsider When）
+## 5. 非目标与重新评估条件
 
 - **非目标**：不恢复 Win10 COM `IDeskBand` 注入；不在托盘静止期对 `IUIAutomation` 做高频定时轮询；不另起子进程托管 `:18765` Web 看板。
-- **Reconsider when**：若微软在未来 Windows 更新中开放官方原生任务栏 Widget/Band API 且无须进程外坐标追踪时，可评估替换 `IUIAutomation` 停靠路径。
+- **重新评估条件**：若微软在未来 Windows 更新中开放官方原生任务栏 Widget/Band API 且无须进程外坐标追踪时，可评估替换 `IUIAutomation` 停靠路径。

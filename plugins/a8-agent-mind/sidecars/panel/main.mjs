@@ -862,7 +862,11 @@ function isAllowedRepoGovernanceRel(cleanRel, writable) {
     if (lower.endsWith('.decision.json')) return true;
     if (!writable && (lower.endsWith('.py') || lower.endsWith('.mjs'))) return true;
   }
-  if (!writable && (lower === 'readme.md' || lower.startsWith('docs/')) && lower.endsWith('.md')) {
+  if (
+    !writable &&
+    (lower === 'readme.md' ||
+      (lower.startsWith('docs/') && (lower.endsWith('.md') || lower.endsWith('.html'))))
+  ) {
     return true;
   }
   return false;
@@ -938,6 +942,13 @@ function estimateMarkdownTokens(raw) {
 }
 
 function parseRepoDocMeta(raw, fileName) {
+  if (/\.html$/i.test(fileName)) {
+    const stem = fileName.replace(/\.html$/i, '');
+    const headSlice = String(raw || '').split(/\r?\n/).slice(0, 40).join(' ');
+    const mTitle = headSlice.match(/<title>([\s\S]*?)<\/title>/i);
+    const title = (mTitle && mTitle[1] ? mTitle[1].trim() : '') || stem;
+    return { title, date: '', parsedType: 'HTML', status: '' };
+  }
   const stem = fileName.replace(/\.md$/i, '');
   let title = '';
   let status = '';
@@ -970,6 +981,7 @@ function parseRepoDocMeta(raw, fileName) {
 function classifyRepoDocTier(relLower, date, status) {
   const sub = relLower.startsWith('docs/') ? relLower.slice(5) : relLower;
   if (sub === 'glossary.md') return { tier: 'glossary', fallbackType: 'GLOSSARY' };
+  if (sub === 'verify.md') return { tier: 'verify', fallbackType: 'VERIFY' };
   if (sub.startsWith('evergreen/')) return { tier: 'evergreen', fallbackType: 'EVERGREEN' };
   if (sub.startsWith('deferred/')) {
     return { tier: 'deferred', fallbackType: 'DEFERRED' };
@@ -998,7 +1010,10 @@ function collectRepoDocsRecursive(repoRoot, dir, repoCode, out) {
       collectRepoDocsRecursive(repoRoot, full, repoCode, out);
       continue;
     }
-    if (!ent.isFile() || !ent.name.toLowerCase().endsWith('.md')) continue;
+    const lowerName = ent.name.toLowerCase();
+    const isMd = lowerName.endsWith('.md');
+    const isHtml = lowerName.endsWith('.html');
+    if (!ent.isFile() || (!isMd && !isHtml)) continue;
     const relStr = relative(repoRoot, full).replace(/\\/g, '/');
     const relLower = relStr.toLowerCase();
     let st;
@@ -1015,8 +1030,12 @@ function collectRepoDocsRecursive(repoRoot, dir, repoCode, out) {
     }
     const { title, date, parsedType, status } = parseRepoDocMeta(raw, ent.name);
     const { tier, fallbackType } = classifyRepoDocTier(relLower, date, status);
-    const doc_type = tier === 'evergreen' || tier === 'glossary' || !parsedType ? fallbackType : parsedType;
-    const { estimated_tokens } = estimateMarkdownTokens(raw);
+    const doc_type = isHtml
+      ? 'HTML'
+      : tier === 'evergreen' || tier === 'glossary' || tier === 'verify' || !parsedType
+        ? fallbackType
+        : parsedType;
+    const estimated_tokens = isHtml ? 0 : estimateMarkdownTokens(raw).estimated_tokens;
     out.push({
       repo: repoCode,
       doc_tier: tier,
@@ -1044,11 +1063,22 @@ function scanRepoDocs(repos) {
     }
   }
   const tierRank = (t) =>
-    t === 'glossary' ? 0 : t === 'evergreen' ? 1 : t === 'record' ? 2 : t === 'deferred' ? 3 : 4;
+    t === 'glossary'
+      ? 0
+      : t === 'verify'
+        ? 1
+        : t === 'evergreen'
+          ? 2
+          : t === 'record'
+            ? 3
+            : t === 'deferred'
+              ? 4
+              : 5;
   docs.sort(
     (a, b) =>
       a.repo.localeCompare(b.repo) ||
       tierRank(a.doc_tier) - tierRank(b.doc_tier) ||
+      (a.doc_type === 'HTML' ? 0 : 1) - (b.doc_type === 'HTML' ? 0 : 1) ||
       b.date.localeCompare(a.date) ||
       b.modified_ts - a.modified_ts ||
       a.rel_path.localeCompare(b.rel_path)

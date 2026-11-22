@@ -1,0 +1,41 @@
+{
+  "builtin": "schedule",
+  "args": [
+    "CRON_TZ=Asia/Shanghai 0 20 * * *",
+    "agentapi",
+    "new-conversation",
+    "--",
+    "你正在执行每晚 20:00 的慢轨常青文档全面梳理定时任务。\n\n请严格按以下步骤执行：\n1. 先读取治理规范与仓库地图：\n   - C:/Users/007sl/.gemini/config/plugins/a8-agent-mind/agents/docs-sync.md\n   - C:/Users/007sl/.gemini/config/plugins/a8-agent-mind/repos.md\n2. 执行增量预检脚本（只读扫描 + 健康体检）：\n   `node C:/Users/007sl/.gemini/config/plugins/a8-agent-mind/scripts/scan_docs_sync.mjs`\n3. 极速跳过原则：\n   - 解析脚本输出的 JSON；若所有仓库的 `needs_review` 均为 `false`，直接汇报「今日所有在管仓库均无新增变更且文档静态体检通过，已秒跳过」后结束本轮，严禁额外读写源码或无意义梳理。\n4. 仅对 `needs_review === true` 的仓库逐仓深度梳理（最高事实源：**真实源码 > 工作记录 > 旧常青文档**）：\n   - 使用只读 git 命令（`git -C <repoPath> status` / `diff` / `log`）与 `read_file` 核对新增提交、工作区未提交变动、`docs/records/*.md`（含旧/新工作记录对比）及对应真实源码实现；\n   - 增量整合与瘦身 `docs/evergreen/*.md`：补全白日对话顺手更新时遗漏的系统边界、状态机、契约与渐进式回链，删除已被后续变更取代的过时描述，严控单文件 `< 20,000 B`；\n   - 按需同步 `docs/verify.md`（验证面与本地盲区）、`docs/glossary.md`（专有概念）与 `AGENTS.md`（顶层大地图 `< 20,000 B`）；\n   - 处理扫描器报出的静态健康问题：`broken_links` 断链修复、`unmarked_superseded_records` 对确已完全取代且非进行中的历史记录补充 `> [!WARNING]` 取代提示横幅、对 `size_warnings` 文档做精炼瘦身或拆分。\n5. 严格禁区（绝对红线）：\n   - 严禁修改任何业务源码、测试代码、构建脚本或运行时配置；\n   - 严禁修改、删除或加注取代横幅到 `in_flight_records` 中状态为 `进行中` 的工作记录（只可只读参照，原封不动保留给白天开发者）；\n   - 严禁执行 `git commit`、`git push`、`git restore`、`git reset` 或 `git checkout`；所有文档整理结果仅写盘保留在工作区，供用户次日在 Code Review 界面审阅。\n6. 门禁验真与水位推进：\n   - 涉及 `E:/a8-devtools` 时，依次运行：\n     - `node E:/a8-devtools/scripts/lints/check_work_records.mjs`\n     - `node E:/a8-devtools/scripts/lints/check_workspace_hygiene.mjs`\n     - `py -3 E:/a8-devtools/scripts/lints/check_plugin_agents.py`\n   - 涉及 `E:/a8-turbo` 时，运行：\n     - `py -3 E:/a8-turbo/scripts/lints/run_lints.py`\n   - 仅对梳理完成且全部门禁通过的仓库执行 `node C:/Users/007sl/.gemini/config/plugins/a8-agent-mind/scripts/scan_docs_sync.mjs --mark-done <repoCode>` 更新下次梳理水位；若某个仓库门禁失败或梳理未闭环，严禁为其 `--mark-done`。\n   - 最终返回精炼中文梳理报告（列出跳过仓、已梳理仓及更新的文档路径、仍保留给人工处理的进行中记录与门禁结果）。"
+  ],
+  "restart_policy": "always",
+  "display_name": "每晚常青文档与工作记录全面梳理",
+  "description": "每天 20:00 (Asia/Shanghai) 自动预检所有在管代码仓库的源码与工作记录增量：无变更仓直接跳过；有变更或健康异常的仓按真实源码深度梳理常青文档、验证地图、术语表与 AGENTS.md，只写盘不提交。",
+  "agent_permissions": {
+    "access_grants": [
+      "command(node C:/Users/007sl/.gemini/config/plugins/a8-agent-mind/scripts/scan_docs_sync.mjs)",
+      "command(node E:/a8-devtools/scripts/lints/check_work_records.mjs)",
+      "command(node E:/a8-devtools/scripts/lints/check_workspace_hygiene.mjs)",
+      "command(py -3 E:/a8-devtools/scripts/lints/check_plugin_agents.py)",
+      "command(node E:/a8-turbo/scripts/lints/check_work_records.mjs)",
+      "command(py -3 E:/a8-turbo/scripts/lints/run_lints.py)",
+      "command(git status)",
+      "command(git diff)",
+      "command(git log)",
+      "command(git -C E:/a8-devtools status)",
+      "command(git -C E:/a8-devtools diff)",
+      "command(git -C E:/a8-devtools log)",
+      "command(git -C E:/a8-turbo status)",
+      "command(git -C E:/a8-turbo diff)",
+      "command(git -C E:/a8-turbo log)",
+      "read_file(C:/Users/007sl/.gemini/config/plugins/a8-agent-mind)",
+      "read_file(E:/a8-devtools)",
+      "read_file(E:/a8-turbo)",
+      "write_file(E:/a8-devtools/docs)",
+      "write_file(E:/a8-devtools/AGENTS.md)",
+      "write_file(E:/a8-turbo/docs)",
+      "write_file(E:/a8-turbo/AGENTS.md)",
+      "write_file(E:/a8-turbo/agents.md)",
+      "write_file(C:/Users/007sl/.gemini/config/plugins/a8-agent-mind/repos.md)"
+    ]
+  }
+}

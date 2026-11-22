@@ -62,7 +62,7 @@
 
 ---
 
-## 4. 非目标与重新评估条件（Reconsider When）
+## 4. 非目标与重新评估条件
 
 - **非目标**：不支持将 `.cowdiff` 放回虚拟挂载点内部；不支持通过 `desktop.ini` 或系统只读属性伪装目录图标；不支持把 `modules/devtools` 的 UI 依赖反向引入 `modules/cowfs`。
-- **Reconsider when**：当 Windows 未来版本彻底废弃 `IShellIconOverlayIdentifier` 或云盘同步软件占满全部前导空格槽位导致角标失效时，再评估迁移至 `Cloud Files API` 占位符状态图标或独立 Shell Namespace 扩展。
+- **重新评估条件**：当 Windows 未来版本彻底废弃 `IShellIconOverlayIdentifier` 或云盘同步软件占满全部前导空格槽位导致角标失效时，再评估迁移至 `Cloud Files API` 占位符状态图标或独立 Shell Namespace 扩展。

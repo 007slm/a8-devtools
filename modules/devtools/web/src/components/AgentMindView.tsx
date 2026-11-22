@@ -1816,37 +1816,50 @@ export function AgentMindView({
 
   const scopedDocTierCounts = useMemo(() => {
     let glossary = 0;
+    let verify = 0;
     let evergreen = 0;
     let record = 0;
     let deferred = 0;
     for (const d of scopedRepoDocs) {
       if (d.doc_tier === 'glossary') glossary += 1;
+      else if (d.doc_tier === 'verify') verify += 1;
       else if (d.doc_tier === 'evergreen') evergreen += 1;
       else if (d.doc_tier === 'record') record += 1;
       else if (d.doc_tier === 'deferred') deferred += 1;
     }
-    return { glossary, evergreen, record, deferred, total: scopedRepoDocs.length };
+    return { glossary, verify, evergreen, record, deferred, total: scopedRepoDocs.length };
   }, [scopedRepoDocs]);
 
   const repoDocsStatsByRepo = useMemo(() => {
     const byRepo = new Map<
       string,
-      { glossary: number; evergreen: number; record: number; deferred: number; total: number }
+      {
+        glossary: number;
+        verify: number;
+        evergreen: number;
+        record: number;
+        deferred: number;
+        total: number;
+      }
     >();
     let glossaryTotal = 0;
+    let verifyTotal = 0;
     let evergreenTotal = 0;
     let recordTotal = 0;
     let deferredTotal = 0;
     for (const d of allRepoDocs) {
       let cur = byRepo.get(d.repo);
       if (!cur) {
-        cur = { glossary: 0, evergreen: 0, record: 0, deferred: 0, total: 0 };
+        cur = { glossary: 0, verify: 0, evergreen: 0, record: 0, deferred: 0, total: 0 };
         byRepo.set(d.repo, cur);
       }
       cur.total += 1;
       if (d.doc_tier === 'glossary') {
         cur.glossary += 1;
         glossaryTotal += 1;
+      } else if (d.doc_tier === 'verify') {
+        cur.verify += 1;
+        verifyTotal += 1;
       } else if (d.doc_tier === 'evergreen') {
         cur.evergreen += 1;
         evergreenTotal += 1;
@@ -1858,7 +1871,7 @@ export function AgentMindView({
         deferredTotal += 1;
       }
     }
-    return { byRepo, glossaryTotal, evergreenTotal, recordTotal, deferredTotal };
+    return { byRepo, glossaryTotal, verifyTotal, evergreenTotal, recordTotal, deferredTotal };
   }, [allRepoDocs]);
 
   const activeRuleEntry = useMemo(
@@ -2982,7 +2995,9 @@ export function AgentMindView({
                 label: '治理文档',
                 value: scopedDocTierCounts.total,
                 tone: 'emerald',
-                hint: `${scopedDocTierCounts.glossary > 0 ? `术语 ${scopedDocTierCounts.glossary} · ` : ''}常青 ${scopedDocTierCounts.evergreen} · 记录 ${scopedDocTierCounts.record}${
+                hint: `${scopedDocTierCounts.glossary > 0 ? `术语 ${scopedDocTierCounts.glossary} · ` : ''}${
+                  scopedDocTierCounts.verify > 0 ? `验证 ${scopedDocTierCounts.verify} · ` : ''
+                }常青 ${scopedDocTierCounts.evergreen} · 记录 ${scopedDocTierCounts.record}${
                   scopedDocTierCounts.deferred > 0 ? ` · 暂缓 ${scopedDocTierCounts.deferred}` : ''
                 }`,
               },
@@ -5438,7 +5453,11 @@ export function AgentMindView({
                     label: '治理文档',
                     value: allRepoDocs.length,
                     tone: 'blue',
-                    hint: `${repoDocsStatsByRepo.glossaryTotal > 0 ? `术语 ${repoDocsStatsByRepo.glossaryTotal} · ` : ''}常青 ${repoDocsStatsByRepo.evergreenTotal} · 记录 ${repoDocsStatsByRepo.recordTotal}${
+                    hint: `${repoDocsStatsByRepo.glossaryTotal > 0 ? `术语 ${repoDocsStatsByRepo.glossaryTotal} · ` : ''}${
+                      repoDocsStatsByRepo.verifyTotal > 0
+                        ? `验证 ${repoDocsStatsByRepo.verifyTotal} · `
+                        : ''
+                    }常青 ${repoDocsStatsByRepo.evergreenTotal} · 记录 ${repoDocsStatsByRepo.recordTotal}${
                       repoDocsStatsByRepo.deferredTotal > 0
                         ? ` · 暂缓 ${repoDocsStatsByRepo.deferredTotal}`
                         : ''
@@ -5525,31 +5544,38 @@ export function AgentMindView({
 
                       <div className="flex flex-col gap-1.5 pt-2 border-t border-zinc-200/60 dark:border-border/50">
                         <div className="flex items-center justify-between gap-2 text-[10px] font-mono">
-                          <div className="flex items-center gap-1.5 min-w-0">
+                          <div className="flex items-center flex-wrap gap-1.5 min-w-0">
                             {proj.readme_rel_path ? (
-                              <span className="px-1.5 py-[1px] rounded bg-zinc-100 dark:bg-surface-secondary text-foreground border border-zinc-200/80 dark:border-border/70">
+                              <span className="px-1.5 py-[1px] rounded bg-zinc-100 dark:bg-surface-secondary text-foreground border border-zinc-200/80 dark:border-border/70 whitespace-nowrap">
                                 README
                               </span>
                             ) : (
-                              <span className="px-1.5 py-[1px] rounded bg-zinc-50 dark:bg-surface-secondary/40 text-muted/70 border border-zinc-200/60 dark:border-border/50">
+                              <span className="px-1.5 py-[1px] rounded bg-zinc-50 dark:bg-surface-secondary/40 text-muted/70 border border-zinc-200/60 dark:border-border/50 whitespace-nowrap">
                                 无 README
                               </span>
                             )}
                             {docCounts && docCounts.glossary > 0 && (
-                              <span className="px-1.5 py-[1px] rounded bg-cyan-500/12 text-cyan-700 dark:text-cyan-400 border border-cyan-500/25">
+                              <span className="px-1.5 py-[1px] rounded bg-cyan-500/12 text-cyan-700 dark:text-cyan-400 border border-cyan-500/25 whitespace-nowrap">
                                 术语表
                               </span>
                             )}
+                            {docCounts && docCounts.verify > 0 && (
+                              <span className="px-1.5 py-[1px] rounded bg-violet-500/12 text-violet-700 dark:text-violet-400 border border-violet-500/25 whitespace-nowrap">
+                                验证地图
+                              </span>
+                            )}
                             {docCounts && docCounts.evergreen > 0 && (
-                              <span className="px-1.5 py-[1px] rounded bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25">
+                              <span className="px-1.5 py-[1px] rounded bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25 whitespace-nowrap">
                                 常青 {docCounts.evergreen}
                               </span>
                             )}
-                            {docCounts && docCounts.total - docCounts.evergreen - docCounts.glossary > 0 && (
-                              <span className="text-muted">
-                                docs {docCounts.total - docCounts.evergreen - docCounts.glossary}
-                              </span>
-                            )}
+                            {docCounts &&
+                              docCounts.total - docCounts.evergreen - docCounts.glossary - docCounts.verify > 0 && (
+                                <span className="text-muted whitespace-nowrap">
+                                  docs{' '}
+                                  {docCounts.total - docCounts.evergreen - docCounts.glossary - docCounts.verify}
+                                </span>
+                              )}
                           </div>
                         </div>
 
@@ -5631,7 +5657,8 @@ export function AgentMindView({
                             label: '常青文档',
                             count:
                               (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.evergreen || 0) +
-                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.glossary || 0),
+                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.glossary || 0) +
+                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.verify || 0),
                           },
                           {
                             id: 'docs' as const,
@@ -5639,7 +5666,8 @@ export function AgentMindView({
                             count:
                               (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.total || 0) -
                               (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.evergreen || 0) -
-                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.glossary || 0),
+                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.glossary || 0) -
+                              (repoDocsStatsByRepo.byRepo.get(activeProjectItem.project.code)?.verify || 0),
                           },
                         ]
                       ).map((tab) => {
@@ -5814,8 +5842,12 @@ export function AgentMindView({
                       <MarkdownArticle
                         content={repoReadmeContent}
                         onOpenDocLink={(href) => {
-                          const clean = href.split('#')[0].replace(/^\.\//, '').replace(/\\/g, '/').toLowerCase();
-                          if (clean === 'docs/glossary.md' || clean.startsWith('docs/evergreen/')) {
+                          const clean = href.split('#')[0].split('?')[0].replace(/^\.\//, '').replace(/\\/g, '/').toLowerCase();
+                          if (
+                            clean === 'docs/glossary.md' ||
+                            clean === 'docs/verify.md' ||
+                            clean.startsWith('docs/evergreen/')
+                          ) {
                             setProjectDetailTab('evergreen');
                           } else if (clean.startsWith('docs/')) {
                             setProjectDetailTab('docs');

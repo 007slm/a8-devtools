@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    .tone-success {
+      color: var(--success);
+      background-color: color-mix(in srgb, var(--success) 12%, transparent);
+      border-color: color-mix(in srgb, var(--success) 32%, transparent);
+    }
+    .tone-primary {
+      color: var(--primary);
+      background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+      border-color: color-mix(in srgb, var(--primary) 32%, transparent);
+    }
+    .tone-warning {
+      color: var(--warning);
+      background-color: color-mix(in srgb, var(--warning) 12%, transparent);
+      border-color: color-mix(in srgb, var(--warning) 32%, transparent);
+    }
+    .tone-error {
+      color: var(--error);
+      background-color: color-mix(in srgb, var(--error) 12%, transparent);
+      border-color: color-mix(in srgb, var(--error) 32%, transparent);
+    }
+    .tone-muted {
+      color: var(--muted-foreground);
+      background-color: color-mix(in srgb, var(--foreground) 6%, transparent);
+      border-color: var(--border);
+    }
+    .row-active {
+      background-color: var(--card);
+      box-shadow: inset 2px 0 0 var(--primary);
+    }
+  </style>
+</head>
+<body class="bg-transparent text-[var(--foreground)] antialiased p-0 m-0">
+  <div class="py-1 text-xs">
+    <div class="border border-[var(--card-border)] rounded-md overflow-hidden">
+
+      <!-- 1. 顶部收益总览条 -->
+      <div class="px-3 py-2 border-b border-[var(--card-border)] flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2 min-w-0">
+          <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M8 2.2 13 4.4v3.4c0 3.1-2.1 5.4-5 6.2-2.9-.8-5-3.1-5-6.2V4.4L8 2.2Z" />
+            <path d="m5.8 8.1 1.5 1.5 3-3.1" />
+          </svg>
+          <span id="cardTitle" class="text-sm font-semibold truncate text-[var(--foreground)]"></span>
+          <span id="modeBadge" class="text-xs font-mono text-[var(--muted-foreground)] shrink-0 px-1.5 py-0.5 rounded border border-[var(--border)]"></span>
+        </div>
+        <div id="impactBadges" class="flex flex-wrap items-center gap-1.5 shrink-0"></div>
+      </div>
+
+      <!-- 2. 主从双栏工作区（左：行动清单 / 右：提升效果与补丁详情） -->
+      <div id="workspaceGrid" class="grid grid-cols-1 sm:grid-cols-12 divide-y sm:divide-y-0 sm:divide-x divide-[var(--card-border)]">
+        <!-- 左侧可勾选防线清单 -->
+        <div id="masterList" class="sm:col-span-5 max-h-[268px] overflow-y-auto divide-y divide-[var(--card-border)]"></div>
+
+        <!-- 右侧详情检视区 -->
+        <div id="detailPanel" class="sm:col-span-7 p-3 bg-[var(--card)] flex flex-col justify-between gap-2.5 min-h-[250px]">
+          <div class="space-y-2.5">
+            <!-- 检视顶栏与双视图切换 -->
+            <div class="flex items-center justify-between gap-2 pb-2 border-b border-[var(--card-border)]">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span id="detailId" class="font-mono font-semibold text-[var(--foreground)]"></span>
+                <span id="detailSignal" class="px-1.5 py-0.5 rounded border text-xs truncate tone-muted"></span>
+              </div>
+              <div class="inline-flex rounded border border-[var(--border)] p-0.5 shrink-0">
+                <button id="tabEffect" type="button" class="px-2 py-0.5 rounded-sm text-xs font-medium transition-colors cursor-pointer">提升效果</button>
+                <button id="tabDiff" type="button" class="px-2 py-0.5 rounded-sm text-xs font-medium transition-colors cursor-pointer">变更补丁</button>
+              </div>
+            </div>
+
+            <!-- 视图 A：现状痛点 (改前) -> 进化效果 (改后) -->
+            <div id="viewEffect" class="space-y-2.5">
+              <div class="border-l-2 border-[var(--error)] pl-2.5 py-0.5 space-y-0.5">
+                <div class="flex items-baseline gap-2 flex-wrap">
+                  <span class="font-semibold text-[var(--error)] shrink-0">现状痛点（改前）</span>
+                  <span id="detailQuote" class="text-xs text-[var(--muted-foreground)] truncate"></span>
+                </div>
+                <p id="detailBefore" class="text-xs leading-relaxed text-[var(--foreground)]"></p>
+              </div>
+
+              <div class="border-l-2 border-[var(--success)] pl-2.5 py-0.5 space-y-0.5">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <span class="font-semibold text-[var(--success)] shrink-0">提升效果（改后）</span>
+                  <span id="detailTierArrow" class="font-mono text-xs text-[var(--muted-foreground)] truncate"></span>
+                </div>
+                <p id="detailAfter" class="text-xs leading-relaxed text-[var(--foreground)]"></p>
+              </div>
+
+              <!-- 作用域 / 二选一待拍板按钮区 -->
+              <div id="decisionBox" class="hidden pt-1.5 border-t border-[var(--card-border)] space-y-1.5">
+                <div id="decisionQuestion" class="text-xs font-medium text-[var(--foreground)]"></div>
+                <div id="decisionOptions" class="flex flex-wrap gap-1.5"></div>
+              </div>
+            </div>
+
+            <!-- 视图 B：语法着色 Diff / 检查补丁预览 -->
+            <div id="viewDiff" class="hidden space-y-1.5">
+              <div id="diffTarget" class="font-mono text-xs text-[var(--muted-foreground)] truncate"></div>
+              <pre id="diffPre" class="font-mono text-xs leading-relaxed p-2 rounded border border-[var(--border)] bg-[var(--background)] max-h-[185px] overflow-x-auto overflow-y-auto whitespace-pre"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 空态（零膨胀时呈现） -->
+      <div id="emptyState" class="hidden px-4 py-6 text-center bg-[var(--card)] space-y-1">
+        <div class="text-sm font-medium text-[var(--foreground)]">本轮会话无新增规则纠偏 · 规则库保持零膨胀</div>
+        <div class="text-xs text-[var(--muted-foreground)]">未捕获需要沉淀或清理的规则变更，当前防线配对健康。</div>
+      </div>
+
+      <!-- 3. 可折叠噪音/积压抽屉（默认收起，不撑高默认高度） -->
+      <div id="filteredDrawer" class="hidden px-3 py-2 border-t border-[var(--card-border)] bg-[var(--background)] max-h-[84px] overflow-y-auto space-y-1"></div>
+
+      <!-- 4. 底部交互勾选与指令复制栏 -->
+      <div class="px-3 py-2 border-t border-[var(--card-border)] flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <button id="btnToggleAll" type="button" class="px-2 py-0.5 rounded border border-[var(--border)] text-xs text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors cursor-pointer">清空</button>
+          <span id="selectedCount" class="text-xs text-[var(--muted-foreground)] tabular-nums"></span>
+          <button id="btnToggleFiltered" type="button" class="hidden px-2 py-0.5 rounded border border-[var(--border)] text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors cursor-pointer"></button>
+        </div>
+
+        <div class="flex items-center gap-2 min-w-0">
+          <code id="cmdPreview" class="font-mono text-xs px-2 py-0.5 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--code-foreground)] max-w-[260px] truncate select-all"></code>
+          <button id="btnCopy" type="button" class="px-2.5 py-1 rounded text-xs font-medium bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 transition-opacity cursor-pointer shrink-0">复制确认指令</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    /**
+     * IMPROVE_DATA 数据契约（调用 /a8-improve 或 ASK_USER_UI 时由 Agent 按实替换本对象）：
+     * - title: string            本次复盘/体检总标题
+     * - mode: string             作用域/入口标识（如 "/a8-improve · 本会话"）
+     * - items: Array<{
+     *     id: number,            序号（1, 2, ...）
+     *     kind: "lint"|"decision"|"arch"|"rewrite"|"add"|"clean",
+     *     tierLabel: string,     如 "L3 静态检查" / "L4 语义裁决" / "L5 收紧规则" / "清理冗余"
+     *     title: string,         一句话平实中文说明“要做什么”
+     *     target: string,        目标落盘文件路径
+     *     signalType: string,    如 "显式纠偏" / "静默修改" / "连续微调" / "回退否决" / "配对体检"
+     *     signalQuote: string,   原话摘要或审计触发证据
+     *     before: string,        现状痛点（改前问题）
+     *     after: string,         提升效果（改后收益/防线效力）
+     *     diff: string,          标准 unified diff 或脚本代码预览
+     *     defaultChecked?: boolean, 默认勾选（不填则 true）
+     *     decision?: {           可选：有作用域歧义或需要拍板时附带
+     *       question: string,
+     *       options: Array<{ label: string, value: string, target?: string, skip?: boolean }>
+     *     }
+     *   }>
+     * - skipped?: Array<{ text: string, reason: string }>  已过滤的一次性噪音（可折叠查看）
+     * - backlog?: Array<{ text: string, reason: string }>  暂缓改造的自动化积压（可选）
+     */
+    const IMPROVE_DATA = {
+      title: "经验提炼与规则防线体检提案",
+      mode: "/a8-improve · 示例",
+      items: [
+        {
+          id: 1,
+          kind: "lint",
+          tierLabel: "L3 静态检查",
+          title: "用静态门禁拦截 Stop Hook 遗留分支回归",
+          target: "scripts/lints/check_stop_hook_invariants.py",
+          signalType: "显式纠偏",
+          signalQuote: "“写完记录就直通，别每轮额外拉起 docs-sync 子代理”",
+          before: "仅靠口头约定约束 Hook 行为，后续改动 Hook 时极易误加回自动派发子代理分支。",
+          after: "升格为第 3 级静态与不变量双检，每次提交自动报错阻断，直接省掉人工复核负担。",
+          diff: "@@ -71,2 +71,4 @@\n-    for forbidden in (\"AUTO_LINT\", \"AUTO_DECISION\"):\n+    for forbidden in (\"AUTO_LINT\", \"AUTO_DECISION\", \"EVERGREEN_SYNC_QUESTION\", 'TypeName=\"docs-sync\"'):\n         if forbidden in src_text:\n             violations.append(f\"stop_reflect.py 仍包含已废除标识: {forbidden}\")"
+        },
+        {
+          id: 2,
+          kind: "rewrite",
+          tierLabel: "L5 收紧规则",
+          title: "所有技能与指令命名改用大陆程序员直白用语",
+          target: "plugins/a8-agent-mind/rules/mind-rules.md",
+          signalType: "显式纠偏",
+          signalQuote: "“按大陆程序员习惯统一改掉生僻英文术语，保留常用词”",
+          before: "旧规则只笼统写“平实中文”，导致新技能仍沿用 sharpen、polish 等生僻命名。",
+          after: "在既有原理内补入物理判据与反例，后续新增入口一次命中直白命名规范。",
+          diff: "@@ -80,1 +80,1 @@\n-- **平实中文表达**：文档与命名保持清晰易懂。\n+- **直白工程命名（禁用生僻黑话）**：新增技能、面板文案必须采用大陆开发者常用直白表达（反例：禁止使用 sharpen、interrogate 等脱离上下文的黑话名词）。",
+          decision: {
+            question: "这条规范放哪里更合适？",
+            options: [
+              { label: "全局通用规范（推荐）", value: "全局规范", target: "plugins/a8-agent-mind/rules/mind-rules.md" },
+              { label: "仅当前仓库红线", value: "本仓红线", target: ".agents/rules/redline.md" }
+            ]
+          }
+        },
+        {
+          id: 3,
+          kind: "clean",
+          tierLabel: "清理冗余",
+          title: "删除已被快慢双轨机制取代的旧同步条款",
+          target: "plugins/a8-agent-mind/rules/mind-rules.md",
+          signalType: "配对体检",
+          signalQuote: "“快慢双轨落地后，旧‘每轮强制调 docs-sync’条款已失效”",
+          before: "规则库残留旧约束与现行“日间轻更新 + 夜间 20:00 梳理”冲突，会误导新会话。",
+          after: "彻底移除过时条款减少指令干扰，确保规则库零矛盾且体积稳控在 20KB 以内。",
+          diff: "@@ -78,2 +78,1 @@\n-- 写完工作记录后必须立即调用隔离上下文子代理 docs-sync 整合常青文档。\n+- 写完工作记录后直接在当前上下文顺手轻更新常青文档，每晚 20:00 定时任务兜底全量梳理。"
+        }
+      ],
+      skipped: [
+        { text: "微调某处卡片内边距 2px", reason: "单次界面像素微调，不过 6 个月保质期滤网" }
+      ],
+      backlog: []
+    };
+
+    const state = {
+      selectedId: IMPROVE_DATA.items.length ? IMPROVE_DATA.items[0].id : null,
+      activeTab: "effect",
+      drawerOpen: false,
+      checkedMap: {},
+      decisionIdxMap: {},
+      decisionTouchedMap: {}
+    };
+
+    IMPROVE_DATA.items.forEach((item) => {
+      state.checkedMap[item.id] = item.defaultChecked !== false;
+      state.decisionIdxMap[item.id] = 0;
+      state.decisionTouchedMap[item.id] = false;
+    });
+
+    function kindToneClass(kind) {
+      if (kind === "lint" || kind === "decision" || kind === "arch") return "tone-success";
+      if (kind === "clean") return "tone-warning";
+      return "tone-primary";
+    }
+
+    function activeTarget(item) {
+      if (item.decision && Array.isArray(item.decision.options) && item.decision.options.length) {
+        const idx = state.decisionIdxMap[item.id] || 0;
+        const opt = item.decision.options[idx];
+        if (opt && opt.target) return opt.target;
+      }
+      return item.target;
+    }
+
+    function isItemSkippedByDecision(item) {
+      if (!item.decision || !Array.isArray(item.decision.options)) return false;
+      const opt = item.decision.options[state.decisionIdxMap[item.id] || 0];
+      return Boolean(opt && opt.skip);
+    }
+
+    function renderHeader() {
+      document.getElementById("cardTitle").textContent = IMPROVE_DATA.title || "经验提炼与规则体检";
+      document.getElementById("modeBadge").textContent = IMPROVE_DATA.mode || "/a8-improve";
+
+      const items = IMPROVE_DATA.items || [];
+      let machineCount = 0;
+      let ruleCount = 0;
+      let cleanCount = 0;
+      let decisionCount = 0;
+      items.forEach((it) => {
+        if (it.kind === "lint" || it.kind === "decision" || it.kind === "arch") machineCount += 1;
+        else if (it.kind === "clean") cleanCount += 1;
+        else ruleCount += 1;
+        if (it.decision) decisionCount += 1;
+      });
+
+      const badgesEl = document.getElementById("impactBadges");
+      badgesEl.textContent = "";
+      const specs = [
+        { count: machineCount, label: "机器防线 +" + machineCount, cls: "tone-success" },
+        { count: ruleCount, label: "规则收紧/新增 +" + ruleCount, cls: "tone-primary" },
+        { count: cleanCount, label: "减负清理 -" + cleanCount, cls: "tone-warning" },
+        { count: decisionCount, label: "待拍板 " + decisionCount, cls: "tone-error" }
+      ];
+      specs.forEach((s) => {
+        if (!s.count) return;
+        const span = document.createElement("span");
+        span.className = "px-1.5 py-0.5 rounded border text-xs font-medium tabular-nums " + s.cls;
+        span.textContent = s.label;
+        badgesEl.appendChild(span);
+      });
+    }
+
+    function renderMasterList() {
+      const listEl = document.getElementById("masterList");
+      const gridEl = document.getElementById("workspaceGrid");
+      const emptyEl = document.getElementById("emptyState");
+      const items = IMPROVE_DATA.items || [];
+
+      if (!items.length) {
+        gridEl.classList.add("hidden");
+        emptyEl.classList.remove("hidden");
+        return;
+      }
+      gridEl.classList.remove("hidden");
+      emptyEl.classList.add("hidden");
+      listEl.textContent = "";
+
+      items.forEach((item) => {
+        const isSelected = item.id === state.selectedId;
+        const isChecked = Boolean(state.checkedMap[item.id]);
+
+        const row = document.createElement("div");
+        row.className = "px-2.5 py-2 cursor-pointer transition-colors hover:bg-[var(--accent)]"
+          + (isSelected ? " row-active" : "")
+          + (isChecked ? "" : " opacity-55");
+        row.addEventListener("click", () => {
+          state.selectedId = item.id;
+          renderAll();
+        });
+
+        const topRow = document.createElement("div");
+        topRow.className = "flex items-center justify-between gap-1.5";
+
+        const leftMeta = document.createElement("div");
+        leftMeta.className = "flex items-center gap-1.5 min-w-0";
+
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = isChecked;
+        cb.className = "accent-[var(--primary)] cursor-pointer shrink-0";
+        cb.setAttribute("aria-label", "选择第 " + item.id + " 项");
+        cb.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+        });
+        cb.addEventListener("change", (ev) => {
+          state.checkedMap[item.id] = ev.target.checked;
+          renderAll();
+        });
+
+        const numSpan = document.createElement("span");
+        numSpan.className = "font-mono font-semibold text-[var(--muted-foreground)] shrink-0";
+        numSpan.textContent = "#" + item.id;
+
+        const tierSpan = document.createElement("span");
+        tierSpan.className = "px-1.5 py-0.5 rounded border text-xs font-medium shrink-0 " + kindToneClass(item.kind);
+        tierSpan.textContent = item.tierLabel;
+
+        leftMeta.appendChild(cb);
+        leftMeta.appendChild(numSpan);
+        leftMeta.appendChild(tierSpan);
+        topRow.appendChild(leftMeta);
+
+        if (item.decision) {
+          const decSpan = document.createElement("span");
+          decSpan.className = "px-1.5 py-0.5 rounded border text-xs shrink-0 tone-error";
+          decSpan.textContent = "待拍板";
+          topRow.appendChild(decSpan);
+        }
+
+        const titleEl = document.createElement("div");
+        titleEl.className = "font-medium text-[var(--foreground)] truncate mt-1";
+        titleEl.textContent = item.title;
+
+        const targetEl = document.createElement("div");
+        targetEl.className = "font-mono text-xs text-[var(--muted-foreground)] truncate mt-0.5";
+        targetEl.textContent = activeTarget(item);
+
+        row.appendChild(topRow);
+        row.appendChild(titleEl);
+        row.appendChild(targetEl);
+        listEl.appendChild(row);
+      });
+    }
+
+    function renderDetail() {
+      const items = IMPROVE_DATA.items || [];
+      const item = items.find((x) => x.id === state.selectedId);
+      if (!item) return;
+
+      document.getElementById("detailId").textContent = "#" + item.id;
+      document.getElementById("detailSignal").textContent = item.signalType || "信号";
+
+      const tabEffect = document.getElementById("tabEffect");
+      const tabDiff = document.getElementById("tabDiff");
+      const viewEffect = document.getElementById("viewEffect");
+      const viewDiff = document.getElementById("viewDiff");
+
+      if (state.activeTab === "effect") {
+        tabEffect.className = "px-2 py-0.5 rounded-sm text-xs font-medium bg-[var(--primary)] text-[var(--primary-foreground)] cursor-pointer";
+        tabDiff.className = "px-2 py-0.5 rounded-sm text-xs font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer";
+        viewEffect.classList.remove("hidden");
+        viewDiff.classList.add("hidden");
+      } else {
+        tabDiff.className = "px-2 py-0.5 rounded-sm text-xs font-medium bg-[var(--primary)] text-[var(--primary-foreground)] cursor-pointer";
+        tabEffect.className = "px-2 py-0.5 rounded-sm text-xs font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer";
+        viewDiff.classList.remove("hidden");
+        viewEffect.classList.add("hidden");
+      }
+
+      document.getElementById("detailQuote").textContent = item.signalQuote || "";
+      document.getElementById("detailBefore").textContent = item.before || "";
+      document.getElementById("detailTierArrow").textContent = item.tierLabel + " → " + activeTarget(item);
+      document.getElementById("detailAfter").textContent = item.after || "";
+
+      const decBox = document.getElementById("decisionBox");
+      const decQ = document.getElementById("decisionQuestion");
+      const decOpts = document.getElementById("decisionOptions");
+      if (item.decision && Array.isArray(item.decision.options) && item.decision.options.length) {
+        decBox.classList.remove("hidden");
+        decQ.textContent = "待拍板：" + item.decision.question;
+        decOpts.textContent = "";
+        const selIdx = state.decisionIdxMap[item.id] || 0;
+        item.decision.options.forEach((opt, idx) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          const active = idx === selIdx;
+          btn.className = active
+            ? "px-2 py-1 rounded border text-xs font-medium cursor-pointer tone-primary"
+            : "px-2 py-1 rounded border border-[var(--border)] text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] cursor-pointer";
+          btn.textContent = opt.label;
+          btn.addEventListener("click", () => {
+            state.decisionIdxMap[item.id] = idx;
+            state.decisionTouchedMap[item.id] = true;
+            if (opt.skip) {
+              state.checkedMap[item.id] = true;
+            }
+            renderAll();
+          });
+          decOpts.appendChild(btn);
+        });
+      } else {
+        decBox.classList.add("hidden");
+      }
+
+      document.getElementById("diffTarget").textContent = "目标文件：" + activeTarget(item);
+      const diffPre = document.getElementById("diffPre");
+      diffPre.textContent = "";
+      const diffLines = String(item.diff || "(无代码/规则 diff 预览)").split("\n");
+      diffLines.forEach((line, idx) => {
+        const lineSpan = document.createElement("span");
+        if (line.startsWith("+") && !line.startsWith("+++")) {
+          lineSpan.className = "block text-[var(--success)]";
+        } else if (line.startsWith("-") && !line.startsWith("---")) {
+          lineSpan.className = "block text-[var(--error)]";
+        } else if (line.startsWith("@@")) {
+          lineSpan.className = "block text-[var(--link)]";
+        } else {
+          lineSpan.className = "block text-[var(--code-foreground)]";
+        }
+        lineSpan.textContent = idx < diffLines.length - 1 ? line : line;
+        diffPre.appendChild(lineSpan);
+      });
+    }
+
+    function renderFilteredDrawer() {
+      const skipped = Array.isArray(IMPROVE_DATA.skipped) ? IMPROVE_DATA.skipped : [];
+      const backlog = Array.isArray(IMPROVE_DATA.backlog) ? IMPROVE_DATA.backlog : [];
+      const totalExtra = skipped.length + backlog.length;
+      const btn = document.getElementById("btnToggleFiltered");
+      const drawer = document.getElementById("filteredDrawer");
+
+      if (!totalExtra) {
+        btn.classList.add("hidden");
+        drawer.classList.add("hidden");
+        return;
+      }
+
+      btn.classList.remove("hidden");
+      const parts = [];
+      if (skipped.length) parts.push("已过滤 " + skipped.length + " 项");
+      if (backlog.length) parts.push("积压 " + backlog.length + " 项");
+      btn.textContent = parts.join(" · ") + (state.drawerOpen ? " ▲" : " ▼");
+
+      if (!state.drawerOpen) {
+        drawer.classList.add("hidden");
+        return;
+      }
+
+      drawer.classList.remove("hidden");
+      drawer.textContent = "";
+      skipped.forEach((s) => {
+        const line = document.createElement("div");
+        line.className = "text-xs text-[var(--muted-foreground)] truncate";
+        line.textContent = "已过滤：" + s.text + " — " + s.reason;
+        drawer.appendChild(line);
+      });
+      backlog.forEach((b) => {
+        const line = document.createElement("div");
+        line.className = "text-xs text-[var(--muted-foreground)] truncate";
+        line.textContent = "待自动化积压：" + b.text + " — " + b.reason;
+        drawer.appendChild(line);
+      });
+    }
+
+    function buildConfirmCommand() {
+      const items = IMPROVE_DATA.items || [];
+      const activeItems = items.filter((it) => state.checkedMap[it.id] && !isItemSkippedByDecision(it));
+
+      if (!activeItems.length) {
+        return "仅本次处理，不写入规则";
+      }
+
+      const allCheckedWritable = activeItems.length === items.length;
+      const decisionNotes = [];
+      let hasNonDefaultDecision = false;
+
+      activeItems.forEach((it) => {
+        if (it.decision && Array.isArray(it.decision.options) && it.decision.options.length) {
+          const idx = state.decisionIdxMap[it.id] || 0;
+          const opt = it.decision.options[idx];
+          if (idx !== 0) hasNonDefaultDecision = true;
+          if (idx !== 0 || items.length === 1) {
+            decisionNotes.push("#" + it.id + " 选" + opt.value);
+          }
+        }
+      });
+
+      const base = allCheckedWritable && !hasNonDefaultDecision && items.length > 1
+        ? "写入全部"
+        : (allCheckedWritable && items.length > 1
+          ? "写入全部"
+          : "写入 " + activeItems.map((it) => it.id).join(", "));
+
+      return decisionNotes.length ? base + "（" + decisionNotes.join("，") + "）" : base;
+    }
+
+    function renderFooter() {
+      const items = IMPROVE_DATA.items || [];
+      const activeItems = items.filter((it) => state.checkedMap[it.id] && !isItemSkippedByDecision(it));
+
+      document.getElementById("selectedCount").textContent = "已选 " + activeItems.length + "/" + items.length + " 项";
+      const allSelected = items.length > 0 && items.every((it) => state.checkedMap[it.id]);
+      const toggleBtn = document.getElementById("btnToggleAll");
+      toggleBtn.disabled = items.length === 0;
+      toggleBtn.textContent = allSelected ? "清空" : "全选";
+
+      document.getElementById("cmdPreview").textContent = buildConfirmCommand();
+    }
+
+    function renderAll() {
+      renderHeader();
+      renderMasterList();
+      renderDetail();
+      renderFilteredDrawer();
+      renderFooter();
+    }
+
+    document.getElementById("tabEffect").addEventListener("click", () => {
+      state.activeTab = "effect";
+      renderDetail();
+    });
+    document.getElementById("tabDiff").addEventListener("click", () => {
+      state.activeTab = "diff";
+      renderDetail();
+    });
+
+    document.getElementById("btnToggleAll").addEventListener("click", () => {
+      const items = IMPROVE_DATA.items || [];
+      const allSelected = items.length > 0 && items.every((it) => state.checkedMap[it.id]);
+      items.forEach((it) => {
+        state.checkedMap[it.id] = !allSelected;
+      });
+      renderAll();
+    });
+
+    document.getElementById("btnToggleFiltered").addEventListener("click", () => {
+      state.drawerOpen = !state.drawerOpen;
+      renderFilteredDrawer();
+    });
+
+    function showCopyFeedback(btn, label) {
+      const original = "复制确认指令";
+      btn.textContent = label;
+      window.setTimeout(() => {
+        btn.textContent = original;
+      }, 1600);
+    }
+
+    function fallbackSelectCommand() {
+      const cmdEl = document.getElementById("cmdPreview");
+      const range = document.createRange();
+      range.selectNodeContents(cmdEl);
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+
+    document.getElementById("btnCopy").addEventListener("click", async () => {
+      const btn = document.getElementById("btnCopy");
+      const text = buildConfirmCommand();
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        try {
+          await navigator.clipboard.writeText(text);
+          showCopyFeedback(btn, "已复制 ✓");
+          return;
+        } catch (clipErr) {
+          console.warn("Clipboard API unavailable, falling back to execCommand:", clipErr);
+        }
+      }
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      let copied = false;
+      try {
+        copied = document.execCommand("copy");
+      } catch (execErr) {
+        console.warn("execCommand copy failed:", execErr);
+      } finally {
+        document.body.removeChild(ta);
+      }
+      if (copied) {
+        showCopyFeedback(btn, "已复制 ✓");
+      } else {
+        fallbackSelectCommand();
+        showCopyFeedback(btn, "请手动选中复制");
+      }
+    });
+
+    renderAll();
+  </script>
+</body>
+</html>

@@ -994,6 +994,8 @@ def get_relevant_docs_for_files(
         score = 0
         reasons: list[str] = []
         doc_lower = row["rel_path"].lower()
+        if doc_lower.endswith((".html", ".htm")):
+            continue
         for cf in norm_changed:
             if cf == doc_lower:
                 score += 10

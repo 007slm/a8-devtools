@@ -1,12 +1,12 @@
 # ADR：双层文档体系（Evergreen + Records）与隔离 Curator 闭环架构
 
 - **日期**：2026-11-20
-- **状态**：部分失效（被 20261120-ADR-插件与治理-严格Git回合增量快照与无Git静默边界.md 更新）
+- **状态**：部分失效（被 20261120-ADR-插件与治理-严格Git回合增量快照与无Git静默边界.md 与 20261122-ADR-插件与治理-吸收pstack工作流体系与独立验证地图契约设计.md 更新）
 - **域**：agent-mind-governance.md
 - **取代**：20261110-SPEC-插件与治理-基于GoogleDecisionsAPI的语义红线裁判与规则沉淀设计.md（第 2.5 节原单层文档索引规范）
 
-> **[部分失效（2026-11-20 补标）]**
-> 本文第 2～3 节确立的 `evergreen/` + `records/` + `deferred/` 双层分域架构、渐进式披露回链、`docs-curator` 闭环及 `AGENTS.md` 表格路由修复持续有效；原第 2 节登记 `docs/INDEX.md` 的过渡做法以及第 4 节关于“`stop_reflect.py` 仅从父会话 `transcript.jsonl` 解析变更文件”的已知边界限制，已分别被 [20261120 工作台与治理规范 SPEC](20261120-SPEC-工作台与插件看板-门户Hero概览与仓库治理文档浏览器.md)（废弃冗余 `INDEX.md`，`AGENTS.md` 直挂常青文档）与 [20261120 严格 Git 回合快照 ADR](20261120-ADR-插件与治理-严格Git回合增量快照与无Git静默边界.md) 取代更新。
+> **[部分失效（2026-11-20 补标，2026-11-22 续标）]**
+> 本文第 2～3 节确立的 `evergreen/` + `records/` + `deferred/` 双层分域架构、渐进式披露回链、文档同步专员闭环及 `AGENTS.md` 表格路由修复持续有效；原第 2 节登记 `docs/INDEX.md` 的过渡做法与 `docs-curator` 命名及根文档范围约定、以及第 4 节关于“`stop_reflect.py` 仅从父会话 `transcript.jsonl` 解析变更文件”的已知边界限制，已分别被 [20261120 工作台与治理规范 SPEC](20261120-SPEC-工作台与插件看板-门户Hero概览与仓库治理文档浏览器.md)（废弃冗余 `INDEX.md`）、[20261120 严格 Git 回合快照 ADR](20261120-ADR-插件与治理-严格Git回合增量快照与无Git静默边界.md) 与 [20261122 吸收 pstack 工作流与验证地图 ADR](20261122-ADR-插件与治理-吸收pstack工作流体系与独立验证地图契约设计.md)（`docs-curator` 更名为 `docs-sync`，并确立根文档 `docs/glossary.md` 与 `docs/verify.md`）取代更新。
 
 ---
 

@@ -1177,7 +1177,10 @@ fn is_allowed_repo_governance_rel(clean_rel: &str, writable: bool) -> bool {
             return true;
         }
     }
-    if !writable && (lower == "readme.md" || lower.starts_with("docs/")) && lower.ends_with(".md") {
+    if !writable
+        && (lower == "readme.md"
+            || (lower.starts_with("docs/") && (lower.ends_with(".md") || lower.ends_with(".html"))))
+    {
         return true;
     }
     false
@@ -1310,7 +1313,25 @@ fn estimate_markdown_tokens(raw: &str) -> (usize, u32) {
     (chars, est)
 }
 
+fn extract_html_title_tag(raw: &str) -> Option<String> {
+    let head_slice: String = raw.lines().take(40).collect::<Vec<_>>().join(" ");
+    let lower = head_slice.to_ascii_lowercase();
+    let start = lower.find("<title>")? + 7;
+    let end_rel = lower[start..].find("</title>")?;
+    let val = head_slice[start..start + end_rel].trim();
+    if val.is_empty() {
+        None
+    } else {
+        Some(val.to_string())
+    }
+}
+
 fn parse_doc_meta(raw: &str, file_name: &str) -> (String, String, String, String) {
+    if file_name.to_ascii_lowercase().ends_with(".html") {
+        let stem = &file_name[..file_name.len().saturating_sub(5)];
+        let title = extract_html_title_tag(raw).unwrap_or_else(|| stem.to_string());
+        return (title, String::new(), "HTML".to_string(), String::new());
+    }
     let stem = file_name.strip_suffix(".md").unwrap_or(file_name);
     let mut title = String::new();
     let mut status = String::new();
@@ -1354,6 +1375,9 @@ fn classify_repo_doc_tier(rel_lower: &str, date: &str, status: &str) -> (&'stati
     if sub == "glossary.md" {
         return ("glossary", "GLOSSARY");
     }
+    if sub == "verify.md" {
+        return ("verify", "VERIFY");
+    }
     if sub.starts_with("evergreen/") {
         return ("evergreen", "EVERGREEN");
     }
@@ -1393,12 +1417,10 @@ fn collect_repo_docs_recursive(
         if !path.is_file() {
             continue;
         }
-        let is_md = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.eq_ignore_ascii_case("md"))
-            .unwrap_or(false);
-        if !is_md {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let is_md = ext.eq_ignore_ascii_case("md");
+        let is_html = ext.eq_ignore_ascii_case("html");
+        if !is_md && !is_html {
             continue;
         }
         let Ok(rel) = path.strip_prefix(repo_root) else {
@@ -1410,12 +1432,22 @@ fn collect_repo_docs_recursive(
         let raw = std::fs::read_to_string(&path).unwrap_or_default();
         let (title, date, parsed_type, status) = parse_doc_meta(&raw, name);
         let (tier, fallback_type) = classify_repo_doc_tier(&rel_lower, &date, &status);
-        let doc_type = if tier == "evergreen" || tier == "glossary" || parsed_type.is_empty() {
+        let doc_type = if is_html {
+            "HTML".to_string()
+        } else if tier == "evergreen"
+            || tier == "glossary"
+            || tier == "verify"
+            || parsed_type.is_empty()
+        {
             fallback_type.to_string()
         } else {
             parsed_type
         };
-        let (_, estimated_tokens) = estimate_markdown_tokens(&raw);
+        let estimated_tokens = if is_html {
+            0
+        } else {
+            estimate_markdown_tokens(&raw).1
+        };
         out.push(RepoDocEntryDto {
             repo: repo_code.to_string(),
             doc_tier: tier.to_string(),
@@ -1447,16 +1479,20 @@ fn scan_repo_docs(projects: &[HostProjectCardDto]) -> Vec<RepoDocEntryDto> {
     let tier_rank = |tier: &str| -> u8 {
         match tier {
             "glossary" => 0,
-            "evergreen" => 1,
-            "record" => 2,
-            "deferred" => 3,
-            _ => 4,
+            "verify" => 1,
+            "evergreen" => 2,
+            "record" => 3,
+            "deferred" => 4,
+            _ => 5,
         }
     };
     docs.sort_by(|a, b| {
+        let a_html = u8::from(a.doc_type != "HTML");
+        let b_html = u8::from(b.doc_type != "HTML");
         a.repo
             .cmp(&b.repo)
             .then_with(|| tier_rank(&a.doc_tier).cmp(&tier_rank(&b.doc_tier)))
+            .then_with(|| a_html.cmp(&b_html))
             .then_with(|| b.date.cmp(&a.date))
             .then_with(|| b.modified_ts.cmp(&a.modified_ts))
             .then_with(|| a.rel_path.cmp(&b.rel_path))
@@ -4134,6 +4170,10 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         assert!(!is_allowed_repo_governance_rel("README.md", true));
         assert!(is_allowed_repo_governance_rel("docs/evergreen/core.md", false));
         assert!(!is_allowed_repo_governance_rel("docs/evergreen/core.md", true));
+        assert!(is_allowed_repo_governance_rel("docs/evergreen/guide.html", false));
+        assert!(!is_allowed_repo_governance_rel("docs/evergreen/guide.html", true));
+        assert!(is_allowed_repo_governance_rel("docs/verify.md", false));
+        assert!(!is_allowed_repo_governance_rel("docs/verify.md", true));
         assert!(resolve_target_scope(&tmp.0, Some("sample-testbed"), true).is_err());
         assert!(resolve_target_scope(&tmp.0, Some("sample-repo"), true).is_ok());
 
@@ -4146,7 +4186,13 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         std::fs::create_dir_all(project_repo.join("docs").join("records")).unwrap();
         std::fs::create_dir_all(project_repo.join("docs").join("deferred")).unwrap();
         std::fs::write(project_repo.join("docs").join("glossary.md"), "# 项目术语表\n").unwrap();
+        std::fs::write(project_repo.join("docs").join("verify.md"), "# 验证地图\n").unwrap();
         std::fs::write(project_repo.join("docs").join("evergreen").join("core.md"), "# 核心常青\n").unwrap();
+        std::fs::write(
+            project_repo.join("docs").join("evergreen").join("visual.html"),
+            "<!doctype html><html><head><title>可视化指南</title></head><body></body></html>\n",
+        )
+        .unwrap();
         std::fs::write(
             project_repo.join("docs").join("records").join("20261120-ADR-core-test.md"),
             "# ADR：决策记录\n- **状态**：已落地（当时有效）\n",
@@ -4167,6 +4213,16 @@ summary: 建议增强 Stop Hook 上下文压缩\n\
         assert_eq!(sample_docs[0].doc_tier, "glossary");
         assert_eq!(sample_docs[0].doc_type, "GLOSSARY");
         assert_eq!(sample_docs[0].title, "项目术语表");
+        assert_eq!(sample_docs[1].doc_tier, "verify");
+        assert_eq!(sample_docs[1].doc_type, "VERIFY");
+        assert_eq!(sample_docs[1].title, "验证地图");
+        assert_eq!(sample_docs[1].rel_path, "docs/verify.md");
+        assert_eq!(sample_docs[2].doc_tier, "evergreen");
+        assert_eq!(sample_docs[2].doc_type, "HTML");
+        assert_eq!(sample_docs[2].title, "可视化指南");
+        assert_eq!(sample_docs[2].estimated_tokens, 0);
+        assert_eq!(sample_docs[3].doc_tier, "evergreen");
+        assert_eq!(sample_docs[3].title, "核心常青");
         assert!(scanned_docs.iter().any(|d| d.repo == "sample-repo" && d.doc_tier == "evergreen" && d.title == "核心常青"));
         assert!(scanned_docs.iter().any(|d| d.repo == "sample-repo" && d.doc_tier == "record" && d.doc_type == "ADR" && d.date == "2026-11-20" && d.status == "已落地（当时有效）"));
         assert!(scanned_docs.iter().any(|d| d.repo == "sample-repo" && d.doc_tier == "deferred" && d.doc_type == "SPEC" && d.status.starts_with("已废弃")));

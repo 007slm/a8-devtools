@@ -15,7 +15,7 @@ description: "面向用户主动触发的跨仓库 UI 自动化验证与验收�
 | :--- | :--- | :--- |
 | **UI 自动化测试脚本** | `<repo>/scripts/tests/ui-verify/` | **入库托管**。存放跨端口/页面可复用的 Playwright / Node / E2E UI 验证入口（如已有历史专有套件如 `scripts/tests/ego-bex5-e2e/`，可在 `scripts/tests/ui-verify/` 中建立统一调度入口或说明索引） |
 | **运行态报告与截图** | `<repo>/logs/ui-verify/<YYYYMMDD-HHmmss>-<target>/` | **不入库**（由 `.gitignore` 忽略 `logs/`）。存放每次验证的控制台日志、网络 4xx/5xx 摘要、关键截图及 `report.json` / `report.md` |
-| **正式基线验收报告** | `<repo>/docs/records/YYYYMMDD-<TYPE>-<MODULE>-<SUBJECT>.md` | 仅当某次端到端验收具有长期里程碑/基线参考价值时归档到 `docs/records/`（若改变常青契约，同步触发 `docs-curator` 更新 `docs/evergreen/`） |
+| **正式基线验收报告** | `<repo>/docs/records/YYYYMMDD-<TYPE>-<MODULE>-<SUBJECT>.md` | 仅当某次端到端验收具有长期里程碑/基线参考价值时归档到 `docs/records/`（若改变常青契约或验证入口，直接在当前上下文顺手轻更新 `docs/evergreen/` 与 `docs/verify.md`；全量整理交由每晚 20:00 定时任务或手工 `docs-sync`） |
 
 ---
 

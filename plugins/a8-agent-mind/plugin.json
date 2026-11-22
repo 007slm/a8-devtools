@@ -2,8 +2,8 @@
   "name": "a8-agent-mind",
   "display_name": "A8 Agent Mind Dashboard",
   "displayName": "A8 Agent Mind Dashboard",
-  "description": "面向自主智能体的工程良知与持续演进心智中枢。提供宿主机全局仓库地图与文档随会话自动治理、AI 自主择机 Google Decisions API 语义红线裁决、DSH 有界终审闭环、经验复盘沉淀与企业级 UI 设计审美原则。",
-  "version": "1.3.0",
+  "description": "面向自主智能体的全生命周期工程治理心智中枢：提供全局规则红线与 Token 预算契约、a8-workflow 全阶段场景指南、docs/verify.md 验证地图闭环、AI 自主择机架构红线裁决（a8-judge）、DSH 深度终审、快慢双轨常青文档治理与经验复盘清理（/a8-improve）。",
+  "version": "1.4.0",
   "author": "DevPlus Architecture Team",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

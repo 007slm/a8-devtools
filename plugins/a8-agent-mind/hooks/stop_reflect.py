@@ -299,26 +299,6 @@ DOCS_MAINTENANCE_QUESTION = {
     },
 }
 
-EVERGREEN_SYNC_QUESTION = {
-    "type": "choice",
-    "instructions": (
-        "Determine whether the code changes and/or dated work record(s) in this turn alter, add, or retire "
-        "system-level contracts, invariants, state machines, module boundaries, external APIs/schemas, "
-        "architectural decisions, or automation/hook behaviors that MUST be synchronized into Evergreen Docs (docs/evergreen/*.md). "
-        "Choose 'no' if the changes are routine local fixes, trivial patches, or task-specific work logs that do not change active system truth."
-    ),
-    "criteria": {
-        "no": (
-            "Routine local fix, trivial patch, or task-specific work log that does not alter active system contracts, "
-            "invariants, state machines, module boundaries, or architectural truth."
-        ),
-        "yes": (
-            "Changes or work records that add, modify, or retire system contracts, invariants, state machines, "
-            "boundaries, APIs/schemas, or architectural decisions requiring Evergreen Docs synchronization."
-        ),
-    },
-}
-
 
 def _state_root() -> Path:
     base = os.environ.get("PLUGIN_DATA", "").strip()
@@ -814,6 +794,8 @@ def _classify_doc_path_role(
         sub = rel_parts[docs_idx + 1:]
         if not sub:
             return "skip"
+        if len(sub) == 1 and sub[0] in ("glossary.md", "verify.md"):
+            return "evergreen"
         if sub[0] == "evergreen":
             return "evergreen" if sub[-1].endswith(".md") else "other_doc"
         if sub[0] == "records":
@@ -851,7 +833,6 @@ def _extract_recent_turn_summary(
         "has_pending_approval_artifact": False,
         "asked_user_question": False,
         "has_running_async_work": False,
-        "docs_curator_synced": False,
         "is_unsettled_turn": False,
         "latest_user_step_index": last_taste_step,
         "turn_key": _extract_turn_key(transcript_path, last_user_input),
@@ -947,36 +928,21 @@ def _extract_recent_turn_summary(
     active_subagents: set[str] = set()
     daemon_cmds: set[str] = set()
     last_cmd_was_daemon = False
-    last_mutating_tool_pos = (-1, -1)
-    last_docs_curator_pos = (-1, -1)
 
-    for step_offset, st in enumerate(recent_steps):
+    for st in recent_steps:
         if "step_index" in st:
             step_indices.append(str(st["step_index"]))
         st_type = str(st.get("type") or "")
         st_status = str(st.get("status") or "")
         st_content = str(st.get("content") or "")
 
-        for tc_offset, tc in enumerate(st.get("tool_calls") or []):
+        for tc in st.get("tool_calls") or []:
             name = str(tc.get("name") or "")
             args = tc.get("args") or {}
             if name in ("edit_file", "write_file"):
                 p = _clean_path_str(args.get("Path"))
                 if _is_pending_approval_artifact(args, p):
                     has_pending_approval = True
-                elif p and not _is_ephemeral_artifact_path(_normalize_path_parts(p), workspace_roots_parts):
-                    last_mutating_tool_pos = (step_offset, tc_offset)
-            elif name == "invoke_subagent":
-                sub_type = str(
-                    _decode_tool_arg(args.get("TypeName"))
-                    or _decode_tool_arg(args.get("subagent_type"))
-                    or _decode_tool_arg(args.get("name"))
-                    or ""
-                ).strip().lower()
-                if sub_type == "docs-curator" and st_status != "ERROR":
-                    last_docs_curator_pos = (step_offset, tc_offset)
-                elif sub_type != "docs-curator":
-                    last_mutating_tool_pos = (step_offset, tc_offset)
             elif name in ("ask_question", "exit_plan_mode"):
                 asked_user_question = True
             elif name == "run_command":
@@ -986,7 +952,6 @@ def _extract_recent_turn_summary(
                 if is_daemon and cmd_line:
                     daemon_cmds.add(cmd_line)
                 last_cmd_was_daemon = is_daemon
-                last_mutating_tool_pos = (step_offset, tc_offset)
                 if st_status == "ERROR" and cmd_line:
                     failed_cmds.append(cmd_line[:160])
             elif name == "manage_task":
@@ -1081,11 +1046,6 @@ def _extract_recent_turn_summary(
     is_planning_cmd = (not last_boundary_is_stop_hook) and _is_planning_command(raw_user_text)
     has_running_async = bool(running_tasks or active_subagents)
     is_unsettled = is_planning_cmd or has_pending_approval or asked_user_question or has_running_async
-    docs_curator_synced = (
-        last_docs_curator_pos >= (0, 0)
-        and last_docs_curator_pos >= last_mutating_tool_pos
-        and not has_running_async
-    )
 
     summary["failed_commands"] = redacted_cmds
     summary["user_text"] = redacted_user
@@ -1098,14 +1058,13 @@ def _extract_recent_turn_summary(
     summary["has_pending_approval_artifact"] = has_pending_approval
     summary["asked_user_question"] = asked_user_question
     summary["has_running_async_work"] = has_running_async
-    summary["docs_curator_synced"] = docs_curator_synced
     summary["is_unsettled_turn"] = is_unsettled
     summary["latest_user_step_index"] = latest_user_step
     summary["has_taste_signal"] = (
         (not last_boundary_is_stop_hook)
         and any(kw in redacted_unconsumed.lower() for kw in TASTE_CORRECTION_SIGNALS)
     )
-    fp_seed = f"{last_user_idx}|{'-'.join(step_indices[-6:])}|curator={1 if docs_curator_synced else 0}"
+    fp_seed = f"{last_user_idx}|{'-'.join(step_indices[-6:])}"
     summary["turn_fingerprint"] = hashlib.sha256(fp_seed.encode("utf-8")).hexdigest()[:16]
     return summary
 
@@ -1263,7 +1222,7 @@ def _build_reason_ask_ui(workspace: str, artifact_dir: str, scope_choice: str, s
         f"1. 确认当前任务确已改码并验证完结，而非处于 `/plan`、讨论对齐或等待执行中；\n"
         f"2. 核对 `{universal_rule}` 与 `{project_rule}`（若存在），若既有第一性原理已覆盖且未失效，不得重复提议；\n"
         f"3. 确认提炼内容不是具体模块的 Bug 根因、性能调优细节或特定类名/表名/API 修法（这类排障细节应归入 `docs/`，严禁当成红线规则）。\n"
-        f"仅当上述 3 项全部通过时，才参考 `{PLUGIN_DIR / 'skills' / 'a8-improve' / 'templates' / 'retro_card.html'}`，"
+        f"仅当上述 3 项全部通过时，才参考 `{PLUGIN_DIR / 'skills' / 'a8-improve' / 'templates' / 'improve_card.html'}`，"
         f"在 `{card_path}` 生成不含具体类名/表名/修补步骤的 1~2 句第一性原理确认卡并用 `<agent-embed>` 展示：\n"
         f"- 选项 1：写入全局通用规范（跨仓库适用） -> `{universal_rule}`\n"
         f"- 选项 2：写入本项目专属红线 -> `{project_rule}`\n"
@@ -1274,49 +1233,17 @@ def _build_reason_ask_ui(workspace: str, artifact_dir: str, scope_choice: str, s
     )
 
 
-def _build_reason_evergreen_sync(
-    workspace: str,
-    record_files: list[str],
-    non_doc_files: list[str],
-    choice: str,
-    conf: float,
-    threshold: float,
-    api_error: str = "",
-) -> str:
-    evergreen_dir = Path(workspace) / "docs" / "evergreen"
-    rec_preview = ", ".join(record_files[:4])
-    if len(record_files) > 4:
-        rec_preview += f" 等共 {len(record_files)} 份工作记录"
-    code_preview = ", ".join(non_doc_files[:4]) if non_doc_files else "无直接源码改动"
-    if len(non_doc_files) > 4:
-        code_preview += f" 等共 {len(non_doc_files)} 个文件"
-    if api_error:
-        judge_desc = f"Decisions API 未返回明确豁免结论（{api_error}）"
-    else:
-        judge_desc = f"Decisions API 判定需要同步常青文档（evergreen_sync_needed={choice}, confidence={conf:.2f}, 阈值={threshold:.2f}）"
-    return (
-        f"[a8-agent-mind Stop Hook -> DOCS_MAINTENANCE] 本轮编写/更新了按日期工作记录（{rec_preview}；关联源码：{code_preview}），"
-        f"但尚未同步常青文档；{judge_desc}。\n"
-        f"为保持主会话上下文纯净并确保文档与源码一致，请立即调用隔离上下文子代理 `docs-curator` 完成整合：\n"
-        f"`invoke_subagent(TypeName=\"docs-curator\", Role=\"Evergreen Docs Curator\", Workspace=\"inherit\", "
-        f"Prompt=\"针对目标仓库 {workspace}，读取工作记录 {rec_preview}、现有 {evergreen_dir} 常青文档及关联真实源码，以源码为最终事实源核验并同步常青文档、挂载渐进式披露回链并更新 AGENTS.md（严控 <20KB）。\")`\n"
-        f"若经核实本次工作记录确属纯局部任务日志且未变更系统契约/不变量/边界，请向用户说明无需同步常青文档后结束。"
-    )
-
-
 def _build_reason_docs_sync(
     workspace: str,
     non_doc_files: list[str],
     choice: str,
     conf: float,
     threshold: float,
-    suggest_curator: bool = True,
-    ev_choice: str = "",
-    ev_conf: float = 0.0,
     api_error: str = "",
 ) -> str:
     records_dir = Path(workspace) / "docs" / "records"
     evergreen_dir = Path(workspace) / "docs" / "evergreen"
+    verify_doc = Path(workspace) / "docs" / "verify.md"
     agents_map = Path(workspace) / "AGENTS.md"
     preview = ", ".join(non_doc_files[:6])
     if len(non_doc_files) > 6:
@@ -1324,26 +1251,19 @@ def _build_reason_docs_sync(
     if api_error:
         judge_desc = f"Decisions API 未返回明确免检结论（{api_error}）"
     else:
-        ev_info = f", evergreen_sync={ev_choice}({ev_conf:.2f})" if ev_choice else ""
         judge_desc = (
             f"Decisions API 未明确判定免检（docs_maintenance={choice}, confidence={conf:.2f}"
-            f"{ev_info}, 豁免阈值={threshold:.2f}）"
-        )
-    if suggest_curator:
-        return (
-            f"[a8-agent-mind Stop Hook -> DOCS_MAINTENANCE] 本轮修改了非文档文件（{preview}），"
-            f"但未检测到 `docs/records/` 或 `docs/evergreen/` 的同步维护；{judge_desc}。\n"
-            f"按双层文档治理规范，请立即闭环：\n"
-            f"1. 若触及架构/生命周期变更、系统边界、外部契约/Schema、状态机或跨模块机制，先按需在 `{records_dir}` 记录精炼工作记录（`YYYYMMDD-<TYPE>-<MODULE>-<SUBJECT>.md`），"
-            f"并立即调用隔离上下文子代理 `invoke_subagent(TypeName=\"docs-curator\", Role=\"Evergreen Docs Curator\", Workspace=\"inherit\", "
-            f"Prompt=\"针对目标仓库 {workspace}，读取工作记录与关联真实源码，核验后同步 {evergreen_dir} 常青文档与 {agents_map}（严控 AGENTS.md < 20KB）。\")`；\n"
-            f"2. 若经核实确属常规局部改动或简单 Bug 修复（测试与行内注释已充分覆盖），请向用户简明说明免建档理由后结束。"
+            f", 豁免阈值={threshold:.2f}）"
         )
     return (
-        f"[a8-agent-mind Stop Hook -> DOCS_MAINTENANCE] 本轮修改了非文档文件（{preview}），"
-        f"未检测到 `docs/` 记录；{judge_desc}。\n"
-        f"1. 若属于值得沉淀的非平凡功能或深度排障（但未改变常青系统契约），请在 `{records_dir}` 写入简明工作记录（`YYYYMMDD-<TYPE>-<MODULE>-<SUBJECT>.md`）；\n"
-        f"2. 若确属常规局部改动或简单 Bug 修复（已有单测与行内注释覆盖），请向用户说明免建档理由后结束。"
+        f"[a8-agent-mind Stop Hook -> DOCS_MAINTENANCE] 目标仓库：{workspace}。本轮修改了非文档文件（{preview}），"
+        f"但未检测到 `docs/records/` 或 `docs/evergreen/` 的同步维护；{judge_desc}。\n"
+        f"按快慢双轨文档治理规范，请直接在当前上下文闭环：\n"
+        f"1. 若触及架构/生命周期变更、系统边界、外部契约/Schema、状态机、验证入口或非平凡功能/深层排障，请直接利用当前上下文：\n"
+        f"   - 在 `{records_dir}` 写入精炼工作记录（`YYYYMMDD-<TYPE>-<MODULE>-<SUBJECT>.md`）；\n"
+        f"   - 顺手轻量化同步对应的 `{evergreen_dir}` 常青文档（若涉及验证入口或顶层模块表，一并更新 `{verify_doc}` 与 `{agents_map}`，严控单文件 `< 20KB`）；即使本次更新不够全面也无需焦虑，每晚 20:00 的定时常青文档梳理任务会全量扫描补齐；\n"
+        f"   - 严禁为此额外启动 `docs-sync` 子代理。\n"
+        f"2. 若经核实确属常规局部改动或简单 Bug 修复（测试与行内注释已充分覆盖），请向用户简明说明免建档理由后结束。"
     )
 
 
@@ -1393,11 +1313,10 @@ def evaluate_stop_payload(payload: dict) -> dict:
     classified = _classify_doc_maintenance(raw_edited, effective_ws_paths)
     non_doc_files = classified["non_doc_files"]
     record_files = classified["record_files"]
-    has_evergreen_or_curator = bool(classified["evergreen_files"]) or bool(turn.get("docs_curator_synced"))
-
-    needs_evergreen_only_check = (not has_evergreen_or_curator) and bool(record_files)
-    needs_full_docs_check = (not has_evergreen_or_curator) and (not record_files) and bool(non_doc_files)
-    needs_docs_check = needs_evergreen_only_check or needs_full_docs_check
+    # 快轨不阻断：只要本轮写过 docs/records/ 或更新过常青/地图/术语/AGENTS，即视作已完成日常文档职责；
+    # 常青文档未覆盖全的部分交由当前会话顺手补充或每晚 20:00 定时任务兜底整理。
+    has_any_doc_maintenance = bool(classified["evergreen_files"]) or bool(record_files)
+    needs_docs_check = (not has_any_doc_maintenance) and bool(non_doc_files)
 
     taste_candidate_eligible = (
         (not turn["last_boundary_is_stop_hook"])
@@ -1446,11 +1365,8 @@ def evaluate_stop_payload(payload: dict) -> dict:
     questions: dict = {}
     if taste_candidate_eligible:
         questions.update(TASTE_REFLECT_QUESTIONS)
-    if needs_evergreen_only_check:
-        questions["evergreen_sync_needed"] = EVERGREEN_SYNC_QUESTION
-    elif needs_full_docs_check:
+    if needs_docs_check:
         questions["docs_maintenance_needed"] = DOCS_MAINTENANCE_QUESTION
-        questions["evergreen_sync_needed"] = EVERGREEN_SYNC_QUESTION
 
     config = load_api_config(PLUGIN_DIR)
     threshold = float(config.get("confidence_threshold", 0.85))
@@ -1471,26 +1387,14 @@ def evaluate_stop_payload(payload: dict) -> dict:
         _save_conv_state(conv_id, turn["turn_fingerprint"], conv_state["last_taste_step"])
         if not needs_docs_check:
             return {}
-        if needs_evergreen_only_check:
-            err_reason = _build_reason_evergreen_sync(
-                workspace,
-                record_files,
-                non_doc_files,
-                "unknown",
-                0.0,
-                threshold,
-                api_error=str(api_res.get("summary") or "Decisions API 不可用"),
-            )
-        else:
-            err_reason = _build_reason_docs_sync(
-                workspace,
-                non_doc_files,
-                "unknown",
-                0.0,
-                threshold,
-                suggest_curator=True,
-                api_error=str(api_res.get("summary") or "Decisions API 不可用"),
-            )
+        err_reason = _build_reason_docs_sync(
+            workspace,
+            non_doc_files,
+            "unknown",
+            0.0,
+            threshold,
+            api_error=str(api_res.get("summary") or "Decisions API 不可用"),
+        )
         return {
             "decision": "continue",
             "reason": err_reason,
@@ -1534,39 +1438,13 @@ def evaluate_stop_payload(payload: dict) -> dict:
 
     docs_choice = ""
     docs_conf = 0.0
-    if needs_evergreen_only_check:
-        ev_ans = answers.get("evergreen_sync_needed") or {}
-        ev_choice = str(ev_ans.get("choice") or "").strip()
-        ev_conf = _safe_confidence(ev_ans)
-        docs_choice = ev_choice
-        docs_conf = ev_conf
-        if not (ev_choice == "no" and ev_conf >= threshold):
-            triggered_modes.append("DOCS_MAINTENANCE")
-            reasons.append(
-                _build_reason_evergreen_sync(
-                    workspace,
-                    record_files,
-                    non_doc_files,
-                    ev_choice or "unknown",
-                    ev_conf,
-                    threshold,
-                )
-            )
-    elif needs_full_docs_check:
+    if needs_docs_check:
         docs_ans = answers.get("docs_maintenance_needed") or {}
         docs_choice = str(docs_ans.get("choice") or "").strip()
         docs_conf = _safe_confidence(docs_ans)
-        ev_ans = answers.get("evergreen_sync_needed") or {}
-        ev_choice = str(ev_ans.get("choice") or "").strip()
-        ev_conf = _safe_confidence(ev_ans)
-        ev_demands_sync = (ev_choice == "yes" and ev_conf >= threshold)
-        is_trivial_exempt = (docs_choice == "no" and docs_conf >= threshold) and not ev_demands_sync
+        is_trivial_exempt = docs_choice == "no" and docs_conf >= threshold
         if not is_trivial_exempt:
             triggered_modes.append("DOCS_MAINTENANCE")
-            suggest_curator = ev_demands_sync or not (ev_choice == "no" and ev_conf >= threshold)
-            if docs_choice == "no" and ev_demands_sync:
-                docs_choice = f"evergreen:{ev_choice}"
-                docs_conf = ev_conf
             reasons.append(
                 _build_reason_docs_sync(
                     workspace,
@@ -1574,9 +1452,6 @@ def evaluate_stop_payload(payload: dict) -> dict:
                     docs_choice or "unknown",
                     docs_conf,
                     threshold,
-                    suggest_curator=suggest_curator,
-                    ev_choice=ev_choice,
-                    ev_conf=ev_conf,
                 )
             )
 

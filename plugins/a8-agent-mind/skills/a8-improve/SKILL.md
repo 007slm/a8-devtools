@@ -25,9 +25,9 @@ description: "面向用户主动触发的工程经验复盘与规则库精炼技
    - 当已有规则覆盖该问题但本次依然犯错时，说明旧规则表述太软或缺少判据，必须直接**收紧重写旧规则**；
    - 绝不按具体文件或具体组件类别逐类枚举堆砌规则，优先从**第一性原理**向上归并至已有底层工程习惯，保持规则库长期精干收敛。
 
-4. **机制防线优先于自然语言（Lint > Decision > Prose Rule）**：
+4. **最高有效防线阶梯（架构 > 类型 > Lint > Decision/单测 > 规则）**：
    - 机械规则每次都跑，结构化 Decision 由 `gemini-decision-1` 独立拿着 Diff 零遗忘裁决，而长文档里的一句话在上下文快满时最容易被模型漏掉；
-   - **三层漏斗**：能用确定性 AST/XML/依赖脚本精准零误报拦截的，优先提案 **`🔍 升级为静态 Lint (scripts/lints/)`**；静态脚本易误报但可通过代码 Diff 语义判别的，次选沉淀为 **`🧭 升级为结构化 Decision (*.decision.json)`**（项目级放 `<repo>/scripts/lints/`、全局通用放 `a8-agent-mind/decisions/`）；唯独纯流程、协作与审美偏好才写为 Markdown 规则。
+   - 永远优先从最高层消灭整类错误：① **架构消除**（唯一所有权/收拢真源）> ② **编译器类型约束**（让非法状态编不过）> ③ **带改法提示的静态 `scripts/lints/`** > ④ **语义 `*.decision.json` / 行为单测**（项目级放 `<repo>/scripts/lints/`、全局放 `a8-agent-mind/decisions/`）> ⑤ 唯独纯流程、协作与审美偏好才写为自然语言规则。
 
 5. **第一性原理 + 物理判据锚点 + 主会话提案后停步（Propose Then Stop）**：
    - 严禁“尽量/适当/如前所述”等空泛词，采用**“第一性原理主干（通用因果律与工程习惯） + 括号内 1 个具体物理判据/典型反例”**并通过零上下文独立复现自测；
@@ -49,7 +49,7 @@ description: "面向用户主动触发的工程经验复盘与规则库精炼技
 
 ### Phase 1：从首轮起扫描五维纠偏信号（Collect Corrections）
 
-从第 1 轮对话一路扫描至本轮（若为 `/improve <sessions>` 则同步读取对应历史 `transcript.jsonl`）。显式批评只是少数，必须覆盖全部 5 类信号；跳过一次性业务文案调整、普通单次 Bug 修复及单纯的任务需求澄清：
+从第 1 轮对话一路扫描至本轮（若为 `/a8-improve <sessions>` 则同步读取对应历史 `transcript.jsonl`）。显式批评只是少数，必须覆盖全部 5 类信号；跳过一次性业务文案调整、普通单次 Bug 修复及单纯的任务需求澄清：
 
 | 信号类型 | 识别线索 / 示例 | 提取要点 |
 | :--- | :--- | :--- |
@@ -61,11 +61,15 @@ description: "面向用户主动触发的工程经验复盘与规则库精炼技
 
 > 每捕获一条信号，必须同时锁定：用户原话引用（或物理 Diff）、Agent 原先的错误做法、用户期望的做法、以及用户是否给出了原因。
 
+**两道准入滤网（剔除短命噪音与偶发偏好）**：
+- **6 个月保质期滤网**：只保留 6 个月后依然成立且会实质改变未来 Agent 决策的规律；剔除易过时的具体 Commit SHA、版本号、临时计数或一次性文案调整。
+- **多会话交叉验证（`/a8-improve <sessions>`）**：统计同类纠偏出现在多少个独立会话中，**在 `>= 2` 个独立会话出现才定性为「重复错误类」优先提案**；单次会话偶发偏好除非用户明确立规，否则直接过滤。
+
 ---
 
-### Phase 2：防膨胀过滤漏斗（Filter Tree）
+### Phase 2：5 级防线阶梯与规则体检（Filter Ladder）
 
-对 Phase 1 捕获的每一条纠偏信号，严格按下方决策树逐层裁决：
+对 Phase 1 通过滤网的每一条纠偏信号，严格按以下 5 级最高有效防线阶梯逐层裁决（能停在更高层级就不下沉）：
 
 ```text
 这背后反映的是可跨场景迁移的通用工程偏好/架构因果律吗？
@@ -73,31 +77,33 @@ description: "面向用户主动触发的工程经验复盘与规则库精炼技
 │   └──► 归入 Skipped（单行说明跳过原因，把推翻权留给用户）
 └── 是
     ├── 现有 AGENTS.md / .agents/rules/redline.md / mind-rules.md 是否已有相关规则/第一性原理覆盖？
-    │   ├── 是，且方向一致（说明既有原理缺少判据锚点或表述太软导致失效！）
-    │   │   └──► Rewrite Stricter / 归并收紧（在既有第一性原理上补齐半句物理判据或数值/API边界，严禁新增平行规则！）
+    │   ├── 是，且方向一致（说明既有原理缺少判据锚点或缺少强制器导致有规仍犯！）
+    │   │   └──► 优先升格为机械防线，或收紧重写既有第一性原理（严禁新增平行规则！）
     │   ├── 是，且互相矛盾
     │   │   └──► 归入 Conflicts（并列展示现行旧规与本次新纠偏，交用户二选一）
     │   └── 否 ──► 继续
-    ├── 该违规能否通过静态匹配 / scripts/lints/ 实现精准零误报检测？
-    │   └── 是 ──► 归入 Make it a Lint（写入目标仓库 <repo>/scripts/lints/ 并附校验命令，规则文档仅留 1 行指针记录 Why）
-    ├── 否则，能否通过代码/配置 Diff 写成结构化语义 Decision 门禁？
-    │   └── 是 ──► 归入 Make it a Decision（项目级写入 <repo>/scripts/lints/*.decision.json，全局级写入 plugins/a8-agent-mind/decisions/*.decision.json）
-    └── 作用域与落盘物理路径判定（纯流程/协作/设计规范，严格区分项目级与全局通用级）：
-        ├── 仅限当前仓库专属业务与架构红线 ──► 写入当前仓库 .agents/rules/redline.md（严禁将项目细则写入 AGENTS.md 或全局规则）
-        ├── 跨仓库通用工程偏好与架构习惯 ──► 优先归并/写入全局真源 E:\a8-devtools\plugins\a8-agent-mind\rules\mind-rules.md（由 bindflt 实时映射全局生效）
-        └── 归属或归并方式模糊 ──► 放入 Needs your answer 并提供 Generative UI 作用域切换选项由用户拍板
+    ├── ① 架构消除 / ② 编译器类型约束能否直接封死？（唯一所有权/隐藏内部入口/强类型）
+    │   └── 是 ──► 归入架构/类型改造（给出单所有权/强类型方案；本轮暂不动业务码则入 Backlog）
+    ├── ③ 静态脚本 scripts/lints/ 能否实现精准拦截（报错信息须直接点出替代文件、类型或函数）？
+    │   └── 是 ──► 归入 Make it a Lint（写入 <repo>/scripts/lints/ 并附校验命令，存量多时支持 --diff 仅拦增量，规则仅留 1 行指针）
+    ├── ④ 能否写成语义 *.decision.json 或聚焦外部行为的单测门禁？
+    │   └── 是 ──► 归入 Make it a Decision（项目级 <repo>/scripts/lints/*.decision.json，全局级 plugins/a8-agent-mind/decisions/*.decision.json）或行为单测
+    └── ⑤ 仅余纯流程、协作与设计审美偏好 ──► 严格区分作用域并严控体积预算：
+        ├── 仅限当前仓库专属红线 ──► 写入 <repo>/.agents/rules/redline.md（禁写入 AGENTS.md 或全局规则）
+        ├── 跨仓库通用工程习惯 ──► 归并写入 E:\a8-devtools\plugins\a8-agent-mind\rules\mind-rules.md
+        └── 归属或归并方式模糊 ──► 放入 Needs your answer 由用户拍板
 
-> **内建规则库体检（每次 `/a8-improve` 同步执行）**：检查目标仓库 `.agents/rules/` 与 `mind-rules.md` 相关章节，主动识别三类历史包袱并列为可勾选清理项：
-> 1. **无效/过时规则**：对应模块、脚本或旧模型已下线删除；
-> 2. **重复逻辑/冗余枚举**：两条规则表达同一第一性原理，或已被 `scripts/lints/` 100% 强制执行可简化为 1 行指针；
-> 3. **软弱模糊措辞**：包含“尽量/适当/注意”的条款，直接重写为可执行判据或建议移除。
+> **规则-强制器配对体检（每次 `/a8-improve` 同步执行）**：检查目标仓 `.agents/rules/` 与 `mind-rules.md`，逐条核查「规则 ↔ 强制器」配对：
+> 1. **有规仍犯（缺强制器）**：规则写入后仍再犯，强制提案升格为架构/类型/Lint/Decision 机械防线（至少收紧物理判据）；
+> 2. **已被封死的冗余规则（主动删除）**：该错误已被架构重构、编译器类型或静态 Lint 100% 彻底封死，**主动提案删除该冗余自然语言规则**，双向瘦身；
+> 3. **无效/过时与软弱措辞**：对应模块已下线或重复堆砌的条款提案清理；含“尽量/适当/注意”的条款直接重写为可执行判据或建议移除。
 ```
 
 ---
 
 ### Phase 3：第一性原理归因与防膨胀定尺（First-Principle Generalization）
 
-对通过 Phase 2 漏斗、拟沉淀进规则文档的每一条纠偏，禁止直接写成“针对某个具体模块/组件类别的枚举规矩”，必须完成以下三步：
+对通过 Phase 2 阶梯筛选、拟沉淀进规则文档的每一条纠偏，禁止直接写成“针对某个具体模块/组件类别的枚举规矩”，必须完成以下三步：
 
 1. **第一性原理归因（First-Principle Abstraction）**：
    - **拒绝按具体文件或具体组件类别堆砌枚举**：对每次纠偏连续向上追问“背后的本质是什么”，抽取出**跨场景、跨模块可迁移的通用工程偏好或因果律（第一性原理）**；
@@ -122,18 +128,17 @@ description: "面向用户主动触发的工程经验复盘与规则库精炼技
 ### Phase 4：嵌入紧凑型 Generative UI 卡片 + 结构化确认清单（Report & Stop）
 
 1. **生成并嵌入 Generative UI 卡片**：
-   参考 [templates/retro_card.html](templates/retro_card.html)，在 `<Artifact Directory Path>/retro_card.html` 写入本次复盘卡片并嵌入对话：
+   参考 [templates/improve_card.html](templates/improve_card.html)，在 `<Artifact Directory Path>/improve_card.html` 写入（带 `UserFacing: true`、`RequestFeedback: false`）本次复盘卡片并内嵌展示：
    ```html
-   <agent-embed src="file:///<artifact_path>/retro_card.html"></agent-embed>
+   <agent-embed src="file:///<artifact_path>/improve_card.html"></agent-embed>
    ```
    **Generative UI 设计约束**：
-   - 引入官方 Tailwind 脚本：`<script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>`；
-   - `<body class="bg-transparent text-[var(--foreground)] antialiased p-3">`；
-   - 全部使用宿主语义颜色变量（`bg-[var(--card)]`, `text-[var(--foreground)]`, `border-[var(--border)]`, `text-[var(--muted-foreground)]`），严禁硬编码固定深浅色；
-   - 卡片保持紧凑（高度尽量收敛在 **280px ~ 360px** 区间），顶部显示模式与任务主题，中部双栏呈现“五维纠偏信号捕获”与“规则动作与目标文件”，底部展示标准 `git diff` 规则/检查补丁预览。
+   - 使用官方 Tailwind 脚本 `<script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>`，`<body>` 使用 `<body class="bg-transparent text-[var(--foreground)] antialiased p-0 m-0">`（无外层浮雕卡片与阴影，`>= 12px` 最小字号，总高严控 `<= 450px` 防内嵌整页滚动，禁用 `100vh`/`h-screen`）；
+   - 严格只用宿主语义变量（`--card`、`--card-border`、`--foreground`、`--muted-foreground`、`--primary`、`--success`、`--warning`、`--error` 等与 `color-mix`），严禁 `:root` 回退或硬编码色板；
+   - 按实替换脚本内 `const IMPROVE_DATA = { ... }`：顶部展示量化收益徽章，左侧可勾选清单标明**防线层级 (`L1~L5` / `清理冗余`)** 与目标文件，右侧提供**「现状痛点（改前）→ 提升效果（改后）」**与**「变更补丁 (Diff)」**双视图，底部支持一键复制联动确认指令。
 
 2. **输出结构化确认清单（卡片下方）**：
-   按以下 5 个固定小节呈现（**内容为空的小节直接省略**；若整场会话没有任何经验/品味纠偏，直接一行说明 `本轮会话无新增规则纠偏（零膨胀状态良好）`——“无事可学”也是优秀结果，严禁为了交差硬凑规则）：
+   按以下 6 个固定小节呈现（**内容为空的小节直接省略**；若整场会话没有任何经验/品味纠偏，直接一行说明 `本轮会话无新增规则纠偏（零膨胀状态良好）`——“无事可学”也是优秀结果，严禁为了交差硬凑规则）：
 
    - **`📏 候选规则与既有原理收紧 (Rules to Merge / Rewrite / Add)`**：
 
@@ -143,8 +148,9 @@ description: "面向用户主动触发的工程经验复盘与规则库精炼技
 
    - **`❓ 待你拍板 (Needs your answer)`**：汇总每条 `*inferred*:` 原因、归并至某既有原理还是单列新原理、以及**通用规范 (`mind-rules.md`) vs 本项目红线 (`.agents/rules/redline.md`)** 归属问题，每条 1 行并附 AI 推荐选项。
    - **`⚔️ 规则冲突 (Conflicts)`**：并列展示现行旧规、本次新纠偏，以及保留建议。
-   - **`🔍 升级为机器检查 (scripts/lints/)`**：给出可直接写入 `<repo>/scripts/lints/` 的检查脚本/规则片段，以及在当前代码库中预扫描会命中的存量数量。
-   - **`⏭️ 已跳过项 (Skipped)`**：每条 1 行写明被过滤的纠偏及跳过原因（如“一次性页面调整”），方便用户随时纠正“不对，这条要记”。
+   - **`🔍 升级为机器检查 (scripts/lints/)`**：给出可直接写入 `<repo>/scripts/lints/` 的检查脚本/规则片段（报错信息需直接提示改法），以及在当前代码库中预扫描会命中的存量数量。
+   - **`📋 待自动化积压 (Backlog)`**：记录值得机械化（写成架构约束、静态 Lint 或核验脚本）但本轮暂不改造代码库的候选项，避免硬塞进自然语言规则污染 `mind-rules.md`。
+   - **`⏭️ 已跳过项 (Skipped)`**：每条 1 行写明被过滤的纠偏及跳过原因（如“一次性页面调整”或“仅单会话偶发且未过 6 个月滤网”），方便用户随时纠正“不对，这条要记”。
 
    结尾固定提示：
    > *请回复 `写入全部` 或 `写入 1, 3`（可同时回答上方待拍板问题与作用域切换）以完成落盘。*
@@ -153,8 +159,14 @@ description: "面向用户主动触发的工程经验复盘与规则库精炼技
 
 ### Phase 5：按批准项精准落盘（Write on Approval）
 
-1. 仅写入用户在回复中明确批准的编号项（`写入全部` 或 `写入 1, 3`）以及已完成 `*inferred*` Why 确认的条目；
-2. 写入规则文件后呈现 Diff 与变更摘要；
-3. 对于已批准落地的 **`Make it a check`** 检查项：
-   - 优先落盘到目标仓库 `scripts/lints/` 目录下并实际运行一次验证；
-   - 若检查命中了代码库中既有存量违规，**如实汇报命中数量与位置，询问用户是“先设为 Warn 告警”还是“立即修复存量违规”——未经允许严禁擅自借机修改业务源码。**
+1. **严守真源写盘与禁擅自开 PR**：仅写入用户在回复中明确批准的编号项（`写入全部` 或 `写入 1, 3`）及已完成 `*inferred*` Why 确认的条目；一律修改仓库真源目录（如 `E:\a8-devtools\plugins\a8-agent-mind\` 或 `<repo>/.agents/rules/`），**严禁编辑插件运行缓存目录（如 `plugins/cache/`），严禁借复盘之机擅自开 PR、推送远端或顺手改动无关业务代码**；
+2. **呈现 Diff**：写入规则或技能文件后呈现物理 Diff 与变更摘要；
+3. **破坏抓虫验证实证门与存量处置**：对于已批准落地的 `scripts/lints/` 或 `*.decision.json` 检查项：
+   - 落盘后必须执行正反双证：不仅要在当前正常代码上跑绿，还**必须拿一个历史真实犯错提交或临时构造破坏样本实测证明它能报 `FAIL`**（验证后立即删除临时破坏样本）；
+   - 若检查命中了代码库中既有存量违规，**如实汇报命中数量与位置，询问用户“先用 `--diff` 仅拦增量 / 设为 Warn”还是“立即修复存量违规”**——未经允许严禁擅自借机修改业务源码。
+
+---
+
+## 附录：大改隔离盲测验证提示（可选）
+
+仅当大幅修订 `mind-rules.md`、`a8-improve` 或 `a8-workflow` 需检验是否过拟合时使用（日常复盘免做）：在两个独立脱敏工作区分别放置旧版与新版，使用不含 `eval`、`test`、`rubric` 等暗示词的自然工程任务指令对比执行；**不靠模型口头自报“遵守了哪些规则”，直接审查各自 `transcript.jsonl` 实际打开了哪些文件及产出代码形态做客观裁决**。
