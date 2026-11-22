@@ -35,7 +35,7 @@ SOFTWARE.
 ## 二、 85 个上游单元逐项映射总表（0 遗漏）
 
 > **缩写**：`@wf`=`plugins/a8-agent-mind/skills/a8-workflow/SKILL.md`；`@ana`/`@bug`/`@perf`/`@feat`/`@long`=`.../a8-workflow/guides/{analyze,bug-fix,perf,feature,long-task}.md`；`@prompt`=`.../skills/a8-prompt/SKILL.md`；`@trace`=`.../skills/a8-trace/SKILL.md`；`@rules`=`plugins/a8-agent-mind/rules/mind-rules.md`；`@tokens`=`.../rules/TOKENS.md`；`@improve`=`.../skills/a8-improve/SKILL.md`；`@sync`=`.../agents/docs-sync.md`；`@ui`=`.../skills/a8-ui-design/SKILL.md`；`<repo>`=目标仓根。上游路径相对 `pstack/` 保持原文。  
-> **统计**：吸收 30 + 合并 11 + 部分吸收 27 + 剥离 10 + 拒绝 7 = **85 项**（瘦身后剔除高耗 Token 流程与多工作区隔离逻辑，后者完全交由 Antigravity 原生 `swarm` 处理）。
+> **统计**：吸收 29 + 合并 11 + 部分吸收 28 + 剥离 10 + 拒绝 7 = **85 项**（瘦身后剔除高耗 Token 流程与多工作区隔离逻辑，后者完全交由 Antigravity 原生 `swarm` 处理）。
 
 ### 2.1 顶层功能与方法技能（34 个，`skills/*/SKILL.md`）
 
@@ -69,7 +69,7 @@ SOFTWARE.
 |26|`skills/show-me-your-work/SKILL.md`|审计|吸收|`@trace` 全文|独立手动技能 `/a8-trace`：面向日常开发交付的7列 TSV 决策账本（含备选/弯路回退/证据）+ Attention 关注点|
 |27|`skills/statechart/SKILL.md`|状态图|部分吸收|`@feat` §1, `@rules` §3.1|用显式枚举/状态机建模（Mermaid 表达）；拒 `pele`+Java|
 |28|`skills/swarm/SKILL.md`|并发|剥离|—|多代理与工作区隔离完全交由 Antigravity 原生 `swarm` 标准逻辑，插件不介入|
-|29|`skills/tdd/SKILL.md`|修Bug|吸收|`@bug` §4|低成本本地先红后绿；重型 E2E 仅在用户显式要求或触及外契约时跑|
+|29|`skills/tdd/SKILL.md`|开发|部分吸收|`@bug` §4, `@feat` §1|仅限后端修 Bug 与新功能（纯逻辑/状态机/核心接口）先红后绿；前端完全免 TDD，重Mock场景明文跳过走最小真实面|
 |30|`skills/teach/SKILL.md`|讲解|部分吸收|`@ana` §1|从最小两块出发逐边展开渐进图解，禁表演词|
 |31|`skills/technical-writing/SKILL.md`|文档|部分吸收|`@sync`|四类文档职责纯洁/先条件后动作；拒英文 STE 语法|
 |32|`skills/typescript-best-practices/SKILL.md`|编码|部分吸收|`@feat` §1, `@rules` §2|判别联合/边界解析/强类型建模；不另设独立技能|
@@ -102,7 +102,7 @@ SOFTWARE.
 |54|`skills/principle-separate-before-serializing-shared-state/SKILL.md`|并发|部分吸收|`@rules` §3.3|并发读写共享状态优先物理拆分消除共享，仅真不变量才用细粒度锁|
 |55|`skills/principle-sequence-verifiable-units/SKILL.md`|拆解|吸收|`@wf` §3, `@tokens` §5|绿态→改一单元→即验绿→下一步；顺序自带自证|
 |56|`skills/principle-subtract-before-you-add/SKILL.md`|重构|吸收|`@feat` §2, `@rules` §2|先删死码与冗余包装，瘦到底线再建新结构|
-|57|`skills/principle-test-behavior-not-implementation/SKILL.md`|测试|吸收|`@bug` §4|双反证查假测（改错仍绿=废，改私有红=绑实现）|
+|57|`skills/principle-test-behavior-not-implementation/SKILL.md`|测试|吸收|`@bug` §4, `@feat` §1|双反证查假测（改错仍绿=废，改私有红=绑实现）|
 |58|`skills/principle-type-system-discipline/SKILL.md`|类型|吸收|`@feat` §1, `@rules` §2|禁编非法态；专用类型隔离；入口解析一次|
 
 ### 2.3 Benny 自动化包技能（3 个，`automations/benny/skills/*/SKILL.md`）

@@ -1,6 +1,6 @@
 ---
 name: arch-judge
-description: "专职语义架构红线审查裁判 Subagent。具备完整的命令行执行与全仓检索/文件读写工具权限，仅在跨模块边界、状态机/并发或兼容清理等高架构风险变更交卷前由主 Agent 自主择机调度一次（常规局部改动免检，亦响应 /a8-judge）。以 Git Diff 为变更指针，自主运行路由/初筛脚本、检索上下游调用链，并研读目标仓库 AGENTS.md、docs/ 设计文档与完整源码作出最终架构裁决。"
+description: "专职语义架构红线审查裁判 Subagent。具备完整的命令行执行与全仓检索/文件读写工具权限；平时开发严禁自动触发，仅在用户发起默认 /a8-commit（非 fast）的 Step 3 提交门禁或显式输入 /a8-judge 时调度。以 Git Diff 为变更指针，自主运行路由/初筛脚本、检索上下游调用链，并研读目标仓库 AGENTS.md、docs/ 设计文档与完整源码作出最终架构裁决。"
 model: inherit
 subagent: true
 mainAgent: false

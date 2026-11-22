@@ -1,13 +1,13 @@
 # a8-agent-mind 设计与演进架构规范 (design.md)
 
-> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、共享术语表、验证地图 (`docs/verify.md`)、显式状态机与双层仓库地图治理 (`mind-rules.md`)”**、**“精简研发主线工作流内功 (`a8-workflow`)”**、**“事前提示词深化与重写 (`/a8-prompt`)”**、**“开发决策过程 TSV 账本 (`/a8-trace`)”**、**“提交前强制红线与文档总闸门 (`/a8-commit` + `a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**、**“UI 设计规范 (`a8-ui-design`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，彻底卸载回合级 `Stop` Hook，构建日常零打扰、落库前强把关的智能体心智中枢（严控 9 大核心技能：3 个自动内功 + 6 个手动大招）。
+> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、共享术语表、验证地图 (`docs/verify.md`)、显式状态机与双层仓库地图治理 (`mind-rules.md`)”**、**“精简研发主线工作流内功 (`a8-workflow`)”**、**“事前提示词深化与重写 (`/a8-prompt`)”**、**“开发决策过程 TSV 账本 (`/a8-trace`)”**、**“提交前强制红线与文档总闸门 (`/a8-commit` + `/a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**、**“UI 设计规范 (`a8-ui-design`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，彻底卸载回合级 `Stop` Hook，构建日常零打扰、落库前强把关的智能体心智中枢（严控 9 大核心技能：2 个自动内功 + 7 个手动大招）。
 
 ---
 
 ## 1. 核心设计哲学 (Core Architectural Principles)
 
 ### 1.1 智能体心智的三层模型 (The Tripartite Mind)
-1. **理智与戒律 (Super-ego / 高风险自主终审)**：遵循全局 `mind-rules.md`，仅当代码改动触及跨模块边界、状态机/并发重构或兼容层清理等高架构风险时，由 AI 在交卷前**自主择机调用一次 `a8-judge`**（常规局部功能、UI 与微调免检且禁止同任务频繁增量复核，亦支持 `/a8-judge` 显式发起），通过语法元特征自适应路由与 Google Gemini Decisions API 零输出 Token 概率校准裁决执行冷酷审查；
+1. **理智与戒律 (Super-ego / 提交闸门与显式终审)**：遵循全局 `mind-rules.md`，日常编码与交卷前**严禁 AI 自动调用 `a8-judge` / `arch-judge`**；仅在用户发起默认 `/a8-commit`（非 `fast`）的 Step 3 或用户显式输入 `/a8-judge` 时，通过语法元特征路由 + Google Gemini Decisions API 零输出 Token 概率初筛 + 按需 `arch-judge` 全仓终审执行冷酷审查；
 2. **认知与记忆仓库地图 (Memory / 快慢双轨文档治理)**：由全局 `mind-rules.md` 强制驱动，确立 **常青文档 (`docs/evergreen/*.md`) + 按日期工作记录 (`docs/records/YYYYMMDD-*.md`) + 暂缓区 (`docs/deferred/`)** 双层分域体系；日间开发写完轻量工作记录（简单修复靠单测与注释）后，直接在当前对话利用既有上下文顺手轻更新 `docs/evergreen/`、`docs/verify.md` 与根目录 `AGENTS.md`（不额外起 `docs-sync` 子代理）；每晚 20:00 定时任务通过 `scripts/scan_docs_sync.mjs` 增量扫描 `repos.md` 在管仓，仅针对有变动或体检异常的仓库按 **`docs-sync`** 慢轨规范对照真实源码全量整理补齐；
 3. **提交前强制总闸门 (`/a8-commit`) + 主动经验精炼 (`/a8-improve`)**：
    - 彻底卸载回合级 `PreInvocation + Stop` Hook，日常多轮编码与试错零打扰、零隐藏 API 消耗；
@@ -64,9 +64,9 @@
    自动履行 (mind-rules.md)   ├──► 1. 日间快轨：重大变更写轻量工作记录 (docs/records/) 并顺手轻改常青文档
                               │       （写过即放行，不起 docs-sync 子代理；每晚 20:00 定时任务全量兜底梳理）
                               │
-                              ▼    2. 触及 4 大红线的代码变更交卷前，AI 自主择机调用一次：
+                              ▼    2. 日常严禁自动拉起；仅默认 /a8-commit Step 3 或用户手动 /a8-judge 触发：
         ┌────────────────────────────────────────────┐
-        │         a8-judge (语义架构终审裁判)         │  <-- 触发：AI 自主择机（亦支持 /a8-judge 显式调用）
+        │         /a8-judge (语义架构终审裁判)        │  <-- 触发：仅默认 /a8-commit 或用户手敲 /a8-judge
         │  • 运行方式：全工具自由 Subagent (上下文隔离)│  <-- 权限：run_command + 全仓读写(默认不改业务码)
         │  • 裁决引擎：Diff 指针 + docs/ 全貌 + Decisions│  <-- 初筛：gemini-decision-1 雷达；终审：arch-judge
         └─────────────────────┬──────────────────────┘
@@ -152,7 +152,7 @@ E:\a8-devtools\plugins\a8-agent-mind/
 │   │   └── references/             # pstack-source-map.md (85 项来源映射与升级台账)
 │   ├── a8-prompt/                  # 【事前打磨：提示词专家级深化与重写】(/a8-prompt，仅改写Prompt并停步)
 │   │   └── SKILL.md                # 轻量贴合仓内地图答专家 4 问，做深不做大，重写即停
-│   ├── a8-judge/                   # 【能力1：AI 自主择机架构红线裁决 (a8-judge / /a8-judge)】
+│   ├── a8-judge/                   # 【能力1：架构红线裁决 (/a8-judge · 嵌入 /a8-commit，日常不自动触发)】
 │   │   ├── SKILL.md                # 元特征路由 + Google Decisions API 裁决规约
 │   │   ├── schemas/
 │   │   │   └── verdict.json        # ArchitectureVerdict 严格 JSON Schema

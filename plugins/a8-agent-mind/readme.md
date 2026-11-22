@@ -1,6 +1,6 @@
 # A8 Agent Mind (`a8-agent-mind`)
 
-> **面向自主智能体的工程良知与持续演进心智中枢**（9 大核心技能：3 个自动内功 + 6 个手动大招）。融合**精简研发主线工作流 (`a8-workflow`)**、**事前提示词深化重写 (`/a8-prompt`)**、**开发决策过程 TSV 账本 (`/a8-trace`)**、**Google Gemini Decisions API 架构红线裁决 (`a8-judge`)**、**DeepSeek Harness 有界深度终审 (`/a8-dsh-review`)**、**标准化 Git 提交强制门禁 (`/a8-commit`)**、**经验沉淀与规则库清理 (`/a8-improve`)**、**独立 UI 验证 (`/a8-ui-verify`)**、**UI 设计规范 (`a8-ui-design`)** 及 **全局文档与双层仓库地图治理规范 (`mind-rules.md`)**。
+> **面向自主智能体的工程良知与持续演进心智中枢**（9 大核心技能：2 个自动内功 + 7 个手动大招）。融合**精简研发主线工作流 (`a8-workflow`)**、**事前提示词深化重写 (`/a8-prompt`)**、**开发决策过程 TSV 账本 (`/a8-trace`)**、**Google Gemini Decisions API 架构红线裁决 (`/a8-judge`)**、**DeepSeek Harness 有界深度终审 (`/a8-dsh-review`)**、**标准化 Git 提交强制门禁 (`/a8-commit`)**、**经验沉淀与规则库清理 (`/a8-improve`)**、**独立 UI 验证 (`/a8-ui-verify`)**、**UI 设计规范 (`a8-ui-design`)** 及 **全局文档与双层仓库地图治理规范 (`mind-rules.md`)**。
 
 ---
 
@@ -37,7 +37,7 @@ a8-agent-mind/
 ├── skills/
 │   ├── a8-workflow/            # 【核心内功：全阶段自主工程工作流与 5 份场景指南】(自动生效 / /a8-workflow)
 │   ├── a8-prompt/              # 【事前打磨：提示词专家级深化与重写】(/a8-prompt，重写即停)
-│   ├── a8-judge/               # 【能力1：AI 自主择机架构红线裁决】(a8-judge / /a8-judge)
+│   ├── a8-judge/               # 【能力1：架构红线裁决】(/a8-judge · 嵌入 /a8-commit，平时不自动触发)
 │   ├── a8-improve/             # 【能力2：经验沉淀与无效/重复规则清理】(/a8-improve)
 │   ├── a8-ui-verify/           # 【能力3：跨仓库自动化 UI 验证】(/a8-ui-verify)
 │   ├── a8-ui-design/           # 【能力4：企业级秩序与极简美学的 UI 设计规范】
@@ -59,8 +59,8 @@ a8-agent-mind/
 
 ### 2. 在任意仓库中触发
 
-#### 场景 A：日常代码变更自动终审 & 跨文件 DSH 深度终审
-- **高风险架构变更（高门槛自主终审，常规局部改动免检）**：仅当改动触及跨模块边界、核心契约/依赖调整、并发锁/状态机重构或兼容清理时，Agent 才会在本地编译测试通过后、正式交卷前**自主择机调用一次 `a8-judge`**（常规局部功能、UI、局部修 Bug、文档更新及同任务内的微调均免检，杜绝高频增量复核；需要时可手动输入 `/a8-judge` 强制执行）。
+#### 场景 A：架构红线手动体检 (`/a8-judge`) & 跨文件 DSH 深度终审 (`/a8-dsh-review`)
+- **架构红线终审（平时不自动触发，提交兜底 + 按需手调）**：日常编码、修 Bug、重构及交卷前**严禁 AI 自动拉起 `a8-judge` / `arch-judge`**；仅在发起默认 `/a8-commit`（非 `fast`）的 Step 3 自动兜底，或大重构中途由你主动输入 `/a8-judge` 提前体检。
 - **跨文件深层因果链终审（按需触发）**：若需对跨文件状态机与全生命周期闭环做深度多轮复核，输入：
 ```text
 /a8-dsh-review

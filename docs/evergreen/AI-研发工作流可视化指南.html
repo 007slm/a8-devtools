@@ -422,7 +422,7 @@
       <div class="panel-head">
         <div class="panel-title">
           <span class="idx">图 03</span>
-          <span>9 大核心技能全景矩阵（3 个自动内功 + 6 个手动大招）</span>
+          <span>9 大核心技能全景矩阵（2 个自动内功 + 7 个手动大招）</span>
         </div>
         <span class="hint">点击下排彩色大招块可直接复制命令</span>
       </div>
@@ -445,7 +445,7 @@
           <!-- Row 1: Auto Skills -->
           <rect x="8" y="48" width="110" height="96" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
           <text x="63" y="89" text-anchor="middle" fill="var(--green)" font-size="12.5" font-weight="700">自动内功</text>
-          <text x="63" y="109" text-anchor="middle" fill="var(--green)" font-size="11">3 个 · 免命令</text>
+          <text x="63" y="109" text-anchor="middle" fill="var(--green)" font-size="11">2 个 · 免命令</text>
 
           <!-- a8-workflow spans across phases -->
           <rect x="130" y="48" width="958" height="40" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
@@ -457,15 +457,15 @@
           <text x="380" y="116" fill="var(--green)" font-size="12" font-weight="700" font-family="var(--font-mono)">a8-ui-design · 纯自动</text>
           <text x="380" y="134" fill="var(--fg-sec)" font-size="11.5">聊到界面/卡片自动激活</text>
 
-          <!-- a8-judge -->
-          <rect x="602" y="96" width="234" height="48" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
-          <text x="616" y="116" fill="var(--green)" font-size="12" font-weight="700" font-family="var(--font-mono)">a8-judge · 嵌入提交门禁</text>
-          <text x="616" y="134" fill="var(--fg-sec)" font-size="11.5">提交前强制跑 · 中途可手调</text>
+          <!-- phase 3 auto slot: intentionally quiet to save token -->
+          <rect x="602" y="96" width="234" height="48" rx="6" fill="var(--subtle)" stroke="var(--border)" stroke-dasharray="4 3" />
+          <text x="719" y="116" text-anchor="middle" fill="var(--fg-muted)" font-size="11.5" font-weight="600">审查 / 验证期严禁自动重跑</text>
+          <text x="719" y="134" text-anchor="middle" fill="var(--fg-muted)" font-size="11">零自动 Token 消耗 · 由下方按需触发</text>
 
           <!-- Row 2: Manual Skills -->
           <rect x="8" y="158" width="110" height="148" rx="6" fill="var(--brand-soft)" stroke="var(--brand-border)" />
           <text x="63" y="226" text-anchor="middle" fill="var(--brand)" font-size="12.5" font-weight="700">手动大招</text>
-          <text x="63" y="246" text-anchor="middle" fill="var(--brand)" font-size="11">6 个 · 点即复制</text>
+          <text x="63" y="246" text-anchor="middle" fill="var(--brand)" font-size="11">7 个 · 点即复制</text>
 
           <!-- /a8-prompt -->
           <g class="svg-node" onclick="copyText('/a8-prompt')">
@@ -481,16 +481,21 @@
           <text x="478" y="226" text-anchor="middle" fill="var(--fg-muted)" font-size="12" font-weight="600">编码期免记斜杠命令</text>
           <text x="478" y="246" text-anchor="middle" fill="var(--fg-muted)" font-size="11.5">说大白话自动命中对应主线指南</text>
 
-          <!-- /a8-dsh-review + /a8-ui-verify -->
+          <!-- /a8-judge + /a8-dsh-review + /a8-ui-verify -->
+          <g class="svg-node" onclick="copyText('/a8-judge')">
+            <rect class="node-box" x="602" y="158" width="234" height="44" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
+            <text x="616" y="177" fill="var(--green)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-judge</text>
+            <text x="616" y="194" fill="var(--fg-sec)" font-size="11.5">红线审 · 嵌 /a8-commit · 平时不自动</text>
+          </g>
           <g class="svg-node" onclick="copyText('/a8-dsh-review')">
-            <rect class="node-box" x="602" y="158" width="234" height="70" rx="6" fill="var(--amber-soft)" stroke="var(--amber-border)" />
-            <text x="616" y="186" fill="var(--amber)" font-size="12.5" font-weight="700" font-family="var(--font-mono)">/a8-dsh-review</text>
-            <text x="616" y="208" fill="var(--fg-sec)" font-size="11.5">跨文件深审 · 2~3 轮快速收敛</text>
+            <rect class="node-box" x="602" y="210" width="234" height="44" rx="6" fill="var(--amber-soft)" stroke="var(--amber-border)" />
+            <text x="616" y="229" fill="var(--amber)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-dsh-review</text>
+            <text x="616" y="246" fill="var(--fg-sec)" font-size="11.5">跨文件深审 · 2~3 轮快速收敛</text>
           </g>
           <g class="svg-node" onclick="copyText('/a8-ui-verify')">
-            <rect class="node-box" x="602" y="236" width="234" height="70" rx="6" fill="var(--purple-soft)" stroke="var(--purple-border)" />
-            <text x="616" y="264" fill="var(--purple)" font-size="12.5" font-weight="700" font-family="var(--font-mono)">/a8-ui-verify</text>
-            <text x="616" y="286" fill="var(--fg-sec)" font-size="11.5">真浏览器点测 · 截图存 logs/</text>
+            <rect class="node-box" x="602" y="262" width="234" height="44" rx="6" fill="var(--purple-soft)" stroke="var(--purple-border)" />
+            <text x="616" y="281" fill="var(--purple)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-ui-verify</text>
+            <text x="616" y="298" fill="var(--fg-sec)" font-size="11.5">真浏览器点测 · 截图存 logs/</text>
           </g>
 
           <!-- /a8-trace + /a8-commit + /a8-improve -->
@@ -624,7 +629,7 @@
   </section>
 
   <footer class="foot">
-    A8 Agent Mind v1.4 · 3 自动内功 + 6 手动大招 · 搭配官方 <code>/plan</code> 与 <code>/swarm</code> 协同生效
+    A8 Agent Mind v1.4 · 2 自动内功 + 7 手动大招 · 搭配官方 <code>/plan</code> 与 <code>/swarm</code> 协同生效
   </footer>
 </main>
 
