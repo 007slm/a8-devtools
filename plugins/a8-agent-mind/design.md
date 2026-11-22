@@ -1,6 +1,6 @@
 # a8-agent-mind 设计与演进架构规范 (design.md)
 
-> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、共享术语表、验证地图 (`docs/verify.md`)、显式状态机与双层仓库地图随会话自动治理 (`mind-rules.md`)”**、**“全阶段自主工程工作流内功 (`a8-workflow`)”**、**“事前提示词深化与重写 (`/a8-prompt`)”**、**“后置高维品味轻提示与文档门禁钩子 (`hooks.json` + `stop_reflect.py`)”**、**“AI 自主择机红线终审 (`a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**、**“UI 设计规范 (`a8-ui-design`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，构建职责清晰、拒绝命令碎片化、随会话自动闭环的智能体心智中枢（严控 7 大核心技能：3 个自动内功 + 4 个手动大招）。
+> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、共享术语表、验证地图 (`docs/verify.md`)、显式状态机与双层仓库地图治理 (`mind-rules.md`)”**、**“全阶段自主工程工作流内功 (`a8-workflow`)”**、**“事前提示词深化与重写 (`/a8-prompt`)”**、**“提交前强制红线与文档总闸门 (`/a8-commit` + `a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**、**“UI 设计规范 (`a8-ui-design`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，彻底卸载回合级 `Stop` Hook，构建日常零打扰、落库前强把关的智能体心智中枢（严控 8 大核心技能：3 个自动内功 + 5 个手动大招）。
 
 ---
 
@@ -9,8 +9,9 @@
 ### 1.1 智能体心智的三层模型 (The Tripartite Mind)
 1. **理智与戒律 (Super-ego / 高风险自主终审)**：遵循全局 `mind-rules.md`，仅当代码改动触及跨模块边界、状态机/并发重构或兼容层清理等高架构风险时，由 AI 在交卷前**自主择机调用一次 `a8-judge`**（常规局部功能、UI 与微调免检且禁止同任务频繁增量复核，亦支持 `/a8-judge` 显式发起），通过语法元特征自适应路由与 Google Gemini Decisions API 零输出 Token 概率校准裁决执行冷酷审查；
 2. **认知与记忆仓库地图 (Memory / 快慢双轨文档治理)**：由全局 `mind-rules.md` 强制驱动，确立 **常青文档 (`docs/evergreen/*.md`) + 按日期工作记录 (`docs/records/YYYYMMDD-*.md`) + 暂缓区 (`docs/deferred/`)** 双层分域体系；日间开发写完轻量工作记录（简单修复靠单测与注释）后，直接在当前对话利用既有上下文顺手轻更新 `docs/evergreen/`、`docs/verify.md` 与根目录 `AGENTS.md`（不额外起 `docs-sync` 子代理）；每晚 20:00 定时任务通过 `scripts/scan_docs_sync.mjs` 增量扫描 `repos.md` 在管仓，仅针对有变动或体检异常的仓库按 **`docs-sync`** 慢轨规范对照真实源码全量整理补齐；
-3. **后置品味轻提示与日间快轨文档门禁 (`Stop` Hook + `/a8-improve`)**：
-   - 回合结束时，由插件根目录 `hooks.json` 触发 `hooks/stop_reflect.py`（严格屏蔽 `/plan`、待审批计划、问答中断及运行中后台任务/子代理，并用 `last_taste_step` 单调水位跨轮保留未消费纠偏信号）：彻底废除未经确认静默写盘，仅在真实仓内非文档代码落地结算且注入既有规则摘要后经 Decisions API 双门禁确认为全新高维工程品味（非具体 Bug Fix 细节）时，才弹出 `ASK_USER_UI` 确认卡交用户拍板；同时执行 `DOCS_MAINTENANCE` 轻守护——只要本轮写过 `docs/records/` 或常青/地图文档即视作履行日常职责直接放行（`0` 次冗余 API），仅对完全未维护文档的非平凡改码提醒当前对话原地写记录并顺手轻更新常青（严禁额外起 `docs-sync`）；
+3. **提交前强制总闸门 (`/a8-commit`) + 主动经验精炼 (`/a8-improve`)**：
+   - 彻底卸载回合级 `PreInvocation + Stop` Hook，日常多轮编码与试错零打扰、零隐藏 API 消耗；
+   - 执行 `/a8-commit` 提交代码前**强制**完成敏感/无关文件拦截、仓内门禁、`judge_router` → Decisions API → 告警/高危面 `arch-judge` 三段式红线终审（无跳过开关）与重大变更文档收口；
    - 当用户需要跨会话深度复盘、全面审视经验，或清理无效/冲突/重复规则时，主动调用 `/a8-improve` 一体化完成沉淀与精简。
 4. **独立界面验证 (`/a8-ui-verify`)**：标准化目标仓库 `scripts/tests/ui-verify/` 脚本目录与 `logs/ui-verify/` 产物目录，由用户按需触发全链路浏览器验证。
 
@@ -79,9 +80,9 @@
                               │ (回合结束自动触发 / 用户按需主动发起)
                               ▼
         ┌────────────────────────────────────────────┐
-        │ Stop Hook (后置轻提示)+/a8-improve (全面体检) │
-        │  • 时机门禁：未收口回合静默，水位跨轮延后评估 │  <-- 严禁/plan与跑测期抢跑或静默写盘
-        │  • ASK_USER_UI：高维品味双门禁弹出审批卡片    │  <-- 排除BugFix详情与既有规则已覆盖项
+        │   /a8-commit (提交前强制质量总闸门) & /a8-improve │
+        │  • 强制审查：敏文件拦截 → Lint → Decisions → Judge│  <-- 不可跳过；日常编码零 Stop Hook 打扰
+        │  • 文档收口：重大改动补记录轻更常青随代码同提  │  <-- 每晚 20:00 scan_docs_sync 全量兜底
         │  • /a8-improve：沉淀新规+清理无效与重复规则 │  <-- 主会话零子代理，确认后落盘
         └────────────────────────────────────────────┘
                               │ (用户显式发起界面验收)
@@ -92,8 +93,8 @@
         └────────────────────────────────────────────┘
 ```
 
-#### 3.1 `Stop` Hook 自动反射与 `a8-improve` 一体化机制
-- **职责纯洁性**：`Stop` Hook 已彻底废除静默写盘且严禁在 `/plan` 评估期或具体 Bug Fix 细节上抢跑提示，仅作为代码落地后的客观文档门禁（`DOCS_MAINTENANCE`）与高维品味轻提示（`ASK_USER_UI`）；`/a8-improve` 统一负责深度五维纠偏沉淀**以及**规则库中的无效/冲突/重复逻辑清理（不再单独拆分清理命令），仓内 `docs/` 与双层仓库地图始终随会话自动更新；
+#### 3.1 提交前强制闸门与 `a8-improve` 职责分离
+- **职责纯洁性**：回合级 `Stop` Hook 已彻底卸载；代码红线初筛/语义终审与重大变更文档收口统一在 `/a8-commit` 提交前强制闭环（无跳过开关），`/a8-improve` 专职深度五维纠偏沉淀**以及**规则库中的无效/冲突/重复逻辑清理；
 - **五维纠偏信号捕获**：除显式批评外，强制回溯 `Silent edit`（外部静默修改）、`Repeated nudge`（连续微调终值）、`Revert / Rejection` 与 `Confirmed non-obvious choice`；
 - **防膨胀过滤漏斗 (`Rewrite Stricter`)**：命中既有规则覆盖范围且仍犯错时，判定为旧规失效并收紧重写（补齐数值/API/绝对词），严禁堆砌第 2 条重复规则；可精确机械拦截项一律优先写入目标仓库 `scripts/lints/`；
 - **真实 Why 与审计锚点**：严禁编造原因（AI 推演必标 `*inferred*:` 并列入 `Needs your answer`），规则下方保留 `<!-- YYYY-MM-DD: "用户原话" -->` 时间戳注释；
@@ -126,10 +127,7 @@
 ```text
 E:\a8-devtools\plugins\a8-agent-mind/
 ├── plugin.json                     # Antigravity 插件核心元定义
-├── hooks.json                      # 生命周期钩子配置 (Stop -> stop_reflect.py)
 ├── config.json                     # Google Decisions API (gemini-decision-1) 配置
-├── hooks/
-│   └── stop_reflect.py             # 未收口回合屏蔽 + 高维品味双门禁 (ASK_USER_UI / DOCS_MAINTENANCE)
 ├── scripts/
 │   └── scan_docs_sync.mjs          # 每晚 20:00 定时梳理前置增量扫描与静态健康体检
 ├── decisions/                      # 全局结构化 Decision 规范 (*.decision.json，无损分批送审)
@@ -171,7 +169,9 @@ E:\a8-devtools\plugins\a8-agent-mind/
 │   │       └── improve_card.html   # Generative UI 紧凑复盘卡片模板
 │   ├── a8-ui-verify/               # 【能力4：独立自动化 UI 验证 (/a8-ui-verify)】
 │   │   └── SKILL.md                # scripts/tests/ui-verify/ 与 logs/ui-verify/ 验证协议
-│   └── a8-ui-design/               # 【能力5：UI 设计感与工业美学规范】
+│   ├── a8-ui-design/               # 【能力5：UI 设计感与工业美学规范】
+│   └── a8-commit/                  # 【能力6：标准化 Git 提交与推送 (/a8-commit)】
+│       └── SKILL.md                # 敏感/无关文件拦截、原子拆分、中文两档模板、无署名与默认 push（支持 nopush/onlycommit）
 └── rules/
     └── mind-rules.md               # 【全局核心】架构设计哲学、文档与双层仓库地图自动治理总则
 ```

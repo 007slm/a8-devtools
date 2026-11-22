@@ -316,7 +316,7 @@ function main() {
     runStep('门禁检查 1/4: 静态异常保留防线', 'node', ['scripts/lints/check_swallowed_exceptions.mjs'], REPO_ROOT, opts.dryRun);
     runStep('门禁检查 2/4: 仓库体积与脚本规范', 'node', ['scripts/lints/check_workspace_hygiene.mjs'], REPO_ROOT, opts.dryRun);
     runStep('门禁检查 3/4: 插件 Subagent Frontmatter', 'py', ['-3', 'scripts/lints/check_plugin_agents.py'], REPO_ROOT, opts.dryRun);
-    runStep('门禁检查 4/4: Stop Hook 不变量', 'py', ['-3', 'scripts/lints/check_stop_hook_invariants.py'], REPO_ROOT, opts.dryRun);
+    runStep('门禁检查 4/4: 双层文档与工作记录格式', 'node', ['scripts/lints/check_work_records.mjs'], REPO_ROOT, opts.dryRun);
   }
 
   // 2. Frontend build

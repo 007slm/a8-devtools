@@ -135,7 +135,7 @@
 
   <script>
     /**
-     * IMPROVE_DATA 数据契约（调用 /a8-improve 或 ASK_USER_UI 时由 Agent 按实替换本对象）：
+     * IMPROVE_DATA 数据契约（调用 /a8-improve 时由 Agent 按实替换本对象）：
      * - title: string            本次复盘/体检总标题
      * - mode: string             作用域/入口标识（如 "/a8-improve · 本会话"）
      * - items: Array<{
@@ -166,13 +166,13 @@
           id: 1,
           kind: "lint",
           tierLabel: "L3 静态检查",
-          title: "用静态门禁拦截 Stop Hook 遗留分支回归",
-          target: "scripts/lints/check_stop_hook_invariants.py",
+          title: "用静态门禁守卫子代理 frontmatter 工具声明",
+          target: "scripts/lints/check_plugin_agents.py",
           signalType: "显式纠偏",
-          signalQuote: "“写完记录就直通，别每轮额外拉起 docs-sync 子代理”",
-          before: "仅靠口头约定约束 Hook 行为，后续改动 Hook 时极易误加回自动派发子代理分支。",
-          after: "升格为第 3 级静态与不变量双检，每次提交自动报错阻断，直接省掉人工复核负担。",
-          diff: "@@ -71,2 +71,4 @@\n-    for forbidden in (\"AUTO_LINT\", \"AUTO_DECISION\"):\n+    for forbidden in (\"AUTO_LINT\", \"AUTO_DECISION\", \"EVERGREEN_SYNC_QUESTION\", 'TypeName=\"docs-sync\"'):\n         if forbidden in src_text:\n             violations.append(f\"stop_reflect.py 仍包含已废除标识: {forbidden}\")"
+          signalQuote: "“新增子代理漏写 mainAgent: false 会被静默降级为只读工具集，写成脚本每次必检”",
+          before: "仅靠口头约定写 frontmatter，漏写 mainAgent: false 或把 tools 写成多行列表时运行期静默降级，排查耗时。",
+          after: "升格为第 3 级静态门禁，每次编译与 /a8-commit 提交前自动拦截，彻底消灭静默降级隐患。",
+          diff: "@@ -28,2 +28,5 @@\n+    if 'mainAgent: false' not in frontmatter:\n+        violations.append(f'{path.name} 缺少 mainAgent: false（将导致工具集降级）')\n+    if not re.search(r'^tools:\\s*\\[[^\\]]+\\]$', frontmatter, re.M):\n+        violations.append(f'{path.name} 的 tools 必须为单行 YAML 列表')"
         },
         {
           id: 2,

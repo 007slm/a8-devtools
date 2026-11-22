@@ -3092,7 +3092,7 @@ export function AgentMindView({
                   {activeScopeOption?.hasGit === false && (
                     <span
                       className="inline-flex items-center gap-0.5 px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[9.5px] font-medium"
-                      title="该项目目录未检测到 .git 仓库，Stop Hook 文档门禁与提交前代码审核将静默跳过"
+                      title="该项目目录未检测到 .git 仓库，提交前代码审核与 /a8-commit 提交门禁不可用"
                     >
                       <ShieldAlert className="w-2.5 h-2.5" />
                       无 Git
@@ -3171,7 +3171,7 @@ export function AgentMindView({
                                   {opt.hasGit === false && (
                                     <span
                                       className="inline-flex items-center gap-0.5 px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[9.5px] shrink-0"
-                                      title="未检测到 .git 仓库：Stop Hook 文档门禁将静默跳过"
+                                      title="未检测到 .git 仓库：提交前代码审核与 /a8-commit 提交门禁不可用"
                                     >
                                       <ShieldAlert className="w-2.5 h-2.5" />
                                       无 Git
@@ -5138,7 +5138,7 @@ export function AgentMindView({
                 <Activity className="w-6 h-6 opacity-35" />
                 <span>暂无匹配的 Harness 遥测事件</span>
                 <span className="text-[10.5px]">
-                  当 `stop_reflect.py` 或 `a8-judge` 执行裁决后，会自动追加至 harness_metrics.jsonl 并在此聚合展示
+                  当 `/a8-commit` 前置门禁或 `a8-judge` 执行裁决后，会自动追加至 harness_metrics.jsonl 并在此聚合展示
                 </span>
               </div>
             ) : (
@@ -5528,7 +5528,7 @@ export function AgentMindView({
                             {proj.has_git === false && (
                               <span
                                 className="inline-flex items-center gap-0.5 px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[9.5px] font-medium"
-                                title="未检测到 .git 仓库：Stop Hook 文档门禁与提交前代码审核将静默跳过"
+                                title="未检测到 .git 仓库：提交前代码审核与 /a8-commit 提交门禁不可用"
                               >
                                 <ShieldAlert className="w-2.5 h-2.5" />
                                 无 Git
@@ -5626,7 +5626,7 @@ export function AgentMindView({
                       {activeProjectItem.project.has_git === false && (
                         <span
                           className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[10px] font-medium shrink-0"
-                          title="未检测到 .git 仓库：Hook 文档门禁与代码审核对此项目静默跳过"
+                          title="未检测到 .git 仓库：提交前代码审核与 /a8-commit 提交门禁不可用"
                         >
                           <ShieldAlert className="w-3 h-3" />
                           无 Git

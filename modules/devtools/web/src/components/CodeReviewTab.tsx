@@ -1278,7 +1278,7 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
             {selectedProject?.has_git === false && (
               <span
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/12 text-amber-700 dark:text-amber-400 border border-amber-500/25 text-[10.5px] font-medium whitespace-nowrap"
-                title="未检测到 .git 仓库：无法获取 Git Diff，文档门禁 Hook 对此项目静默跳过"
+                title="未检测到 .git 仓库：无法获取 Git Diff，提交前代码审核与 /a8-commit 提交门禁不可用"
               >
                 <ShieldAlert className="w-3 h-3" />
                 未检测到 .git

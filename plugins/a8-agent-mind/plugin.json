@@ -2,11 +2,12 @@
   "name": "a8-agent-mind",
   "display_name": "A8 Agent Mind Dashboard",
   "displayName": "A8 Agent Mind Dashboard",
-  "description": "面向自主智能体的全生命周期工程治理心智中枢：提供全局规则红线与 Token 预算契约、a8-workflow 全阶段场景指南、docs/verify.md 验证地图闭环、AI 自主择机架构红线裁决（a8-judge）、DSH 深度终审、快慢双轨常青文档治理与经验复盘清理（/a8-improve）。",
+  "description": "面向自主智能体的全生命周期工程治理心智中枢：提供全局规则红线与 Token 预算契约、a8-workflow 全阶段场景指南、docs/verify.md 验证地图闭环、AI 自主择机架构红线裁决（a8-judge）、DSH 深度终审、标准化 Git 提交（/a8-commit）、快慢双轨常青文档治理与经验复盘清理（/a8-improve）。",
   "version": "1.4.0",
   "author": "DevPlus Architecture Team",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
+    "按标准化中文模板拆分、拦截敏感文件并提交推送代码 (/a8-commit)",
     "发起跨文件 DSH 深度终审闭环 (/a8-dsh-review)",
     "复盘沉淀新规则与检查，同时清理无效或重复规则 (/a8-improve)",
     "执行目标仓库自动化 UI 端到端验证 (/a8-ui-verify)"
