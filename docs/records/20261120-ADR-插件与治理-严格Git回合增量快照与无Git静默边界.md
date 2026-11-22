@@ -1,9 +1,12 @@
 # ADR：严格 Git 回合增量快照（PreInvocation + Stop）与无 Git 静默边界
 
 - **日期**：2026-11-20
-- **状态**：已落地（当时有效）
+- **状态**：部分失效（被 20261122-ADR-插件与治理-卸载StopHook并将红线审查与文档核验收归a8-commit提交门禁.md 更新）
 - **域**：agent-mind-governance.md, dashboard-and-workflows.md
 - **取代**：20261110-SPEC-插件与治理-基于GoogleDecisionsAPI的语义红线裁判与规则沉淀设计.md（第 2.5 节旧版编辑文件轨迹解析）, 20261120-ADR-插件与治理-双层文档体系与隔离Curator闭环架构.md（原基于 transcript.jsonl 的单层感知边界）
+
+> **[部分失效（2026-11-22）]**
+> 以下正文为当时历史快照。第 1 节 `PreInvocation + Stop` 回合级快照 Hook 已彻底卸载并被 [卸载 Stop Hook 并收归 `/a8-commit` 提交门禁](20261122-ADR-插件与治理-卸载StopHook并将红线审查与文档核验收归a8-commit提交门禁.md) 取代；第 2 节 DevTools / Sidecar 界面层 `has_git` 检测与「无 Git」警示仍继续生效，现行系统真相请以 [agent-mind-governance.md](../evergreen/agent-mind-governance.md) 为准。
 
 ---
 

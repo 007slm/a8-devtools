@@ -13,14 +13,14 @@
 | **`modules/cowlink_overlay/`** (`cowlink_overlay.dll`) | **D1 + D2 + D6** | 仅跑 `cargo check`，未检查 HKLM 前导 7 空格注册表项、内嵌角标释放与 `release.mjs` 对 Explorer 文件锁的热改名避让 |
 | **`modules/devtools/` Rust 宿主** (`main.rs`、`sidecar.rs`、`agent_mind.rs`、`net_speed.rs`、`taskbar_window.rs`、`settings.rs`) | **D1 + D3 + D4** | 仅跑 `cargo test`，未启动实机校验单实例唤醒、零黑窗、`:18765` Origin `403` 拦截、UIA 网速条及注册表开机自启 |
 | **`modules/devtools/web/` 与 `modules/devtools/ui/`** | **D1 + D3** | 仅在 `vite` 开发服预览通过，未执行 `npm run build` 核验 `ui/index.html` 经典 IIFE 剥离与三端实机加载零白屏 |
-| **`plugins/a8-agent-mind/`** (`hooks/`、`sidecars/panel/main.mjs`、`agents/`、`skills/`、`decisions/`) | **D1 + D5** | 改完 Agent/Hook/Sidecar 后未跑 `check_plugin_agents.py`、`check_stop_hook_invariants.py` 与 `:18766` Token/Origin 实测 |
-| **`scripts/lints/` 与 `scripts/release.mjs`** | **D1 + D6** | 仅改单一检查脚本未跑全套 5 项门禁，或未通过 `release.mjs` 核验 `dist/` 产物完整性与 `SHA256SUMS.txt` |
+| **`plugins/a8-agent-mind/`** (`sidecars/panel/main.mjs`、`agents/`、`skills/`、`scripts/`、`decisions/`) | **D1 + D5** | 改完 Agent/技能/Sidecar 后未跑 `check_plugin_agents.py`、`scan_docs_sync.mjs`、`judge_router.py` 与 `:18766` Token/Origin 实测 |
+| **`scripts/lints/` 与 `scripts/release.mjs`** | **D1 + D6** | 仅改单一检查脚本未跑全套 4 项门禁，或未通过 `release.mjs` 核验 `dist/` 产物完整性与 `SHA256SUMS.txt` |
 
 ---
 
 ## 2. 6 大真实验证面执行卡（D1 ~ D6）
 
-### D1：Rust 工作区编译、单测与全仓 5 项机械门禁
+### D1：Rust 工作区编译、单测与全仓 4 项机械门禁
 - **前置条件**：Rust 工具链（`Cargo.toml` Workspace 3 成员）、Node.js、Python 3（`py -3`）；PowerShell 命令前置 `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;`。
 - **启动与探活**：无需拉起 GUI 或常驻进程；先以 `git status` 确认待检范围。
 - **执行命令**：
@@ -31,9 +31,8 @@
   node scripts/lints/check_workspace_hygiene.mjs
   node scripts/lints/check_work_records.mjs
   py -3 scripts/lints/check_plugin_agents.py
-  py -3 scripts/lints/check_stop_hook_invariants.py
   ```
-- **真通过物理判据**：`cargo check` 与 `cargo test --workspace` 退出码 `0`（覆盖 `cowfs` `unit_test.rs` 7 项、`whiteout`/`config`、`devtools` `main.rs`/`sidecar.rs`/`agent_mind.rs` 全部 Rust 单测，注意默认运行会跳过未装 WinFsp 或需按 D2 单独实测的挂载行为）；5 项仓库门禁全部输出 `[PASS]`，且 `AGENTS.md`、规则文件、`docs/glossary.md`、`docs/verify.md` 物理体积均 `<= 20,000 B`。
+- **真通过物理判据**：`cargo check` 与 `cargo test --workspace` 退出码 `0`（覆盖 `cowfs` `unit_test.rs` 7 项、`whiteout`/`config`、`devtools` `main.rs`/`sidecar.rs`/`agent_mind.rs` 全部 Rust 单测，注意默认运行会跳过未装 WinFsp 或需按 D2 单独实测的挂载行为）；4 项仓库门禁全部输出 `[PASS]`，且 `AGENTS.md`、规则文件、`docs/glossary.md`、`docs/verify.md` 物理体积均 `<= 20,000 B`。
 - **第一现场日志路径**：终端输出、`target/debug/`、`scripts/lints/`。
 
 ### D2：WinFsp 写时复制、`bindflt` 直通与 Explorer 角标实机
@@ -89,22 +88,21 @@
 - **真通过物理判据**：单实例锁生效；托盘 32×32 位图每 5000ms 更新，隐入托盘后停止向 WebView 发 `net-speed-update`；`devtools_settings.json` 的 `autostart` 与注册表键 `a8-devtools` 严格一致；托盘右键退出后 `:18765` 端口随主进程自动回收。
 - **第一现场日志路径**：`%LOCALAPPDATA%\cowlink\devtools_settings.json`、`%USERPROFILE%\.gemini\antigravity\daemon\hub_*.json`。
 
-### D5：A8 Agent Mind 插件 Hook、快慢双轨扫描与裁判路由闭环
-- **前置条件**：Python 3（`py -3`）与 Node.js（`node`），仓库位于 Git 管理下（非 Git 目录测试须单独建临时无 `.git` 目录验证静默边界）。
-- **启动与探活**：检查 `plugins/a8-agent-mind/hooks.json` 已注册 `PreInvocation`（`--pre-invocation`）与 `Stop` 钩子。
+### D5：A8 Agent Mind 插件前置审查闸门、夜间扫描与裁判路由闭环
+- **前置条件**：Python 3（`py -3`）与 Node.js（`node`），仓库位于 Git 管理下。
+- **启动与探活**：确认插件根目录已彻底移除 `hooks.json` / `hooks/stop_reflect.py`（日常对话零 Hook 拦截），提交前强制质量闸门由 `skills/a8-commit/SKILL.md` 驱动。
 - **执行命令**：
   ```powershell
   py -3 scripts/lints/check_plugin_agents.py
-  py -3 scripts/lints/check_stop_hook_invariants.py
   node plugins/a8-agent-mind/scripts/scan_docs_sync.mjs
   py -3 plugins/a8-agent-mind/scripts/run_repo_lints.py .
   py -3 plugins/a8-agent-mind/skills/a8-judge/scripts/judge_router.py .
   ```
 - **真通过物理判据**：
   1. `check_plugin_agents.py` 校验 `plugins/*/agents/*.md`（`arch-judge.md`、`docs-sync.md`、`dsh-reviewer.md`）全部显式声明 `subagent: true`、`mainAgent: false` 与单行 `tools: [...]`，防止运行时被静默降级为只读 9 工具集；
-  2. `check_stop_hook_invariants.py` 全部不变量通过：验证无 `AUTO_LINT`/`AUTO_DECISION`/`EVERGREEN_SYNC_QUESTION`/`TypeName="docs-sync"`、未收口回合不触发、严格 Git 回合基线捕获编码子代理与本回合 `git commit` 变更、非 Git 目录与驱动器根静默返回 `{}`、**写入 `docs/records/*.md` 或 `docs/evergreen/*.md` / `docs/glossary.md` / `docs/verify.md` 时日间快轨直接放行**（含品味信号时仍可触发 `ASK_USER_UI`），仅未改任何文档且需维护时提示当前上下文轻更新（严禁额外起 `docs-sync`）；
-  3. `scan_docs_sync.mjs` 输出合法 JSON，精准跳过 `role: test-bed` 靶场及无新增提交/工作区变动的仓库（`needs_review: false`），并正确报告 `broken_links`、`unmarked_superseded_records`、`in_flight_records` 与 `< 20KB` 体积警告；`--mark-done <repo>` 后复扫幂等返回 `needs_review: false`；
-  4. `run_repo_lints.py` 输出 `"ok": true` 并写入 `%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\harness_metrics.jsonl`；`judge_router.py .` 输出合法路由 JSON 且 `relevant_docs` 仅含 `.md` 文档（自动跳过 `.html` 可视化指南）。
+  2. `scan_docs_sync.mjs` 输出合法 JSON，精准跳过 `role: test-bed` 靶场及无新增提交/工作区变动的仓库（`needs_review: false`），并正确报告 `broken_links`、`unmarked_superseded_records`、`in_flight_records` 与 `< 20KB` 体积警告；`--mark-done <repo>` 后复扫幂等返回 `needs_review: false`；
+  3. `run_repo_lints.py` 输出 `"ok": true` 并写入 `%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\harness_metrics.jsonl`；`judge_router.py .` 输出合法路由 JSON 且 `relevant_docs` 仅含 `.md` 文档（自动跳过 `.html` 可视化指南）；
+  4. 执行 `/a8-commit` 前确认三段式审查（`judge_router.py` → 激活维度必跑 `decisions_client.py` → 告警或高危面必跑 `arch-judge`）不可跳过且无 `fast` 旁路。
 - **第一现场日志路径**：`%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\harness_metrics.jsonl`、`%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\nightly_docs_sync_state.json`、`plugins/a8-agent-mind/reviews/`、`logs/grok-proposals/`。
 
 ### D6：便携发布打包流水线实机验收（`scripts/release.mjs`）
@@ -126,6 +124,6 @@
 | 本地环境 / Mock | 真实生产目标 | 本地环境测不到的盲区（上线/交付前必核） |
 | :--- | :--- | :--- |
 | **临时目录单测** (`unit_test.rs`) | **WinFsp / BindFlt 驱动 + Explorer 进程** | 并发句柄竞态、长路径 `\\?\` 与杀毒软件过滤驱动冲突、非管理员下 `CowFsBindService` 未就绪，以及 `explorer.exe` 受 15 个全局 `ShellIconOverlayIdentifiers` 槽位挤占导致角标不显示 |
-| **Mock Decisions API** (`check_stop_hook_invariants.py`) | **线上 Gemini Decisions API + Antigravity 宿主** | 真实 API 超时/网络抖动时的 Fail-Closed 退避表现、`hub_*.json` 多实例并发选活与 `language_server.exe` 拉起会话，以及插件安装到 `%USERPROFILE%\.gemini\config\plugins\a8-agent-mind\` 后的真实加载路径 |
+| **本地静态路由单测** (`judge_router.py`) | **线上 Gemini Decisions API + Antigravity 宿主** | 真实 API 超时/网络抖动时的 Fail-Closed 退避表现、`hub_*.json` 多实例并发选活与 `language_server.exe` 拉起会话，以及插件经 `bindflt` 挂载到 `%USERPROFILE%\.gemini\config\plugins\a8-agent-mind\` 后的真实加载路径 |
 | **普通浏览器直开 `:18765`** | **Antigravity 辅助侧栏 WebView（Sidecar）** | IDE 自定义协议（`plugin://`/`vscode-webview://`/`Origin: null`）对 ES Module 与 `crossorigin` 的拦截、宿主注入 `sidecar_sdk/preload.js` 桥接及 `X-Sidecar-Token` 鉴权链路 |
 | **单台 Win11 开发机** | **多显示器 / 干净未装环境的目标 Windows** | 裸机未装 WinFsp/VC++ 运行库时 `install_driver.bat` 的 UAC 提权安装体验，以及多屏混合 DPI 缩放与不同任务栏布局下 `TaskbarSpeedBar` 的停靠坐标精度 |

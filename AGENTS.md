@@ -22,7 +22,7 @@ flowchart LR
     end
 
     subgraph Mind["plugins/a8-agent-mind · 治理中枢"]
-        Hooks["stop_reflect.py & scan_docs_sync.mjs<br/>快轨轻守护 & 夜间 20:00 常青梳理"]
+        CommitGate["a8-commit & scan_docs_sync.mjs<br/>提交前强制闸门 & 夜间 20:00 梳理"]
         Judge["judge_router.py & arch-judge & DSH<br/>红线裁决与终审"]
     end
 
@@ -42,7 +42,7 @@ flowchart LR
 | **工作台主程序** (`modules/devtools`) | Tauri 2.0 桌面工作台、任务栏透明网速条、Hosts 维护、Doctor 诊断、进程内 `:18765` 看板、Git 代码审核与 Grok 提案联动 | [`modules/devtools/`](file:///e:/a8-devtools/modules/devtools/) | `a8-devtools.exe` | `tauri = "2"`, `rfd`, `cowfs`, `windows` |
 | **写时复制文件系统** (`modules/cowfs`) | WinFsp 虚拟驱动、COW 状态机、原子 Copy-Up、源内 `.cowdiff` 自完整存储、`bindflt` 纯直通与服务自检 | [`modules/cowfs/`](file:///e:/a8-devtools/modules/cowfs/) | `cowfs.exe` & `libcowfs` | `winfsp`, `dashmap`, `parking_lot` |
 | **桌面角标扩展** (`modules/cowlink_overlay`) | 基于 `IShellIconOverlayIdentifier` 的零侵入 Explorer 左下角 `>_` 徽章 COM DLL（内嵌图标与 1.5s TTL 缓存） | [`modules/cowlink_overlay/`](file:///e:/a8-devtools/modules/cowlink_overlay/) | `cowlink_overlay.dll` | `windows`, `serde_json` |
-| **心智治理与复盘插件** (`plugins/a8-agent-mind`) | 通用 Antigravity 架构与文档治理插件（严控 7 大核心技能：3 自动内功 + 4 手动大招）：自动内功 `a8-workflow`（全阶段工程总控、自然语言直达路由与 5 份场景指南）、`a8-judge`（Google Decisions API + `arch-judge`）、`a8-ui-design`；手动大招 `/a8-prompt`（事前提示词深化重写）、`/a8-dsh-review`（`dsh-reviewer` 终审）、`/a8-ui-verify`、`/a8-improve`；配合快慢双轨文档治理（`stop_reflect.py` 日间快轨轻守护 + 每晚 20:00 `scan_docs_sync.mjs` / `docs-sync` 全量梳理）、Sidecar 看板与 `mind-rules.md` | [`plugins/a8-agent-mind/`](file:///e:/a8-devtools/plugins/a8-agent-mind/) | `a8-agent-mind` (Antigravity Plugin) | `Google Decisions API`, `DeepSeek Harness`, `Generative UI`, `bindflt` |
+| **心智治理与复盘插件** (`plugins/a8-agent-mind`) | 通用 Antigravity 架构与文档治理插件（严控 8 大核心技能：3 自动内功 + 5 手动大招）：自动内功 `a8-workflow`（全阶段工程总控、自然语言直达路由与 5 份场景指南）、`a8-judge`（Google Decisions API + `arch-judge`）、`a8-ui-design`；手动大招 `/a8-prompt`（事前提示词深化重写）、`/a8-dsh-review`（`dsh-reviewer` 终审）、`/a8-ui-verify`、`/a8-commit`（提交前强制红线审查、文档收口与标准化中文推送）、`/a8-improve`；配合夜间 20:00 `scan_docs_sync.mjs` / `docs-sync` 常青全量梳理、Sidecar 看板与 `mind-rules.md` | [`plugins/a8-agent-mind/`](file:///e:/a8-devtools/plugins/a8-agent-mind/) | `a8-agent-mind` (Antigravity Plugin) | `Google Decisions API`, `DeepSeek Harness`, `Generative UI`, `bindflt` |
 | **统一脚本与门禁** (`scripts/` & 根目录) | WinFsp 静默安装、一键发布打包 (`release.mjs` / `release.bat`)、多模式启动脚本及 `scripts/lints/` 机械防线 | [`scripts/`](file:///e:/a8-devtools/scripts/), [`start.bat`](file:///e:/a8-devtools/start.bat), [`release.bat`](file:///e:/a8-devtools/release.bat) | 启动、打包与机械检查脚本 | Win32 / Node.js ESM / Python 标库 |
 
 ---
@@ -55,11 +55,11 @@ flowchart LR
 | :--- | :--- | :--- | :--- | :--- |
 | [项目术语表](docs/glossary.md) | GLOSSARY | 全仓共享术语 | 全仓库 | 常青文档与工作记录共用的项目专有概念普通话定义（写文档前先对齐） |
 | [验证地图](docs/verify.md) | VERIFY | 真实验证路由 | `scripts/`, `modules/`, `plugins/a8-agent-mind/` | 改动模块→必跑验证面路由、D1~D6 实机执行卡物理判据与本地环境盲区清单 |
-| [AI-研发工作流可视化指南.html](docs/evergreen/AI-研发工作流可视化指南.html) | VISUAL | 可视化总览 | `plugins/a8-agent-mind/`, `docs/` | 面向使用者的产品化指南页：四大核心能力、6 步工作流顺序、7 大核心技能分工与 8 种一键复制实战话术 |
+| [AI-研发工作流可视化指南.html](docs/evergreen/AI-研发工作流可视化指南.html) | VISUAL | 可视化总览 | `plugins/a8-agent-mind/`, `docs/` | 面向使用者的产品化指南页：四大核心能力、6 步工作流顺序、8 大核心技能分工与 8 种一键复制实战话术 |
 | [平台架构与存储引擎](docs/evergreen/platform-and-storage.md) | EVERGREEN | 存储与桌面集成 | `Cargo.toml`, `modules/cowfs/`, `modules/cowlink_overlay/` | Cargo Workspace 单向分层、`.cowdiff` 存储与状态机、零重入与 `bindflt` 角标契约 |
 | [桌面工作台与网速引擎](docs/evergreen/desktop-tray-and-settings.md) | EVERGREEN | 桌面工作台 | `modules/devtools/src/main.rs`, `modules/devtools/src/net_speed.rs`, `modules/devtools/src/taskbar_window.rs`, `modules/devtools/src/settings.rs`, `modules/devtools/src/sidecar.rs` | Win32 零黑窗、单实例唤醒、网速采集、Win11 UIA 网速条与开机自启设置 |
 | [三端看板与研发工作流](docs/evergreen/dashboard-and-workflows.md) | EVERGREEN | 工作台与插件看板 | `modules/devtools/web/`, `modules/devtools/ui/`, `modules/devtools/src/agent_mind.rs`, `modules/devtools/src/sidecar.rs`, `plugins/a8-agent-mind/sidecars/panel/main.mjs` | 三端同源 IIFE 构建与防白屏不变量、Origin/Token 边界、代码审核与 Grok 提案联动 |
-| [A8 Agent Mind 治理与插件](docs/evergreen/agent-mind-governance.md) | EVERGREEN | 插件与治理 | `plugins/a8-agent-mind/`, `scripts/lints/` | 5 级防线阶梯、`a8-workflow`、`judge_router.py` 路由、快慢双轨文档治理（`Stop` 快轨 + 每晚 20:00 `scan_docs_sync.mjs` / `docs-sync`）、DSH 与仓库门禁 |
+| [A8 Agent Mind 治理与插件](docs/evergreen/agent-mind-governance.md) | EVERGREEN | 插件与治理 | `plugins/a8-agent-mind/`, `scripts/lints/` | 5 级防线阶梯、`a8-workflow`、`/a8-commit` 提交前强制红线与文档闸门、夜间 20:00 `scan_docs_sync.mjs` / `docs-sync`、DSH 与仓库门禁 |
 
 ---
 
@@ -78,4 +78,4 @@ flowchart LR
    - **双层文档、验证地图与术语表**：普通小改靠单测与行内注释；重大变更写 `docs/records/` 后直接在当前上下文顺手轻更新 `docs/evergreen/`、`docs/verify.md` 与 `AGENTS.md`（勿额外起 `docs-sync` 子代理），全量对齐交由每晚 20:00 定时任务梳理补齐（`docs/` 根目录仅允许 `glossary.md` 与 `verify.md`）；文档写作遵循术语表二选一原则（不在 [`docs/glossary.md`](docs/glossary.md) 中的非通用概念，要么补入术语表并用普通话讲清，要么在正文直接用普通话解释）；
    - **真实验证面路由（禁止假绿交卷）**：严禁仅凭 `cargo check`、Vite 开发模式或 Mock 测试绿灯宣布完成；改动对应模块须对照 [验证地图](docs/verify.md) 跑通 D1~D6 对应真实运行表面并附第一现场实证；
    - **Rust 门禁**：`cargo test --workspace` 与 `cargo check --workspace` 全绿；
-   - **前端与结构门禁**：`modules/devtools/web` 执行 `npm run build`（`tsc -b && vite build`）；根目录执行 `node scripts/lints/check_swallowed_exceptions.mjs`、`node scripts/lints/check_workspace_hygiene.mjs`、`node scripts/lints/check_work_records.mjs`、`py -3 scripts/lints/check_plugin_agents.py` 与 `py -3 scripts/lints/check_stop_hook_invariants.py` 全绿通过。
+   - **前端与结构门禁**：`modules/devtools/web` 执行 `npm run build`（`tsc -b && vite build`）；根目录执行 `node scripts/lints/check_swallowed_exceptions.mjs`、`node scripts/lints/check_workspace_hygiene.mjs`、`node scripts/lints/check_work_records.mjs` 与 `py -3 scripts/lints/check_plugin_agents.py` 全绿通过。

@@ -42,7 +42,7 @@
 - **控制面契约**：Tauri Command `get_repo_git_diff` ↔ HTTP `POST /api/agent-mind/git/diff`，入参 `{ repo_code, scope?: "all" | "staged" | "unstaged" }`，返参 `GitReviewDiffDto`。
 - **非 Git 仓库健康标识（`has_git`）**：
   - `agent_mind.rs`（`HostProjectCardDto.has_git` via `has_git_repo`）与 `main.mjs`（`parseReposMd` `has_git` via `hasGitRepo`）通过无进程遍历项目路径祖先目录的 `.git` 判定是否为 Git 仓库，且显式跳过驱动器根目录（如 `C:\.git`）防误判；
-  - 当 `has_git === false` 时，`AgentMindView.tsx`（「仓库地图」卡片、详情页横幅与「规则规范」作用域选择器）以及 `CodeReviewTab.tsx`（仓库下拉选项 `<repo> (无 Git)` 与旁侧 `未检测到 .git` 琥珀徽章）均显式提示该仓库未受 Git 管理，Hook 文档门禁与提交前代码审核对其静默跳过。
+  - 当 `has_git === false` 时，`AgentMindView.tsx`（「仓库地图」卡片、详情页横幅与「规则规范」作用域选择器）以及 `CodeReviewTab.tsx`（仓库下拉选项 `<repo> (无 Git)` 与旁侧 `未检测到 .git` 琥珀徽章）均显式提示该仓库未受 Git 管理，提交前代码审核与 `/a8-commit` 提交门禁不可用。
 - **安全与性能边界**：
   - `resolve_registered_repo_root` 仅允许 `repos.md` 白名单内已登记仓库，拒绝任意路径注入；
   - 零黑窗执行 `git`（Rust `0x08000000` / Node `windowsHide: true`），统一附带 `-c core.quotePath=false` 防中文路径转义；

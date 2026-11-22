@@ -13,8 +13,8 @@
 | **零黑窗（Zero Console Flashing）** | 禁止通过 `cmd.exe`、`powershell.exe`、`sc.exe`、`taskkill.exe` 等外部命令做后台探测或操作，一律用原生 Win32 API 或 `CREATE_NO_WINDOW`（`0x08000000`），避免弹出命令行黑窗口。 | `modules/devtools/src/` |
 | **三端同源** | 桌面端主窗口（Tauri）、进程内本地网页看板（`127.0.0.1:18765`）与 Antigravity 插件侧栏（Sidecar）加载完全同一份前端构建产物（`modules/devtools/ui/`），绝不维护多套独立前端页面。 | `modules/devtools/web/`、`sidecar.rs`、`main.mjs` |
 | **Sidecar（插件侧栏宿主）** | Antigravity 插件后台启动的本地 Node 服务进程，负责在 IDE 辅助侧栏中托管看板静态页面并转发本地控制面 API。 | `plugins/a8-agent-mind/sidecars/panel/main.mjs` |
-| **A8 Agent Mind** | 本仓维护的全局智能体治理插件（`plugins/a8-agent-mind`），包含规则约束（`mind-rules.md`）、提示词深化（`/a8-prompt`）、工程工作流（`a8-workflow`）、快慢双轨文档治理（当前会话轻更新 + 每晚 20:00 `scan_docs_sync.mjs` / `docs-sync` 全量梳理）、架构初筛裁判（`a8-judge`）、深度终审（`dsh-reviewer`）与经验复盘（`/a8-improve`）。 | `plugins/a8-agent-mind/` |
+| **A8 Agent Mind** | 本仓维护的全局智能体治理插件（`plugins/a8-agent-mind`），包含规则约束（`mind-rules.md`）、提示词深化（`/a8-prompt`）、工程工作流（`a8-workflow`）、快慢双轨文档治理（当前会话轻更新 + 每晚 20:00 `scan_docs_sync.mjs` / `docs-sync` 全量梳理）、架构初筛裁判（`a8-judge`）、深度终审（`dsh-reviewer`）、规范提交（`/a8-commit`）与经验复盘（`/a8-improve`）。 | `plugins/a8-agent-mind/` |
 | **DSH（DeepSeek Harness）** | 本机运行的深度代码终审引擎，由 `/a8-dsh-review` 触发，负责对跨文件改动执行多轮只读架构审查并归档报告。 | `plugins/a8-agent-mind/agents/dsh-reviewer.md` |
-| **Decisions API** | Google Gemini 的结构化判定接口（`gemini-decision-1`），只返回布尔选项和置信度概率，用于 `a8-judge` 架构红线初筛和 `Stop` Hook 文档同步判定。 | `decisions_client.py`、`stop_reflect.py` |
+| **Decisions API** | Google Gemini 的结构化判定接口（`gemini-decision-1`），只返回布尔选项和置信度概率，用于 `/a8-commit` 提交前与 `a8-judge` 的架构红线概率初筛。 | `decisions_client.py`、`a8-commit/SKILL.md` |
 | **常青文档 / 工作记录** | 双层文档体系：`docs/evergreen/` 按模块只保留当前生效的系统规范，高频主读；`docs/records/` 按日期保存重大决策（`ADR`）、规范（`SPEC`）与深层排障（`BUG`）的历史快照。 | `docs/evergreen/`、`docs/records/` |
 | **验证地图（`docs/verify.md`）** | 仓库级真实验证路由手册：规定各模块改动后必须跑通的真实运行表面、端到端物理判据、Mock 与本地环境盲区，禁止仅凭编译通过或局部单测假绿宣布完成。 | `docs/verify.md`、`scripts/lints/` |

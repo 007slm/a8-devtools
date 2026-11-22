@@ -3,18 +3,17 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>A8 Agent Mind · 智能研发工作流与技能使用指南</title>
+<title>A8 Agent Mind · 图解研发工作流指南</title>
 <style>
   :root {
     --bg: #f8fafc;
     --surface: #ffffff;
-    --surface-subtle: #f1f5f9;
-    --surface-code: #f8fafc;
+    --subtle: #f1f5f9;
     --fg: #0f172a;
     --fg-sec: #475569;
     --fg-muted: #64748b;
     --border: #e2e8f0;
-    --border-hover: #cbd5e1;
+    --border-strong: #cbd5e1;
 
     --brand: #155eef;
     --brand-soft: #eff4ff;
@@ -36,47 +35,42 @@
     --rose-soft: #fff1f3;
     --rose-border: #fecdd6;
 
-    --nav-bg: rgba(255, 255, 255, 0.88);
-    --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
-    --shadow-hover: 0 8px 24px rgba(15, 23, 42, 0.07);
-    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --nav-bg: rgba(255, 255, 255, 0.9);
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
   }
 
   html[data-theme="dark"] {
     --bg: #0b0f17;
     --surface: #111827;
-    --surface-subtle: #1b2436;
-    --surface-code: #0d131f;
+    --subtle: #1b2436;
     --fg: #f1f5f9;
     --fg-sec: #94a3b8;
     --fg-muted: #64748b;
     --border: #1f2937;
-    --border-hover: #334155;
+    --border-strong: #334155;
 
-    --brand: #5292ff;
+    --brand: #60a5fa;
     --brand-soft: #132342;
-    --brand-border: #264885;
+    --brand-border: #254785;
 
     --green: #34d399;
-    --green-soft: #0c2920;
-    --green-border: #185741;
+    --green-soft: #0c291e;
+    --green-border: #1b5941;
 
     --amber: #fbbf24;
-    --amber-soft: #2b1f0c;
-    --amber-border: #664914;
+    --amber-soft: #2c1e0c;
+    --amber-border: #6b4314;
 
     --purple: #a78bfa;
-    --purple-soft: #1f1938;
-    --purple-border: #483882;
+    --purple-soft: #1d1538;
+    --purple-border: #443182;
 
     --rose: #fb7185;
-    --rose-soft: #2e141c;
-    --rose-border: #6e2639;
+    --rose-soft: #2e111a;
+    --rose-border: #6e2239;
 
-    --nav-bg: rgba(17, 24, 39, 0.88);
-    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.25);
-    --shadow-hover: 0 10px 28px rgba(0, 0, 0, 0.4);
+    --nav-bg: rgba(11, 15, 23, 0.9);
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -85,774 +79,551 @@
     font-family: var(--font-sans);
     background: var(--bg);
     color: var(--fg);
-    font-size: 15px;
-    line-height: 1.65;
+    font-size: 13px;
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
-  .mono { font-family: var(--font-mono); }
-  a { color: inherit; text-decoration: none; }
 
-  .container {
-    max-width: 1120px;
-    margin: 0 auto;
-    padding: 0 24px;
-  }
+  .wrap { max-width: 1140px; margin: 0 auto; padding: 0 20px; }
 
-  /* ==================== NAVBAR ==================== */
-  .navbar {
-    position: sticky;
-    top: 0;
-    z-index: 40;
-    height: 58px;
+  /* Navbar */
+  .nav {
+    position: sticky; top: 0; z-index: 40;
     background: var(--nav-bg);
-    backdrop-filter: blur(12px);
+    backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--border);
   }
-  .nav-inner {
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
+  .nav-in {
+    height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
   }
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-weight: 700;
-    font-size: 15.5px;
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+  .logo {
+    width: 24px; height: 24px; border-radius: 6px; background: var(--brand); color: #fff;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800;
   }
-  .brand-logo {
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
-    background: var(--brand);
-    color: #fff;
-    font-size: 13px;
-    font-weight: 800;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+  .ver {
+    font-family: var(--font-mono); font-size: 11px; padding: 1px 6px; border-radius: 4px;
+    background: var(--brand-soft); color: var(--brand); border: 1px solid var(--brand-border);
   }
-  .ver-pill {
-    font-size: 11.5px;
-    font-weight: 600;
-    padding: 1px 8px;
-    border-radius: 99px;
-    background: var(--brand-soft);
-    color: var(--brand);
-    border: 1px solid var(--brand-border);
+  .links { display: flex; gap: 4px; }
+  .links a {
+    text-decoration: none; color: var(--fg-sec); font-size: 12.5px; font-weight: 500;
+    padding: 4px 10px; border-radius: 6px;
   }
-  .nav-links {
-    display: flex;
-    align-items: center;
-    gap: 22px;
-    font-size: 14px;
-    color: var(--fg-sec);
-  }
-  .nav-links a:hover { color: var(--brand); }
+  .links a:hover { background: var(--subtle); color: var(--fg); }
   .theme-btn {
-    height: 32px;
-    padding: 0 12px;
-    border-radius: 7px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border); background: var(--surface); color: var(--fg-sec);
+    padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit;
+  }
+  .theme-btn:hover { border-color: var(--border-strong); color: var(--fg); }
+
+  /* Section & Card */
+  .sec { padding: 20px 0 0; }
+  .panel {
     background: var(--surface);
-    color: var(--fg);
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: border-color 0.15s;
-  }
-  .theme-btn:hover { border-color: var(--brand); color: var(--brand); }
-
-  /* ==================== HERO ==================== */
-  .hero {
-    padding: 64px 0 52px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-  }
-  .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 12px;
-    border-radius: 99px;
-    font-size: 13px;
-    font-weight: 600;
-    background: var(--brand-soft);
-    color: var(--brand);
-    border: 1px solid var(--brand-border);
-    margin-bottom: 18px;
-  }
-  .hero h1 {
-    font-size: clamp(28px, 4vw, 42px);
-    line-height: 1.22;
-    letter-spacing: -0.02em;
-    font-weight: 800;
-    max-width: 840px;
-    margin-bottom: 16px;
-  }
-  .hero-sub {
-    font-size: 16.5px;
-    color: var(--fg-sec);
-    max-width: 790px;
-    line-height: 1.72;
-    margin-bottom: 28px;
-  }
-  .hero-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 36px;
-  }
-  .btn-lg {
-    height: 42px;
-    padding: 0 20px;
-    border-radius: 8px;
-    font-size: 14.5px;
-    font-weight: 600;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--fg);
-    transition: all 0.15s;
-  }
-  .btn-lg.primary {
-    background: var(--brand);
-    border-color: var(--brand);
-    color: #fff;
-  }
-  .btn-lg.primary:hover { opacity: 0.92; }
-  .btn-lg:not(.primary):hover { border-color: var(--brand); color: var(--brand); }
-
-  .hero-highlights {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-  }
-  .hl-card {
-    padding: 18px 20px;
-    border-radius: 10px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-  }
-  .hl-title {
-    font-size: 15px;
-    font-weight: 700;
-    margin-bottom: 6px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .hl-desc { font-size: 13.5px; color: var(--fg-sec); line-height: 1.58; }
-
-  /* ==================== SECTIONS ==================== */
-  .section {
-    padding: 64px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .sec-head { margin-bottom: 30px; }
-  .sec-kicker {
-    font-size: 12.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--brand);
-    margin-bottom: 6px;
-  }
-  .sec-title {
-    font-size: 26px;
-    font-weight: 800;
-    letter-spacing: -0.01em;
-    margin-bottom: 8px;
-  }
-  .sec-desc {
-    font-size: 15.5px;
-    color: var(--fg-sec);
-    max-width: 760px;
-  }
-
-  .tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 9px;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 600;
-    border: 1px solid var(--border);
-    background: var(--surface-subtle);
-    color: var(--fg-sec);
-  }
-  .tag.brand { background: var(--brand-soft); border-color: var(--brand-border); color: var(--brand); }
-  .tag.green { background: var(--green-soft); border-color: var(--green-border); color: var(--green); }
-  .tag.amber { background: var(--amber-soft); border-color: var(--amber-border); color: var(--amber); }
-  .tag.purple { background: var(--purple-soft); border-color: var(--purple-border); color: var(--purple); }
-  .tag.rose { background: var(--rose-soft); border-color: var(--rose-border); color: var(--rose); }
-
-  /* ==================== CAPABILITIES (2x2) ==================== */
-  .cap-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 18px;
-  }
-  .cap-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 24px;
-    box-shadow: var(--shadow-card);
-  }
-  .cap-num { margin-bottom: 12px; }
-  .cap-card h3 { font-size: 17.5px; font-weight: 700; margin-bottom: 8px; }
-  .cap-card p { font-size: 14.5px; color: var(--fg-sec); margin-bottom: 14px; }
-  .cap-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-
-  /* ==================== WORKFLOW ORDER STEPPER ==================== */
-  .order-steps {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 12px;
-    margin-bottom: 28px;
-  }
-  .step-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .step-num {
-    font-size: 11.5px;
-    font-weight: 800;
-    color: var(--brand);
-    letter-spacing: 0.03em;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .step-name { font-size: 15px; font-weight: 700; line-height: 1.3; }
-  .step-summary { font-size: 13px; color: var(--fg-sec); line-height: 1.52; flex: 1; }
-
-  .track-box {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: var(--shadow-card);
-  }
-  .track-tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 12px 16px;
-    background: var(--surface-subtle);
-    border-bottom: 1px solid var(--border);
-  }
-  .track-tab {
-    height: 34px;
-    padding: 0 14px;
-    border-radius: 7px;
-    border: 1px solid transparent;
-    background: transparent;
-    color: var(--fg-sec);
-    font-size: 13.5px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.14s;
-  }
-  .track-tab:hover { color: var(--fg); background: var(--surface); }
-  .track-tab.active { background: var(--brand); color: #fff; border-color: var(--brand); }
-  .track-body {
-    padding: 24px;
-    display: grid;
-    grid-template-columns: 1fr 1.5fr;
-    gap: 24px;
-  }
-  .track-left h4 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
-  .track-left p { font-size: 14px; color: var(--fg-sec); margin-bottom: 14px; }
-  .say-box {
-    background: var(--surface-code);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 12px 14px;
-    font-size: 13.5px;
+    overflow: hidden;
   }
-  .say-label { font-size: 11.5px; font-weight: 700; color: var(--fg-muted); margin-bottom: 4px; }
-  .timeline-list { display: flex; flex-direction: column; gap: 12px; }
-  .tl-item { display: flex; align-items: flex-start; gap: 12px; font-size: 14px; }
-  .tl-dot {
-    width: 24px; height: 24px; border-radius: 99px;
-    background: var(--brand-soft); border: 1px solid var(--brand-border); color: var(--brand);
-    font-size: 12px; font-weight: 700; flex-shrink: 0;
-    display: inline-flex; align-items: center; justify-content: center; margin-top: 1px;
+  .panel-head {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   }
+  .panel-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; }
+  .idx {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    padding: 1px 6px; border-radius: 4px;
+    background: var(--subtle); color: var(--fg-sec); border: 1px solid var(--border);
+  }
+  .hint { font-size: 12px; color: var(--fg-muted); }
 
-  /* ==================== 7 CORE SKILLS ==================== */
-  .sub-heading {
-    font-size: 17px;
-    font-weight: 700;
-    margin-bottom: 14px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .skills-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-bottom: 36px;
-  }
-  .skills-grid-2 {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 16px;
-    margin-bottom: 0;
-  }
-  .skill-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    box-shadow: var(--shadow-card);
-    transition: border-color 0.15s, box-shadow 0.15s;
-  }
-  .skill-card:hover {
-    border-color: var(--border-hover);
-    box-shadow: var(--shadow-hover);
-  }
-  .skill-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .skill-cmd {
-    font-family: var(--font-mono);
-    font-size: 13.5px;
-    font-weight: 700;
-    padding: 3px 10px;
-    border-radius: 6px;
-    background: var(--brand-soft);
-    color: var(--brand);
-    border: 1px solid var(--brand-border);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .skill-cmd:hover { background: var(--brand); color: #fff; }
-  .skill-title { font-size: 16px; font-weight: 700; }
-  .skill-desc { font-size: 13.8px; color: var(--fg-sec); line-height: 1.58; flex: 1; }
+  .legend { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--fg-sec); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
 
-  /* ==================== NATURAL LANGUAGE TACTICS ==================== */
-  .tactics-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 14px;
-  }
-  .tactic-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px 18px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .tactic-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .tactic-title { font-size: 15px; font-weight: 700; }
-  .tactic-desc { font-size: 13.5px; color: var(--fg-sec); line-height: 1.52; }
-  .prompt-box {
-    margin-top: 2px;
-    padding: 8px 11px;
-    border-radius: 7px;
-    background: var(--surface-code);
-    border: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
+  /* SVG Canvas */
+  .svg-wrap { width: 100%; overflow-x: auto; padding: 12px 14px 8px; }
+  svg.diagram { width: 100%; height: auto; display: block; min-width: 780px; }
+  svg.diagram-half { width: 100%; height: auto; display: block; min-width: 420px; }
+
+  .svg-node { cursor: pointer; transition: opacity .15s ease; }
+  .svg-node:hover .node-box { stroke-width: 2; }
+  .svg-node.active .node-box { stroke: var(--brand); stroke-width: 2.2; }
+
+  /* Interactive Inspector Strip */
+  .strip {
+    padding: 9px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--subtle);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
     font-size: 12.5px;
   }
-  .prompt-text {
-    color: var(--fg);
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .strip-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; border: 1px solid transparent;
     white-space: nowrap;
   }
-  .copy-mini {
-    flex-shrink: 0;
-    padding: 3px 9px;
-    border-radius: 5px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--brand);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
+  .pill.brand { background: var(--brand-soft); color: var(--brand); border-color: var(--brand-border); }
+  .pill.green { background: var(--green-soft); color: var(--green); border-color: var(--green-border); }
+  .pill.amber { background: var(--amber-soft); color: var(--amber); border-color: var(--amber-border); }
+  .pill.purple { background: var(--purple-soft); color: var(--purple); border-color: var(--purple-border); }
+  .pill.rose { background: var(--rose-soft); color: var(--rose); border-color: var(--rose-border); }
+  .btn-copy {
+    border: 1px solid var(--brand-border); background: var(--brand-soft); color: var(--brand);
+    padding: 3px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer;
+    font-family: var(--font-mono); white-space: nowrap;
   }
-  .copy-mini:hover { background: var(--brand); border-color: var(--brand); color: #fff; }
+  .btn-copy:hover { background: var(--brand); color: #fff; }
 
-  /* ==================== FAQ ==================== */
-  .faq-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
+  /* Scenario Split */
+  .split-tree {
+    display: grid; grid-template-columns: 340px 1fr; border-top: 0;
   }
-  .faq-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px 22px;
+  .tree-left {
+    border-right: 1px solid var(--border); padding: 10px;
+    display: flex; flex-direction: column; gap: 6px;
   }
-  .faq-card h4 { font-size: 15.5px; font-weight: 700; margin-bottom: 8px; }
-  .faq-card p { font-size: 14px; color: var(--fg-sec); line-height: 1.6; }
+  .tree-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface); cursor: pointer; text-align: left; font-family: inherit;
+    color: var(--fg); transition: border-color .15s, background .15s;
+  }
+  .tree-item:hover { background: var(--subtle); border-color: var(--border-strong); }
+  .tree-item.active {
+    background: var(--brand-soft); border-color: var(--brand-border);
+    box-shadow: inset 3px 0 0 var(--brand);
+  }
+  .tree-name { font-weight: 600; font-size: 13px; }
+  .tree-code { font-family: var(--font-mono); font-size: 11px; color: var(--fg-muted); }
+  .tree-right { padding: 14px 16px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; }
 
-  .footer {
-    padding: 32px 0 48px;
-    text-align: center;
-    font-size: 13px;
-    color: var(--fg-muted);
+  /* Dual Diagram Row */
+  .dual-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+  /* Quick Prompts Chips */
+  .chips {
+    padding: 12px 14px;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+  }
+  .chip {
+    border: 1px solid var(--border); background: var(--surface); border-radius: 6px;
+    padding: 8px 10px; cursor: pointer; text-align: left; font-family: inherit;
+    display: flex; flex-direction: column; gap: 4px; transition: border-color .15s, background .15s;
+  }
+  .chip:hover { border-color: var(--brand-border); background: var(--brand-soft); }
+  .chip-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .chip-title { font-weight: 700; font-size: 12.5px; color: var(--fg); }
+  .chip-tag { font-size: 11px; color: var(--brand); font-family: var(--font-mono); }
+  .chip-say {
+    font-size: 12px; color: var(--fg-sec);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .foot {
+    padding: 18px 0 28px; text-align: center; font-size: 12px; color: var(--fg-muted);
   }
 
   .toast {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    z-index: 99;
-    padding: 10px 16px;
-    border-radius: 8px;
-    background: var(--fg);
-    color: var(--surface);
-    font-size: 13.5px;
-    font-weight: 600;
-    box-shadow: var(--shadow-hover);
-    opacity: 0;
-    transform: translateY(10px);
-    pointer-events: none;
-    transition: all 0.2s;
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(14px);
+    background: var(--fg); color: var(--surface); padding: 7px 14px; border-radius: 6px;
+    font-size: 12.5px; font-weight: 600; opacity: 0; pointer-events: none;
+    transition: opacity .18s, transform .18s; z-index: 90;
   }
-  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
   @media (max-width: 960px) {
-    .order-steps { grid-template-columns: repeat(2, 1fr); }
-    .hero-highlights, .skills-grid, .skills-grid-2, .faq-grid { grid-template-columns: 1fr; }
-    .cap-grid, .tactics-grid, .track-body { grid-template-columns: 1fr; }
-    .nav-links { display: none; }
+    .split-tree { grid-template-columns: 1fr; }
+    .tree-left { border-right: 0; border-bottom: 1px solid var(--border); flex-direction: row; flex-wrap: wrap; }
+    .tree-item { flex: 1 1 150px; }
+    .dual-grid { grid-template-columns: 1fr; }
+    .chips { grid-template-columns: repeat(2, 1fr); }
+    .links { display: none; }
   }
 </style>
 </head>
 <body>
 
-<!-- ==================== NAVBAR ==================== -->
-<header class="navbar">
-  <div class="container nav-inner">
+<header class="nav">
+  <div class="wrap nav-in">
     <div class="brand">
-      <span class="brand-logo">A8</span>
-      <span>A8 Agent Mind 使用指南</span>
-      <span class="ver-pill">v1.4</span>
+      <span class="logo">A8</span>
+      <span>A8 Agent Mind · 图解工作流</span>
+      <span class="ver">v1.4</span>
     </div>
-    <nav class="nav-links">
-      <a href="#capabilities">有哪些能力</a>
-      <a href="#workflow-order">工作流顺序</a>
-      <a href="#skills-catalog">7 大核心技能</a>
-      <a href="#tactics">8 种实用话术</a>
-      <a href="#faq">常见疑问</a>
+    <nav class="links">
+      <a href="#pipeline">全流程泳道</a>
+      <a href="#router">场景分流</a>
+      <a href="#skills">8 大技能图谱</a>
+      <a href="#dual">双轨与防线</a>
+      <a href="#prompts">一键话术</a>
     </nav>
     <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">切换深色</button>
   </div>
 </header>
 
-<!-- ==================== HERO ==================== -->
-<section class="hero">
-  <div class="container">
-    <div class="eyebrow">✨ 自主工程心智插件 · 不用背一堆命令当人工调度员</div>
-    <h1>直接用大白话提需求，AI 自动按资深工程师的顺序把事办妥</h1>
-    <p class="hero-sub">
-      很多工具要求你每一步手动敲不同的命令，人成了流程调度员。<b>A8 Agent Mind</b> 的设计刚好相反：把“先摸清影响、先定数据结构、真环境验证、清掉借口注释、核对代码更新文档”全部内化为 AI <b>自动履行的本分</b>；你手上只留 <b>4 个高价值手动大招</b>（事前 <code>/a8-prompt</code> → 事中 <code>/a8-dsh-review</code> &amp; <code>/a8-ui-verify</code> → 事后 <code>/a8-improve</code>）构成完整闭环。
-    </p>
+<main class="wrap">
 
-    <div class="hero-actions">
-      <a class="btn-lg primary" href="#workflow-order">看懂 6 步工作流顺序 ↓</a>
-      <a class="btn-lg" href="#skills-catalog">查看 7 大技能清单</a>
-      <a class="btn-lg" href="#tactics">复制常用实战话术</a>
-    </div>
-
-    <div class="hero-highlights">
-      <div class="hl-card">
-        <div class="hl-title"><span class="tag green">省心</span> 小事极速直通，大事自动护航</div>
-        <div class="hl-desc">改一两行代码自动豁免繁琐步骤秒交卷；遇到复杂排障、性能优化或跨模块改造，自动切入对应场景指南。</div>
-      </div>
-      <div class="hl-card">
-        <div class="hl-title"><span class="tag brand">极简</span> 拒绝命令爆炸（仅 4 个手动命令）</div>
-        <div class="hl-desc">日常研发动作全部说自然语言自动生效；只把事前优化 Prompt、事中终审与 UI 验收、事后复盘 4 个关键大招留作手动开关。</div>
-      </div>
-      <div class="hl-card">
-        <div class="hl-title"><span class="tag purple">闭环</span> 真环境防假绿 + 文档自维护</div>
-        <div class="hl-desc">改哪块代码就按验证地图去跑真实服务；回合结束自动识别核心改动，核对代码更新项目文档，不留过期废话。</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ==================== 1. CAPABILITIES ==================== -->
-<section class="section" id="capabilities">
-  <div class="container">
-    <div class="sec-head">
-      <div class="sec-kicker">Core Capabilities</div>
-      <h2 class="sec-title">它具备哪些核心能力？</h2>
-      <p class="sec-desc">围绕研发全过程最容易踩坑的四个阶段，把好习惯直接装进 AI 的默认工作方式里。</p>
-    </div>
-
-    <div class="cap-grid">
-      <div class="cap-card">
-        <div class="cap-num"><span class="tag brand">能力 01 · 摸底与风险穿透</span></div>
-        <h3>先搞懂来龙去脉与波及面，再动第一行代码</h3>
-        <p>面对陌生复杂模块，自动并行追查“代码怎么转 + 当初为什么这么设计”并分步画图讲透；改公共底层前穿透协议、数据库类型与打包盲区，写小脚本实跑验证安全前提；跨天开工可一键找回上次进度。</p>
-        <div class="cap-tags">
-          <span class="tag">机制+历史双路溯源</span>
-          <span class="tag">三层爆炸半径实测</span>
-          <span class="tag">跨会话进度恢复</span>
+  <!-- ==================== 图 1：6 步双泳道全流程 ==================== -->
+  <section class="sec" id="pipeline">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">
+          <span class="idx">图 01</span>
+          <span>一次研发任务是怎么跑完的？（点击节点看要点）</span>
+        </div>
+        <div class="legend">
+          <span><i class="dot" style="background:var(--brand)"></i>你的开关（按需手动）</span>
+          <span><i class="dot" style="background:var(--green)"></i>AI 自动履行</span>
+          <span><i class="dot" style="background:var(--purple)"></i>夜间 20:00 兜底</span>
         </div>
       </div>
 
-      <div class="cap-card">
-        <div class="cap-num"><span class="tag purple">能力 02 · 架构造型与方案比武</span></div>
-        <h3>跨边界先定好骨架，先删旧死重再加新功能</h3>
-        <p>动跨模块接口前先对比至少两套数据结构与状态归属方案；遇到无先例的棘手设计，支持开多个隔离目录并行做出来、独立打分后手工融合各家优点；重构永远先删死代码再建新逻辑，绝不留新旧两套兼容烂摊子。</p>
-        <div class="cap-tags">
-          <span class="tag">接口方案二选一</span>
-          <span class="tag">多方案隔离擂台</span>
-          <span class="tag">先做减法再做加法</span>
+      <div class="svg-wrap">
+        <svg class="diagram" viewBox="0 0 1100 286" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 1 2 L 8 5 L 1 8 z" fill="var(--border-strong)" />
+            </marker>
+            <marker id="arr-b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 1 2 L 8 5 L 1 8 z" fill="var(--brand)" />
+            </marker>
+            <marker id="arr-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 1 2 L 8 5 L 1 8 z" fill="var(--purple)" />
+            </marker>
+          </defs>
+
+          <!-- Swimlane Backgrounds -->
+          <rect x="8" y="10" width="1084" height="78" rx="6" fill="var(--subtle)" stroke="var(--border)" stroke-dasharray="4 3" />
+          <text x="20" y="30" fill="var(--brand)" font-size="11.5" font-weight="700">用户泳道（说大白话 + 按需点开关）</text>
+
+          <rect x="8" y="102" width="1084" height="114" rx="6" fill="var(--surface)" stroke="var(--border)" />
+          <text x="20" y="122" fill="var(--green)" font-size="11.5" font-weight="700">AI 自动内功泳道（无需背命令，全流程自动把关）</text>
+
+          <!-- User Controls (Top Lane) -->
+          <g class="svg-node" onclick="copyText('/a8-prompt')">
+            <rect class="node-box" x="28" y="42" width="150" height="34" rx="5" fill="var(--brand-soft)" stroke="var(--brand-border)" />
+            <text x="103" y="63" text-anchor="middle" fill="var(--brand)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-prompt 深化</text>
+          </g>
+          <line x1="103" y1="76" x2="103" y2="136" stroke="var(--brand)" stroke-dasharray="3 3" marker-end="url(#arr-b)" />
+
+          <g class="svg-node" onclick="copyText('/a8-dsh-review')">
+            <rect class="node-box" x="652" y="42" width="118" height="34" rx="5" fill="var(--amber-soft)" stroke="var(--amber-border)" />
+            <text x="711" y="63" text-anchor="middle" fill="var(--amber)" font-size="11.5" font-weight="700" font-family="var(--font-mono)">/a8-dsh-review</text>
+          </g>
+          <g class="svg-node" onclick="copyText('/a8-ui-verify')">
+            <rect class="node-box" x="778" y="42" width="106" height="34" rx="5" fill="var(--purple-soft)" stroke="var(--purple-border)" />
+            <text x="831" y="63" text-anchor="middle" fill="var(--purple)" font-size="11.5" font-weight="700" font-family="var(--font-mono)">/a8-ui-verify</text>
+          </g>
+          <line x1="774" y1="76" x2="774" y2="136" stroke="var(--brand)" stroke-dasharray="3 3" marker-end="url(#arr-b)" />
+
+          <g class="svg-node" onclick="copyText('/a8-commit')">
+            <rect class="node-box" x="896" y="42" width="88" height="34" rx="5" fill="var(--green-soft)" stroke="var(--green-border)" />
+            <text x="940" y="63" text-anchor="middle" fill="var(--green)" font-size="11.5" font-weight="700" font-family="var(--font-mono)">/a8-commit</text>
+          </g>
+          <g class="svg-node" onclick="copyText('/a8-improve')">
+            <rect class="node-box" x="992" y="42" width="92" height="34" rx="5" fill="var(--rose-soft)" stroke="var(--rose-border)" />
+            <text x="1038" y="63" text-anchor="middle" fill="var(--rose)" font-size="11.5" font-weight="700" font-family="var(--font-mono)">/a8-improve</text>
+          </g>
+          <line x1="990" y1="76" x2="990" y2="136" stroke="var(--brand)" stroke-dasharray="3 3" marker-end="url(#arr-b)" />
+
+          <!-- AI 6-Step Pipeline (Middle Lane) -->
+          <g id="step-nodes">
+            <!-- Step 1 -->
+            <g class="svg-node active" data-step="0" onclick="selectStep(0)">
+              <rect class="node-box" x="28" y="138" width="150" height="62" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
+              <text x="40" y="158" fill="var(--green)" font-size="11" font-weight="700" font-family="var(--font-mono)">01 ALIGN</text>
+              <text x="40" y="176" fill="var(--fg)" font-size="13" font-weight="700">对齐目标与路线</text>
+              <text x="40" y="192" fill="var(--fg-sec)" font-size="11.5">复述边界 · 挑更简做法</text>
+            </g>
+            <line x1="178" y1="169" x2="206" y2="169" stroke="var(--border-strong)" stroke-width="1.6" marker-end="url(#arr)" />
+
+            <!-- Step 2 -->
+            <g class="svg-node" data-step="1" onclick="selectStep(1)">
+              <rect class="node-box" x="208" y="138" width="150" height="62" rx="6" fill="var(--surface)" stroke="var(--border-strong)" />
+              <text x="220" y="158" fill="var(--green)" font-size="11" font-weight="700" font-family="var(--font-mono)">02 PROBE</text>
+              <text x="220" y="176" fill="var(--fg)" font-size="13" font-weight="700">读图摸底与复现</text>
+              <text x="220" y="192" fill="var(--fg-sec)" font-size="11.5">大地图 · 验证地图 · 基线</text>
+            </g>
+            <line x1="358" y1="169" x2="386" y2="169" stroke="var(--border-strong)" stroke-width="1.6" marker-end="url(#arr)" />
+
+            <!-- Step 3 -->
+            <g class="svg-node" data-step="2" onclick="selectStep(2)">
+              <rect class="node-box" x="388" y="138" width="150" height="62" rx="6" fill="var(--surface)" stroke="var(--border-strong)" />
+              <text x="400" y="158" fill="var(--green)" font-size="11" font-weight="700" font-family="var(--font-mono)">03 SHAPE</text>
+              <text x="400" y="176" fill="var(--fg)" font-size="13" font-weight="700">先定数据与状态</text>
+              <text x="400" y="192" fill="var(--fg-sec)" font-size="11.5">强类型 · 先减后加</text>
+            </g>
+            <line x1="538" y1="169" x2="566" y2="169" stroke="var(--border-strong)" stroke-width="1.6" marker-end="url(#arr)" />
+
+            <!-- Step 4 -->
+            <g class="svg-node" data-step="3" onclick="selectStep(3)">
+              <rect class="node-box" x="568" y="138" width="150" height="62" rx="6" fill="var(--surface)" stroke="var(--border-strong)" />
+              <text x="580" y="158" fill="var(--green)" font-size="11" font-weight="700" font-family="var(--font-mono)">04 VERIFY</text>
+              <text x="580" y="176" fill="var(--fg)" font-size="13" font-weight="700">小步编码真机验绿</text>
+              <text x="580" y="192" fill="var(--fg-sec)" font-size="11.5">按单元推进 · 拒绝假绿</text>
+            </g>
+            <line x1="718" y1="169" x2="746" y2="169" stroke="var(--border-strong)" stroke-width="1.6" marker-end="url(#arr)" />
+
+            <!-- Step 5 -->
+            <g class="svg-node" data-step="4" onclick="selectStep(4)">
+              <rect class="node-box" x="748" y="138" width="150" height="62" rx="6" fill="var(--surface)" stroke="var(--border-strong)" />
+              <text x="760" y="158" fill="var(--amber)" font-size="11" font-weight="700" font-family="var(--font-mono)">05 GATE</text>
+              <text x="760" y="176" fill="var(--fg)" font-size="13" font-weight="700">清注释与红线审查</text>
+              <text x="760" y="192" fill="var(--fg-sec)" font-size="11.5">Lint · 高风险 a8-judge</text>
+            </g>
+            <line x1="898" y1="169" x2="926" y2="169" stroke="var(--border-strong)" stroke-width="1.6" marker-end="url(#arr)" />
+
+            <!-- Step 6 -->
+            <g class="svg-node" data-step="5" onclick="selectStep(5)">
+              <rect class="node-box" x="928" y="138" width="150" height="62" rx="6" fill="var(--surface)" stroke="var(--border-strong)" />
+              <text x="940" y="158" fill="var(--purple)" font-size="11" font-weight="700" font-family="var(--font-mono)">06 SHIP</text>
+              <text x="940" y="176" fill="var(--fg)" font-size="13" font-weight="700">简报交卷轻更文档</text>
+              <text x="940" y="192" fill="var(--fg-sec)" font-size="11.5">≤40行 · 0冗余子代理</text>
+            </g>
+          </g>
+
+          <!-- Nightly Feedback Loop (Bottom) -->
+          <path d="M 1003 200 L 1003 254 L 283 254 L 283 203" fill="none" stroke="var(--purple)" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr-p)" />
+          <rect x="498" y="238" width="290" height="30" rx="15" fill="var(--purple-soft)" stroke="var(--purple-border)" />
+          <text x="643" y="257" text-anchor="middle" fill="var(--purple)" font-size="11.5" font-weight="700">每晚 20:00 定时增量扫描 → 全量对齐常青与地图</text>
+        </svg>
+      </div>
+
+      <div class="strip" id="stepStrip"></div>
+    </div>
+  </section>
+
+  <!-- ==================== 图 2：场景分流决策树 ==================== -->
+  <section class="sec" id="router">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">
+          <span class="idx">图 02</span>
+          <span>不同活儿怎么走？（AI 自动识别分流，无需你手选或写暗号）</span>
+        </div>
+        <span class="hint">1~2 行小改自动直通；点左侧仅用于预览 AI 内部执行路线</span>
+      </div>
+
+      <div class="split-tree">
+        <div class="tree-left" id="scenarioList"></div>
+        <div class="tree-right">
+          <div id="scenarioSvgWrap"></div>
+          <div class="strip" style="border:1px solid var(--border);border-radius:6px;" id="scenarioFoot"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 图 3：8 大核心技能生命周期矩阵 ==================== -->
+  <section class="sec" id="skills">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">
+          <span class="idx">图 03</span>
+          <span>8 大核心技能全景矩阵（3 个自动内功 + 5 个手动大招）</span>
+        </div>
+        <span class="hint">点击下排蓝色/彩色大招块可直接复制命令</span>
+      </div>
+
+      <div class="svg-wrap">
+        <svg class="diagram" viewBox="0 0 1100 264" xmlns="http://www.w3.org/2000/svg">
+          <!-- Column Headers (4 Phases) -->
+          <rect x="130" y="8" width="224" height="28" rx="5" fill="var(--subtle)" stroke="var(--border)" />
+          <text x="242" y="26" text-anchor="middle" fill="var(--fg-sec)" font-size="12" font-weight="700">① 事前准备</text>
+
+          <rect x="366" y="8" width="224" height="28" rx="5" fill="var(--subtle)" stroke="var(--border)" />
+          <text x="478" y="26" text-anchor="middle" fill="var(--fg-sec)" font-size="12" font-weight="700">② 编码设计</text>
+
+          <rect x="602" y="8" width="234" height="28" rx="5" fill="var(--subtle)" stroke="var(--border)" />
+          <text x="719" y="26" text-anchor="middle" fill="var(--fg-sec)" font-size="12" font-weight="700">③ 审查与真机验收</text>
+
+          <rect x="848" y="8" width="240" height="28" rx="5" fill="var(--subtle)" stroke="var(--border)" />
+          <text x="968" y="26" text-anchor="middle" fill="var(--fg-sec)" font-size="12" font-weight="700">④ 交付与复盘进化</text>
+
+          <!-- Row 1: Auto Skills -->
+          <rect x="8" y="48" width="110" height="96" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
+          <text x="63" y="89" text-anchor="middle" fill="var(--green)" font-size="12.5" font-weight="700">自动内功</text>
+          <text x="63" y="109" text-anchor="middle" fill="var(--green)" font-size="11">3 个 · 免命令</text>
+
+          <!-- a8-workflow spans across phases -->
+          <rect x="130" y="48" width="958" height="40" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
+          <text x="146" y="72" fill="var(--green)" font-size="12.5" font-weight="700" font-family="var(--font-mono)">a8-workflow</text>
+          <text x="256" y="72" fill="var(--fg)" font-size="12">全程自动路由（5 场景指南 · 问路模式 · 自然语言直达）</text>
+
+          <!-- a8-ui-design -->
+          <rect x="366" y="96" width="224" height="48" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
+          <text x="380" y="116" fill="var(--green)" font-size="12" font-weight="700" font-family="var(--font-mono)">a8-ui-design · 纯自动</text>
+          <text x="380" y="134" fill="var(--fg-sec)" font-size="11.5">聊到界面/卡片自动激活</text>
+
+          <!-- a8-judge -->
+          <rect x="602" y="96" width="234" height="48" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
+          <text x="616" y="116" fill="var(--green)" font-size="12" font-weight="700" font-family="var(--font-mono)">a8-judge · 高风险自动</text>
+          <text x="616" y="134" fill="var(--fg-sec)" font-size="11.5">跨边界/状态机交卷前跑 1 次</text>
+
+          <!-- Row 2: Manual Skills -->
+          <rect x="8" y="158" width="110" height="96" rx="6" fill="var(--brand-soft)" stroke="var(--brand-border)" />
+          <text x="63" y="199" text-anchor="middle" fill="var(--brand)" font-size="12.5" font-weight="700">手动大招</text>
+          <text x="63" y="219" text-anchor="middle" fill="var(--brand)" font-size="11">5 个 · 点即复制</text>
+
+          <!-- /a8-prompt -->
+          <g class="svg-node" onclick="copyText('/a8-prompt')">
+            <rect class="node-box" x="130" y="158" width="224" height="96" rx="6" fill="var(--brand-soft)" stroke="var(--brand-border)" />
+            <text x="144" y="182" fill="var(--brand)" font-size="13" font-weight="700" font-family="var(--font-mono)">/a8-prompt</text>
+            <text x="144" y="204" fill="var(--fg)" font-size="12.5" font-weight="600">深化改写 Prompt</text>
+            <text x="144" y="224" fill="var(--fg-sec)" font-size="11.5">答专家 4 问 · 重写即停不改码</text>
+            <text x="144" y="242" fill="var(--brand)" font-size="11">点击复制命令</text>
+          </g>
+
+          <!-- coding phase: intentionally empty manual slot -->
+          <rect x="366" y="158" width="224" height="96" rx="6" fill="var(--subtle)" stroke="var(--border)" stroke-dasharray="4 3" />
+          <text x="478" y="202" text-anchor="middle" fill="var(--fg-muted)" font-size="12" font-weight="600">编码期免记斜杠命令</text>
+          <text x="478" y="222" text-anchor="middle" fill="var(--fg-muted)" font-size="11.5">直接说大白话即可触发专项本领</text>
+
+          <!-- /a8-dsh-review + /a8-ui-verify -->
+          <g class="svg-node" onclick="copyText('/a8-dsh-review')">
+            <rect class="node-box" x="602" y="158" width="234" height="44" rx="6" fill="var(--amber-soft)" stroke="var(--amber-border)" />
+            <text x="616" y="177" fill="var(--amber)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-dsh-review</text>
+            <text x="616" y="194" fill="var(--fg-sec)" font-size="11.5">跨文件深审 · 2~3 轮快速收敛</text>
+          </g>
+          <g class="svg-node" onclick="copyText('/a8-ui-verify')">
+            <rect class="node-box" x="602" y="210" width="234" height="44" rx="6" fill="var(--purple-soft)" stroke="var(--purple-border)" />
+            <text x="616" y="229" fill="var(--purple)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-ui-verify</text>
+            <text x="616" y="246" fill="var(--fg-sec)" font-size="11.5">真浏览器点测 · 截图存 logs/</text>
+          </g>
+
+          <!-- /a8-commit + /a8-improve -->
+          <g class="svg-node" onclick="copyText('/a8-commit')">
+            <rect class="node-box" x="848" y="158" width="240" height="44" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
+            <text x="862" y="177" fill="var(--green)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-commit [nopush]</text>
+            <text x="862" y="194" fill="var(--fg-sec)" font-size="11.5">强制红线审 · 文档收口 · 无署名</text>
+          </g>
+          <g class="svg-node" onclick="copyText('/a8-improve')">
+            <rect class="node-box" x="848" y="210" width="240" height="44" rx="6" fill="var(--rose-soft)" stroke="var(--rose-border)" />
+            <text x="862" y="229" fill="var(--rose)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-improve</text>
+            <text x="862" y="246" fill="var(--fg-sec)" font-size="11.5">自主查近期会话验真 · 卡片审批</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 图 4：快慢双轨文档 + 5 级防错阶梯 ==================== -->
+  <section class="sec" id="dual">
+    <div class="dual-grid">
+      <!-- Left Diagram: Dual-Track Docs -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="idx">图 04A</span>
+            <span>快慢双轨文档治理（省 Token 不丢真相）</span>
+          </div>
+        </div>
+        <div class="svg-wrap">
+          <svg class="diagram-half" viewBox="0 0 520 222" xmlns="http://www.w3.org/2000/svg">
+            <!-- Fast Track -->
+            <rect x="6" y="8" width="508" height="92" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
+            <text x="18" y="27" fill="var(--green)" font-size="11.5" font-weight="700">日间快轨 · 当前对话顺手搞定（绝不另起子代理）</text>
+
+            <rect x="18" y="39" width="136" height="48" rx="5" fill="var(--surface)" stroke="var(--green-border)" />
+            <text x="86" y="60" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="700">改码 + 写记录</text>
+            <text x="86" y="77" text-anchor="middle" fill="var(--fg-muted)" font-size="11" font-family="var(--font-mono)">docs/records/</text>
+            <line x1="154" y1="63" x2="184" y2="63" stroke="var(--green)" stroke-width="1.5" marker-end="url(#arr)" />
+
+            <rect x="186" y="39" width="146" height="48" rx="5" fill="var(--surface)" stroke="var(--green-border)" />
+            <text x="259" y="60" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="700">就地轻更常青</text>
+            <text x="259" y="77" text-anchor="middle" fill="var(--fg-muted)" font-size="11">不求全 · 零额外读码</text>
+            <line x1="332" y1="63" x2="362" y2="63" stroke="var(--green)" stroke-width="1.5" marker-end="url(#arr)" />
+
+            <rect x="364" y="39" width="138" height="48" rx="5" fill="var(--surface)" stroke="var(--green-border)" />
+            <text x="433" y="60" text-anchor="middle" fill="var(--green)" font-size="12" font-weight="700">/a8-commit 收口</text>
+            <text x="433" y="77" text-anchor="middle" fill="var(--fg-muted)" font-size="11">强制审查 · 无回合拦截</text>
+
+            <!-- Slow Track -->
+            <rect x="6" y="116" width="508" height="96" rx="6" fill="var(--purple-soft)" stroke="var(--purple-border)" />
+            <text x="18" y="135" fill="var(--purple)" font-size="11.5" font-weight="700">夜间慢轨 · 每晚 20:00 自动定时全仓深度梳理</text>
+
+            <rect x="18" y="148" width="136" height="50" rx="5" fill="var(--surface)" stroke="var(--purple-border)" />
+            <text x="86" y="169" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="700">增量扫描体检</text>
+            <text x="86" y="186" text-anchor="middle" fill="var(--fg-muted)" font-size="11">无变更仓秒跳过</text>
+            <line x1="154" y1="173" x2="184" y2="173" stroke="var(--purple)" stroke-width="1.5" marker-end="url(#arr-p)" />
+
+            <rect x="186" y="148" width="146" height="50" rx="5" fill="var(--surface)" stroke="var(--purple-border)" />
+            <text x="259" y="169" text-anchor="middle" fill="var(--fg)" font-size="12" font-weight="700">按真实源码校准</text>
+            <text x="259" y="186" text-anchor="middle" fill="var(--fg-muted)" font-size="11">修断链 · 标废旧记录</text>
+            <line x1="332" y1="173" x2="362" y2="173" stroke="var(--purple)" stroke-width="1.5" marker-end="url(#arr-p)" />
+
+            <rect x="364" y="148" width="138" height="50" rx="5" fill="var(--surface)" stroke="var(--purple-border)" />
+            <text x="433" y="169" text-anchor="middle" fill="var(--purple)" font-size="12" font-weight="700">只写盘不提交</text>
+            <text x="433" y="186" text-anchor="middle" fill="var(--fg-muted)" font-size="11">不动进行中记录/代码</text>
+          </svg>
         </div>
       </div>
 
-      <div class="cap-card">
-        <div class="cap-num"><span class="tag green">能力 03 · 真实运行验证与防伪压测</span></div>
-        <h3>编译通过不算完，必须穿透真实服务与浏览器</h3>
-        <p>每个项目维护一份清晰的“验证地图（<code>docs/verify.md</code>）”，明确规定改哪个模块必须跑哪个真实环境；修 Bug 必须独立双次复现，同一思路连败两次强制停手检查前提；性能测试数字必过 7 项防伪核查。</p>
-        <div class="cap-tags">
-          <span class="tag">验证地图防假绿</span>
-          <span class="tag">连败 2 次停手查前提</span>
-          <span class="tag">压测数字 7 问防伪</span>
+      <!-- Right Diagram: 5-Level Defense Ladder -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="idx">图 04B</span>
+            <span>/a8-improve 5 级防错阶梯（越往上越硬）</span>
+          </div>
+        </div>
+        <div class="svg-wrap">
+          <svg class="diagram-half" viewBox="0 0 520 222" xmlns="http://www.w3.org/2000/svg">
+            <!-- Upward Arrow -->
+            <line x1="484" y1="196" x2="484" y2="24" stroke="var(--green)" stroke-width="2" marker-end="url(#arr)" />
+            <text x="470" y="116" text-anchor="middle" fill="var(--green)" font-size="11" font-weight="700" transform="rotate(-90 470 116)">防线硬度递增 · 永不遗忘</text>
+
+            <!-- L1 -->
+            <rect x="14" y="12" width="424" height="34" rx="5" fill="var(--green-soft)" stroke="var(--green-border)" />
+            <text x="28" y="33" fill="var(--green)" font-size="12" font-weight="700" font-family="var(--font-mono)">L1 架构消除</text>
+            <text x="148" y="33" fill="var(--fg)" font-size="12">收拢唯一真源与所有权，从结构上消灭坏状态</text>
+
+            <!-- L2 -->
+            <rect x="28" y="53" width="410" height="34" rx="5" fill="var(--green-soft)" stroke="var(--green-border)" />
+            <text x="42" y="74" fill="var(--green)" font-size="12" font-weight="700" font-family="var(--font-mono)">L2 类型约束</text>
+            <text x="158" y="74" fill="var(--fg)" font-size="12">强类型枚举 / 包装隔离，非法状态直接编不过</text>
+
+            <!-- L3 -->
+            <rect x="42" y="94" width="396" height="34" rx="5" fill="var(--brand-soft)" stroke="var(--brand-border)" />
+            <text x="56" y="115" fill="var(--brand)" font-size="12" font-weight="700" font-family="var(--font-mono)">L3 静态 Lint</text>
+            <text x="168" y="115" fill="var(--fg)" font-size="12">scripts/lints/ 每次必跑，报错直指改法</text>
+
+            <!-- L4 -->
+            <rect x="56" y="135" width="382" height="34" rx="5" fill="var(--amber-soft)" stroke="var(--amber-border)" />
+            <text x="70" y="156" fill="var(--amber)" font-size="12" font-weight="700" font-family="var(--font-mono)">L4 语义/单测</text>
+            <text x="178" y="156" fill="var(--fg)" font-size="12">*.decision.json 独立审 Diff + 行为单测</text>
+
+            <!-- L5 -->
+            <rect x="70" y="176" width="368" height="34" rx="5" fill="var(--subtle)" stroke="var(--border-strong)" />
+            <text x="84" y="197" fill="var(--fg-sec)" font-size="12" font-weight="700" font-family="var(--font-mono)">L5 文字规则</text>
+            <text x="188" y="197" fill="var(--fg-sec)" font-size="12">仅存纯流程与审美，封死后主动删除减负</text>
+          </svg>
         </div>
       </div>
+    </div>
+  </section>
 
-      <div class="cap-card">
-        <div class="cap-num"><span class="tag amber">能力 04 · 自动把关与经验进化</span></div>
-        <h3>交卷前自动审红线清注释，犯过的错一键变防线</h3>
-        <p>写完代码自动按 5 类白名单清掉废话与掩饰性注释；触及跨模块或状态机的高风险改动，交卷前自动调用一次语义红线裁判；改完契约在当前对话顺手轻更常青文档，每晚 20:00 定时任务全量兜底整理；你纠正过的错误可一键提炼成静态检查脚本。</p>
-        <div class="cap-tags">
-          <span class="tag">高风险自动红线裁决</span>
-          <span class="tag">文档随会话自动保鲜</span>
-          <span class="tag">五级防错阶梯沉淀</span>
+  <!-- ==================== 速查：8 句一键复制实战话术 ==================== -->
+  <section class="sec" id="prompts">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">
+          <span class="idx">速查</span>
+          <span>8 句高频大白话（不用记命令，点击即复制）</span>
         </div>
       </div>
+      <div class="chips" id="chipsGrid"></div>
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- ==================== 2. WORKFLOW ORDER ==================== -->
-<section class="section" id="workflow-order">
-  <div class="container">
-    <div class="sec-head">
-      <div class="sec-kicker">Workflow Sequence</div>
-      <h2 class="sec-title">它的工作流顺序是怎么做的？</h2>
-      <p class="sec-desc">当你发出一个非简单需求后，AI 在整个回合中严格按下面这<b>「六步先后顺序」</b>推进，不跳步、不抢跑。</p>
-    </div>
+  <footer class="foot">
+    A8 Agent Mind v1.4 · 3 自动内功 + 5 手动大招 · 搭配官方 <code>/plan</code> 与 <code>/swarm</code> 协同生效
+  </footer>
+</main>
 
-    <div class="order-steps">
-      <div class="step-card">
-        <div class="step-num"><span>STEP 01</span><span class="tag green">自动</span></div>
-        <div class="step-name">对齐目标与路线</div>
-        <div class="step-summary">用两三句话复述你的真实目标与边界；发现更简官方做法先提醒你（想法还粗糙时可先敲 <code>/a8-prompt</code> 深化再开干）。</div>
-      </div>
-
-      <div class="step-card">
-        <div class="step-num"><span>STEP 02</span><span class="tag green">自动</span></div>
-        <div class="step-name">读地图与摸清现状</div>
-        <div class="step-summary">先读项目大地图、常青文档与验证地图；修 Bug 先去真实环境复现两次，调性能先测纯净基线，绝不瞎猜。</div>
-      </div>
-
-      <div class="step-card">
-        <div class="step-num"><span>STEP 03</span><span class="tag green">自动</span></div>
-        <div class="step-name">定数据结构与状态</div>
-        <div class="step-summary">写业务逻辑前先敲定核心类型与清晰状态枚举，跨边界改动先比选接口方案，先清理死代码再往上加新逻辑。</div>
-      </div>
-
-      <div class="step-card">
-        <div class="step-num"><span>STEP 04</span><span class="tag green">自动</span></div>
-        <div class="step-name">小步编码与真机验绿</div>
-        <div class="step-summary">改一小块就立刻验证一小块，不攒到最后集中排错；最终必须跑通验证地图指定的真实运行环境。</div>
-      </div>
-
-      <div class="step-card">
-        <div class="step-num"><span>STEP 05</span><span class="tag amber">自动+按需</span></div>
-        <div class="step-name">清注释与架构审查</div>
-        <div class="step-summary">剥除废话与借口注释，跑通仓库静态检查；若触及高架构风险，自动跑 1 次红线裁决（也可手动加跑深度终审）。</div>
-      </div>
-
-      <div class="step-card">
-        <div class="step-num"><span>STEP 06</span><span class="tag purple">顺手轻更 + 夜间兜底</span></div>
-        <div class="step-name">精炼交卷与双轨同步文档</div>
-        <div class="step-summary">输出 40 行以内实测简报；写完工作记录顺手轻更新常青文档（不额外起子代理耗 Token），每晚 20:00 定时扫描全量补齐。</div>
-      </div>
-    </div>
-
-    <!-- Interactive Task Type Switcher -->
-    <div class="track-box">
-      <div class="track-tabs" id="trackTabs"></div>
-      <div class="track-body" id="trackBody"></div>
-    </div>
-  </div>
-</section>
-
-<!-- ==================== 3. 7 CORE SKILLS ==================== -->
-<section class="section" id="skills-catalog">
-  <div class="container">
-    <div class="sec-head">
-      <div class="sec-kicker">7 Core Skills</div>
-      <h2 class="sec-title">插件包含的 7 大核心技能（3 个自动内功 + 4 个手动大招）</h2>
-      <p class="sec-desc">遵循“日常义务自动履行、重型或事前事后人工拍板动作按需手控”原则，4 个手动大招刚好覆盖「事前优化 Prompt → 事中深审/UI 验收 → 事后复盘沉淀」完整闭环。</p>
-    </div>
-
-    <div class="sub-heading">
-      <span class="tag green">自动内功（3 个）</span>
-      <span>平时无需你手动敲命令，AI 会根据任务场景自动触发遵循</span>
-    </div>
-    <div class="skills-grid">
-      <div class="skill-card">
-        <div class="skill-top">
-          <button class="skill-cmd" onclick="copyText('/a8-workflow')">a8-workflow</button>
-          <span class="tag green">随复杂任务自动生效</span>
-        </div>
-        <div class="skill-title">全阶段研发工作流与五大场景指南</div>
-        <div class="skill-desc">内置<b>只读分析、缺陷根治、性能调优、新功能与重构、长程并发</b> 5 份场景指南。自动管住先复现后改码、连败熔断、7 问压测防伪与小步验绿；拿不准怎么开局时也可敲 <code>/a8-workflow</code> 问路。</div>
-      </div>
-
-      <div class="skill-card">
-        <div class="skill-top">
-          <button class="skill-cmd" onclick="copyText('/a8-judge')">a8-judge</button>
-          <span class="tag green">高风险交卷前自动跑 1 次</span>
-        </div>
-        <div class="skill-title">四大维度架构红线语义裁判</div>
-        <div class="skill-desc">当改动涉及跨模块边界、并发状态机、公开契约或删旧兼容时，交卷前自动注入项目常青文档做红线审查；普通局部小改与改文案自动免检，不浪费时间与配额（也可手动敲 <code>/a8-judge</code> 抽检）。</div>
-      </div>
-
-      <div class="skill-card">
-        <div class="skill-top">
-          <button class="skill-cmd" onclick="copyText('/a8-ui-design')">a8-ui-design</button>
-          <span class="tag green">写界面时自动参考</span>
-        </div>
-        <div class="skill-title">企业级高质感界面设计规范</div>
-        <div class="skill-desc">写新页面或改界面时，约束 AI 采用沉稳克制的微圆角、严谨网格、单一底色配极细边线，拒绝花哨大渐变和杂乱色块，确保浅色/深色主题与多端入口风格高度统一。</div>
-      </div>
-    </div>
-
-    <div class="sub-heading">
-      <span class="tag brand">手动大招（4 个）</span>
-      <span>分别掌管事前提示词优化、事中终审与 UI 验收、事后复盘进化，需要时点击复制发送</span>
-    </div>
-    <div class="skills-grid-2">
-      <div class="skill-card">
-        <div class="skill-top">
-          <button class="skill-cmd" onclick="copyText('/a8-prompt')" title="点击复制">/a8-prompt · 复制</button>
-          <span class="tag brand">事前 · 按需手动调用</span>
-        </div>
-        <div class="skill-title">提示词专家级深化与重写</div>
-        <div class="skill-desc">想法还比较粗糙、准备攻克复杂问题或开 <code>/plan</code> / <code>/swarm</code> 前敲一下：严禁直接改代码，先轻量对照当前仓验证地图回答专家 4 问（盲区、最原始一手数据、专业工具、客观验收标准），再输出“做深而非做大”的高质量 Prompt 交给你定夺。</div>
-      </div>
-
-      <div class="skill-card">
-        <div class="skill-top">
-          <button class="skill-cmd" onclick="copyText('/a8-dsh-review')" title="点击复制">/a8-dsh-review · 复制</button>
-          <span class="tag amber">事中 · 按需手动调用</span>
-        </div>
-        <div class="skill-title">跨文件深层因果链终审</div>
-        <div class="skill-desc">做完核心状态机、并发锁或跨模块大改动后敲一下：调用本机独立 DSH 资深审查代理穿透上下游做全生命周期挑刺（最多 2~3 轮快速收敛，鸡毛蒜皮小事自动熔断不瞎改），报告自动归档看板。</div>
-      </div>
-
-      <div class="skill-card">
-        <div class="skill-top">
-          <button class="skill-cmd" onclick="copyText('/a8-ui-verify')" title="点击复制">/a8-ui-verify · 复制</button>
-          <span class="tag purple">事中 · 按需手动调用</span>
-        </div>
-        <div class="skill-title">真浏览器端到端验收与截图</div>
-        <div class="skill-desc">改完前端页面想确认真跑起来没毛病时敲一下：后台无黑窗拉起目标服务并核实存活，驱动真实浏览器完成点击、表单、路由与控制台零报错检查，截图与报告自动存入 <code>logs/ui-verify/</code>。</div>
-      </div>
-
-      <div class="skill-card">
-        <div class="skill-top">
-          <button class="skill-cmd" onclick="copyText('/a8-improve')" title="点击复制">/a8-improve · 复制</button>
-          <span class="tag rose">事后 · 按需手动调用</span>
-        </div>
-        <div class="skill-title">经验复盘沉淀与旧规则清理</div>
-        <div class="skill-desc">这轮对话你纠正过 AI、或想跨近期会话（如 <code>/a8-improve 5</code>）抓出重复犯的老毛病时敲一下：优先升级为架构约束或 <code>scripts/lints/</code> 自动检查，同时清理重复失效旧规，经你编号确认后才写盘。</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ==================== 4. 8 NATURAL LANGUAGE TACTICS ==================== -->
-<section class="section" id="tactics">
-  <div class="container">
-    <div class="sec-head">
-      <div class="sec-kicker">Ready-To-Use Prompts</div>
-      <h2 class="sec-title">8 种内置专项本领：不用记命令，复制一句话直接唤起</h2>
-      <p class="sec-desc">这些高阶研发动作已经全部融入 <code>a8-workflow</code> 内部。除了在完整任务中自动触发外，你想单独只做其中某一件时，直接按下面这样说就行：</p>
-    </div>
-
-    <div class="tactics-grid" id="tacticsGrid"></div>
-  </div>
-</section>
-
-<!-- ==================== 5. FAQ ==================== -->
-<section class="section" id="faq" style="border-bottom:none;">
-  <div class="container">
-    <div class="sec-head">
-      <div class="sec-kicker">FAQ &amp; Best Pairing</div>
-      <h2 class="sec-title">与官方命令怎么搭配最顺手？</h2>
-    </div>
-
-    <div class="faq-grid">
-      <div class="faq-card">
-        <h4>搭配官方 /plan：大改动先看方案再动手</h4>
-        <p>拿不准改动范围的大功能，开头加上 <code>/plan</code> 先对齐方案；一旦点头进入执行，本插件会自动接管编码顺序、真机验证与交卷把关。</p>
-      </div>
-      <div class="faq-card">
-        <h4>搭配官方 /swarm：大工程多代理并行不撞车</h4>
-        <p>遇到涉及很多独立文件的大活儿，开头加上 <code>/swarm</code> 拉起多代理协同；本插件的隔离规范会确保各代理按文件正交分工并由独立验收员核验。</p>
-      </div>
-      <div class="faq-card">
-        <h4>项目文档需要我自己动手同步吗？</h4>
-        <p>不需要。日间写完工作记录后，AI 会利用当前上下文顺手轻量化更新常青文档与验证地图，不额外起子代理浪费 Token；每晚 20:00 定时梳理任务还会自动增量扫描有变动的仓库，按真实代码全量整理并留在工作区供你审阅。</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<footer class="footer">
-  <div class="container">
-    A8 Agent Mind v1.4 · 自主工程心智与工作流套件（研发场景指南吸收融合自 MIT 开源项目 cursor/plugins/pstack v0.15.46）
-  </div>
-</footer>
-
-<div class="toast" id="toast">已复制到剪贴板</div>
+<div class="toast" id="toast">已复制</div>
 
 <script>
 function toggleTheme() {
@@ -868,11 +639,11 @@ function showToast(msg) {
   el.textContent = msg;
   el.classList.add('show');
   if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 1600);
 }
 
 function copyText(txt) {
-  const done = () => showToast('✅ 已复制：' + (txt.length > 34 ? txt.slice(0, 34) + '...' : txt));
+  const ok = () => showToast('已复制：' + (txt.length > 30 ? txt.slice(0, 30) + '...' : txt));
   const fallback = () => {
     const ta = document.createElement('textarea');
     ta.value = txt;
@@ -880,195 +651,140 @@ function copyText(txt) {
     ta.style.opacity = '0';
     document.body.appendChild(ta);
     ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    done();
+    try {
+      document.execCommand('copy');
+      ok();
+    } catch (err) {
+      showToast('复制失败，请手动复制');
+    } finally {
+      document.body.removeChild(ta);
+    }
   };
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(txt).then(done, fallback);
+    navigator.clipboard.writeText(txt).then(ok, fallback);
   } else {
     fallback();
   }
 }
 
-const TRACKS = [
-  {
-    id: 'bug',
-    tab: '🐛 修顽固 Bug',
-    title: '缺陷根治顺序：先在真环境复现坐实根因，绝不瞎打补丁',
-    desc: '遇到死锁、偶发错乱或回归故障时自动走这套顺序，杜绝“加个判空或重试碰运气”。',
-    say: '直接贴报错或描述现象，例如：“快照重跑时查询流被意外取消了，帮我查清根因修好”',
-    steps: [
-      '<b>先查已有修复</b>：看近期提交是否已有补丁，有则直接基线对比核验，不盲目重写。',
-      '<b>真实环境双次复现</b>：查验证地图在真实服务独立复现 2 次（绝不往内存塞假数据伪造故障）。',
-      '<b>二分排错与连败熔断</b>：加探针缩小怀疑空间；<b>同一思路连修 2 次不过立即停手做实验核查前提本身</b>，绝不叠第 3 层补丁。',
-      '<b>最小修复与同面复验</b>：删净排障临时代码，回到原复现环境验证转绿并贴出前后对比输出。'
-    ]
-  },
-  {
-    id: 'feat',
-    tab: '✨ 做新功能 / 重构',
-    title: '新功能与重构顺序：先定数据结构、先删旧死重，再小步建新',
-    desc: '保证新代码长在干净的结构上，不留新旧双轨兼容包袱。',
-    say: '直接描述功能需求（想先对齐方案可在开头加 /plan）',
-    steps: [
-      '<b>对比接口与状态归属</b>：跨边界先构思至少 2 套方案，选状态主人唯一、调用方最省心的一版。',
-      '<b>先定数据形状与状态机</b>：用清晰状态枚举替代散落布尔标志，强并发模块校验核心不变量。',
-      '<b>先做减法再做加法</b>：先删死代码与单调用包装，同一波迁完所有调用方并物理删掉旧接口。',
-      '<b>小步验绿与干净收口</b>：每改完一小块立即跑验证；交卷前清掉多余注释，穿透真实运行环境验收。'
-    ]
-  },
-  {
-    id: 'perf',
-    tab: '🚀 性能优化压测',
-    title: '性能调优顺序：无基线不动手，单变量爬坡，7 问防伪',
-    desc: '防止看源码瞎猜瓶颈，防止把波动噪声或跳过计算当成“提速成果”。',
-    say: '说明慢点或压降目标，例如：“把批量合并写入耗时压下来，做扎实的前后基准对比”',
-    steps: [
-      '<b>纯净基线与独立剖析</b>：先测生产配置基线，再单独跑 CPU/内存/锁剖析定位真实瓶颈行号。',
-      '<b>由廉入贵 7 阶梯尝试</b>：别做无用功 → 只做一次 → 少做点 → 延后做 → 闲时做 → 并发做 → 换底层实现。',
-      '<b>单变量试验不进则退</b>：持续压榨时冻结带错误数=0 的测试桩，每轮只试一个假设，跑不过噪声立即整块回退。',
-      '<b>必过 7 问基准防伪</b>：核查 5+ 次交替中位数、物理上限与真实执行，缺核心项一律判无效重测。'
-    ]
-  },
-  {
-    id: 'inv',
-    tab: '🔍 搞懂代码 / 查问题',
-    title: '只读调查顺序：追机理、查历史、抓现场，绝不乱改源码',
-    desc: '适合快速吃透陌生老模块、查线上泄漏/高占用原因、评估改动波及面。',
-    say: '直接提问，例如：“帮我讲透水位门禁怎么工作的、为什么这么设计”',
-    steps: [
-      '<b>严格锁定只读边界</b>：全程只分析取证，绝不顺手改动任何业务代码。',
-      '<b>机制与历史双路并进</b>：既看现在代码怎么跑，也查 Git 提交与历史文档当初为什么这么写。',
-      '<b>活进程或剖析档取证</b>：遇卡死或泄漏直接抓线程栈、堆快照或剖析文件还原到具体源码行号。',
-      '<b>渐进小图与事实分级</b>：3 个以上模块采用“每次多加一条边”分步画图讲清，结论明确区分 [实测] 与 [推断]。'
-    ]
-  },
-  {
-    id: 'quick',
-    tab: '⚡ 日常一两行小改',
-    title: '极速直通顺序：直接改、跑基础检查、秒交卷',
-    desc: '针对日常 80% 的简单明确修改，彻底省掉重流程开销。',
-    say: '随口直接说，例如：“把这个默认超时改成 30 秒”“修一下这里的空指针”',
-    steps: [
-      '<b>自动豁免重型指南</b>：不列繁琐阶段计划，直奔目标源码做最小修改。',
-      '<b>跑通局部编译与门禁</b>：执行对应单元测试与仓库静态检查确认零破坏。',
-      '<b>免重审、免冗余文档</b>：自动跳过架构裁判，不建垃圾工作记录，后台钩子静默放行。'
-    ]
-  },
-  {
-    id: 'long',
-    tab: '🧭 跨天长任务 / 大改造',
-    title: '长程工程顺序：划清隔离边界与完成标准，留决策账本可随时中断续跑',
-    desc: '适合全栈成批缺陷清缴、多代理并行或夜间长跑任务。',
-    say: '多路并行加 /swarm，长跑到底加 /goal，第二天回来直接说“上次干到哪了，继续推进”',
-    steps: [
-      '<b>先立完成标准与独占文件</b>：写清什么实测全过才算完，多代理写文件严格物理隔离防撞车。',
-      '<b>先搭验证桩再写业务码</b>：先把基准与回归检查立住，再逐个可验证小单元推进。',
-      '<b>全程记录决策账本</b>：在 logs/ 记录每轮尝试、证据与回退原因，严禁偷偷放宽测试门槛凑完成。',
-      '<b>安全暂停与冷启动续接</b>：喊停时停在干净边界留备忘；回来后核对代码现状直接接着干。'
-    ]
-  }
+const STEPS = [
+  { tag: '01 对齐路线', tone: 'green', doText: '2~3 句复述真实目标与最小范围；有更简官方方案先提醒一次', forbid: '禁区：带着模糊猜测直接开改', cmd: '/a8-prompt' },
+  { tag: '02 摸清现状', tone: 'green', doText: '先读 AGENTS.md + docs/verify.md；修 Bug 先真机复现 2 次，调性能先测基线', forbid: '禁区：禁造假症状、禁凭源码臆测', cmd: '' },
+  { tag: '03 先定形状', tone: 'green', doText: '跨边界先比 >=2 套所有权方案；先定强类型/状态机，先删旧再加新', forbid: '禁区：禁留未批准的新旧兼容层', cmd: '' },
+  { tag: '04 小步验绿', tone: 'green', doText: '按单个可验证单元推进，最终必跑 docs/verify.md 真实运行面', forbid: '禁区：编译/Mock 绿不算过关', cmd: '' },
+  { tag: '05 清理审查', tone: 'amber', doText: '按 5 类白名单清废话注释，跑通仓内 Lint；提交前在 /a8-commit 强制过三段红线审查', forbid: '禁区：禁留遮掩 Bug 的 Lint 忽略', cmd: '/a8-dsh-review' },
+  { tag: '06 交卷留档', tone: 'purple', doText: '输出 <=40 行实测简报；写工作记录后顺手轻更常青（0 冗余子代理）', forbid: '禁区：日常绝不偷跑 git commit', cmd: '/a8-commit' }
 ];
 
-let curTrack = 'bug';
-function renderTracks() {
-  document.getElementById('trackTabs').innerHTML = TRACKS.map(t =>
-    `<button class="track-tab ${t.id === curTrack ? 'active' : ''}" onclick="curTrack='${t.id}';renderTracks()">${t.tab}</button>`
-  ).join('');
-  const t = TRACKS.find(x => x.id === curTrack);
-  document.getElementById('trackBody').innerHTML = `
-    <div class="track-left">
-      <h4>${t.title}</h4>
-      <p>${t.desc}</p>
-      <div class="say-box">
-        <div class="say-label">💬 你平时怎么说</div>
-        <div>${t.say}</div>
-      </div>
+function selectStep(i) {
+  document.querySelectorAll('#step-nodes .svg-node').forEach((g, idx) => {
+    g.classList.toggle('active', idx === i);
+  });
+  const s = STEPS[i];
+  const strip = document.getElementById('stepStrip');
+  strip.innerHTML = `
+    <div class="strip-main">
+      <span class="pill ${s.tone}">${s.tag}</span>
+      <span>${s.doText}</span>
+      <span class="pill rose">${s.forbid}</span>
     </div>
-    <div class="timeline-list">
-      ${t.steps.map((s, i) => `
-        <div class="tl-item">
-          <span class="tl-dot">${i + 1}</span>
-          <div>${s}</div>
-        </div>
-      `).join('')}
-    </div>
+    ${s.cmd ? `<button class="btn-copy" onclick="copyText('${s.cmd}')">复制 ${s.cmd}</button>` : ''}
   `;
 }
 
-const TACTICS = [
+const SCENARIOS = [
   {
-    title: '1. 跨天回来找回上次进度',
-    tag: '上下文恢复',
-    tagCls: 'brand',
-    desc: '只读扫描本仓近期聊天记录、Git 未提交状态与工作文档，给你一份精炼现状胶囊与下一步建议。',
-    prompt: '帮我恢复一下最近在这个仓库的工作进度，看看上次停在哪、下一步该干什么'
+    id: 'bug', name: '修顽固 Bug', code: 'bug-fix', tone: 'rose',
+    nodes: ['查已有修复', '真机独立复现×2', '二分定位/连败2次证伪', '最小根治 + 同面复验'],
+    forbid: '红线：未真实复现严禁改码；禁在下游判空兜底',
+    prompt: '这个报错偶尔复现，先查清真实根因在真环境复现两遍再彻底修好'
   },
   {
-    title: '2. 深度讲透复杂模块与历史成因',
-    tag: '机制 + 历史',
-    tagCls: 'purple',
-    desc: '后台并行查运行链路（怎么转）与 Git 历史（当初为啥这么写），用每次多加一条边的渐进图让你彻底看懂。',
-    prompt: '帮我彻底讲透这个模块的运行机制和当初这么设计的历史原因，分步画图说明，不要改代码'
+    id: 'feature', name: '新功能 / 纯重构', code: 'feature', tone: 'green',
+    nodes: ['比选 >=2 套接口形状', '定强类型与显式状态机', '先减后加同波迁调用方', '独立清注释 + 真机验绿'],
+    forbid: '红线：纯重构禁夹带新功能；未降低理解负担须回退',
+    prompt: '先别写实现代码，帮我对比两套数据结构和接口方案定型后再分步落地'
   },
   {
-    title: '3. 动刀前实测改动爆炸半径',
-    tag: '风险穿透',
-    tagCls: 'amber',
-    desc: '顺下游追查协议、数据库强类型、原生打包与异步关闭盲区，挑出核心安全假设写小脚本实跑证实。',
-    prompt: '我准备修改这处公共逻辑，帮我穿透排查改动爆炸半径，并用脚本实测验证安全前提'
+    id: 'perf', name: '性能排障 / 调优', code: 'perf', tone: 'amber',
+    nodes: ['隔离测纯净基线', '剖析定位真正瓶颈', '按 7 阶梯单变量试错', '压测防伪 7 问终审'],
+    forbid: '红线：无基线禁优化；压测缺条件一律判无效',
+    prompt: '先测纯净基线并用剖析定位瓶颈，再做性能调优，数字必须过防伪核查'
   },
   {
-    title: '4. 写跨边界代码前先比选接口形状',
-    tag: '架构定型',
-    tagCls: 'brand',
-    desc: '先写出调用方最省心的用法，对比至少 2 套数据结构与状态归属方案，停在设计草图等你拍板再写码。',
-    prompt: '先别写实现代码，帮我为这个需求设计至少两套接口与状态归属方案做对比，选出最简一版'
+    id: 'analyze', name: '查原理 / 爆炸半径', code: 'analyze', tone: 'brand',
+    nodes: ['并行查源码与 Git 历史', '渐进画图讲清机制', '穿透协议/DB 查盲区', '写小脚本实证安全前提'],
+    forbid: '红线：严格只读，绝对禁止改动业务源码',
+    prompt: '帮我讲透这个模块的运行机制和改动爆炸半径，只读分析不改代码'
   },
   {
-    title: '5. 无先例难题开多方案并行擂台',
-    tag: '多路比武融合',
-    tagCls: 'purple',
-    desc: '开多个隔离目录同时真做出来，独立打分选出最优底座，再手工把其他方案的亮点融合进去。',
-    prompt: '这个问题有多种实现思路，按多方案擂台模式在隔离目录并行做出候选方案，打分选底座后融合最优解'
-  },
-  {
-    title: '6. 独立视角清剿废话与借口注释',
-    tag: '代码洁癖',
-    tagCls: 'green',
-    desc: '派无护短包袱的独立子代理审视当前 Diff，删掉翻译废话与死代码，把别扭代码改直白，把警告转成类型或 Lint。',
-    prompt: '派独立子代理清查当前未提交改动的注释，删掉废话注释，把需要保留的硬约束升级成类型或静态检查'
-  },
-  {
-    title: '7. 派对手写脚本动态实跑找漏洞',
-    tag: '对抗找茬',
-    tagCls: 'rose',
-    desc: '在隔离环境构造边界输入和异常时序实跑攻击你的改动，只保留真跑崩的实证缺陷，过滤一切主观瞎猜。',
-    prompt: '对当前未提交改动做一次动态实跑对抗测试，写临时脚本尝试用边界条件击穿它，只报告实跑复现的问题'
-  },
-  {
-    title: '8. 为新项目建立真实验证地图 / 核查压测',
-    tag: '防假绿',
-    tagCls: 'green',
-    desc: '自动摸清项目端口与测试脚本生成 docs/verify.md 并实跑核实；或用防伪 7 问审查压测提速数据。',
-    prompt: '实地摸清当前仓库的运行端口与测试入口，生成或巡检更新 docs/verify.md 并实跑验证'
+    id: 'long', name: '跨天 / 多代理长任务', code: 'long-task', tone: 'purple',
+    nodes: ['立验收标准 + 独占文件', '物理隔离并发推进', '记决策账本 logs/*.tsv', '安全暂停与冷启动续跑'],
+    forbid: '红线：禁止多代理同改一文件；严禁放宽测试门槛',
+    prompt: '先帮我恢复这个仓库最近进度，列清下一步独占文件范围再继续'
   }
 ];
 
-function renderTactics() {
-  document.getElementById('tacticsGrid').innerHTML = TACTICS.map(t => `
-    <div class="tactic-card">
-      <div class="tactic-head">
-        <span class="tactic-title">${t.title}</span>
-        <span class="tag ${t.tagCls}">${t.tag}</span>
-      </div>
-      <div class="tactic-desc">${t.desc}</div>
-      <div class="prompt-box">
-        <span class="prompt-text" title="${t.prompt}">“${t.prompt}”</span>
-        <button class="copy-mini" onclick='copyText(${JSON.stringify(t.prompt)})'>复制话术</button>
-      </div>
+let curScenario = 'bug';
+function renderScenarios() {
+  const list = document.getElementById('scenarioList');
+  list.innerHTML = SCENARIOS.map(s => `
+    <button class="tree-item ${s.id === curScenario ? 'active' : ''}" onclick="curScenario='${s.id}';renderScenarios()">
+      <span class="tree-name">${s.name}</span>
+      <span class="tree-code">${s.code}</span>
+    </button>
+  `).join('');
+
+  const s = SCENARIOS.find(x => x.id === curScenario);
+  const strokeVar = `var(--${s.tone}-border)`;
+  const fillVar = `var(--${s.tone}-soft)`;
+  const textVar = `var(--${s.tone})`;
+
+  const boxes = s.nodes.map((label, idx) => {
+    const x = 12 + idx * 182;
+    const arrow = idx < s.nodes.length - 1
+      ? `<line x1="${x + 158}" y1="45" x2="${x + 180}" y2="45" stroke="var(--border-strong)" stroke-width="1.6" marker-end="url(#arr)" />`
+      : '';
+    return `
+      <rect x="${x}" y="14" width="158" height="62" rx="6" fill="${idx === 0 ? fillVar : 'var(--surface)'}" stroke="${idx === 0 ? strokeVar : 'var(--border-strong)'}" />
+      <text x="${x + 12}" y="34" fill="${textVar}" font-size="11" font-weight="700" font-family="var(--font-mono)">STEP 0${idx + 1}</text>
+      <text x="${x + 12}" y="56" fill="var(--fg)" font-size="12.5" font-weight="700">${label}</text>
+      ${arrow}
+    `;
+  }).join('');
+
+  document.getElementById('scenarioSvgWrap').innerHTML = `
+    <svg style="width:100%;height:auto;display:block;min-width:560px;" viewBox="0 0 744 90" xmlns="http://www.w3.org/2000/svg">${boxes}</svg>
+  `;
+
+  document.getElementById('scenarioFoot').innerHTML = `
+    <div class="strip-main">
+      <span class="pill rose">${s.forbid}</span>
     </div>
+    <button class="btn-copy" onclick='copyText(${JSON.stringify(s.prompt)})'>复制示例话术</button>
+  `;
+}
+
+const CHIPS = [
+  { title: '找回上次进度', tag: '上下文恢复', say: '帮我恢复一下最近在这个仓库的工作进度，看看下一步干什么' },
+  { title: '画图讲透原理', tag: '只读图解', say: '帮我彻底讲透这个模块的运行机制和历史原因，画图说明不改代码' },
+  { title: '实测爆炸半径', tag: '风险穿透', say: '准备改这处公共逻辑，帮我排查爆炸半径并写脚本实证安全前提' },
+  { title: '先比选接口形状', tag: '架构定型', say: '先别写实现，帮我对比两套数据结构和接口方案再拍板' },
+  { title: '多方案隔离擂台', tag: '并行融合', say: '按多方案擂台模式在隔离目录并行做出候选，打分选底座后融合' },
+  { title: '独立清废话注释', tag: '代码洁癖', say: '派独立子代理清查当前 Diff 注释，硬约束升级为类型或静态检查' },
+  { title: '动态脚本找漏洞', tag: '实跑对抗', say: '对当前改动写脚本动态实跑边界对抗测试，只报真实复现缺陷' },
+  { title: '建立/巡检验证地图', tag: '防假绿', say: '实地摸清本仓端口与测试入口，生成或更新 docs/verify.md 并实跑' }
+];
+
+function renderChips() {
+  document.getElementById('chipsGrid').innerHTML = CHIPS.map(c => `
+    <button class="chip" onclick='copyText(${JSON.stringify(c.say)})' title="${c.say}">
+      <div class="chip-top">
+        <span class="chip-title">${c.title}</span>
+        <span class="chip-tag">${c.tag}</span>
+      </div>
+      <div class="chip-say">“${c.say}”</div>
+    </button>
   `).join('');
 }
 
@@ -1077,8 +793,9 @@ if (params.get('theme') === 'dark') {
   document.documentElement.setAttribute('data-theme', 'dark');
   document.getElementById('themeBtn').textContent = '切换浅色';
 }
-renderTracks();
-renderTactics();
+selectStep(0);
+renderScenarios();
+renderChips();
 </script>
 </body>
 </html>
