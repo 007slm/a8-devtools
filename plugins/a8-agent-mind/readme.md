@@ -1,12 +1,12 @@
 # A8 Agent Mind (`a8-agent-mind`)
 
-> **面向自主智能体的工程良知与持续演进心智中枢**（8 大核心技能：3 个自动内功 + 5 个手动大招）。融合**全阶段自主工程工作流 (`a8-workflow`)**、**事前提示词深化重写 (`/a8-prompt`)**、**AI 自主择机 Google Gemini Decisions API 架构红线终审 (`a8-judge`)**、**DeepSeek Harness 有界深度终审 (`/a8-dsh-review`)**、**标准化 Git 提交与推送 (`/a8-commit`)**、**经验沉淀与规则库清理 (`/a8-improve`)**、**独立 UI 验证 (`/a8-ui-verify`)**、**UI 设计规范 (`a8-ui-design`)** 及 **全局文档与双层仓库地图治理规范 (`mind-rules.md`)**。
+> **面向自主智能体的工程良知与持续演进心智中枢**（9 大核心技能：3 个自动内功 + 6 个手动大招）。融合**精简研发主线工作流 (`a8-workflow`)**、**事前提示词深化重写 (`/a8-prompt`)**、**开发决策过程 TSV 账本 (`/a8-trace`)**、**Google Gemini Decisions API 架构红线裁决 (`a8-judge`)**、**DeepSeek Harness 有界深度终审 (`/a8-dsh-review`)**、**标准化 Git 提交强制门禁 (`/a8-commit`)**、**经验沉淀与规则库清理 (`/a8-improve`)**、**独立 UI 验证 (`/a8-ui-verify`)**、**UI 设计规范 (`a8-ui-design`)** 及 **全局文档与双层仓库地图治理规范 (`mind-rules.md`)**。
 
 ---
 
 ## 解决的核心痛点
 
-1. **提交前强制红线闸门 (`/a8-commit` + `a8-judge`)**：彻底卸载每轮对话结束的 `Stop` Hook，日常编码零打扰；执行 `/a8-commit` 提交代码前**强制**跑完「敏感文件拦截 → 确定性 Lint → `judge_router.py` 路由 + Google Gemini Decisions API 初筛 → 告警/高危面 `arch-judge` 全仓语义终审 → 文档收口」（不提供跳过开关，亦可开发途中手动 `/a8-judge`）；
+1. **提交前强制红线闸门 (`/a8-commit` + `a8-judge`)**：彻底卸载每轮对话结束的 `Stop` Hook，日常编码零打扰；默认 `/a8-commit` 提交代码前**强制**跑完「敏感文件拦截 → 确定性 Lint → `judge_router.py` 路由 + Google Gemini Decisions API 初筛 → 告警/高危面 `arch-judge` 全仓语义终审 → 文档收口」（支持用户显式传 `fast` 仅跳过语义红线审查、`nopush` 仅本地提交，亦可开发途中手动 `/a8-judge`）；
 2. **快慢双轨文档、共享术语表与地图治理 (The Blueprint)**：全局 `mind-rules.md` 确立 **共享术语表 (`docs/glossary.md`) + 验证地图 (`docs/verify.md`) + 常青文档 (`docs/evergreen/*.md`) + 按日期工作记录 (`docs/records/YYYYMMDD-*.md`) + 暂缓区 (`docs/deferred/`)** 分域结构；不在术语表中的非通用概念须补入术语表或用普通话直接解释，严禁未定义黑话；日间开发与 `/a8-commit` 提交前由当前对话顺手轻更新常青与地图（不额外起子代理），每晚 20:00 定时任务配合 `scripts/scan_docs_sync.mjs` 与 `docs-sync` 对有变动仓库做全量深度梳理（仅写盘不提交）；
 3. **主动经验精炼与规则库体检 (`/a8-improve`)**：彻底取消回合级静默/弹窗打扰，只需输入 `/a8-improve`，由 Agent 自主决定按需抽查本机近期历史会话做跨会话交叉验证（确认是否值得沉淀）、提取五维纠偏信号、优先升格为静态检查并同步清理无效/冲突/重复规则，经交互式卡片编号确认后落盘；
 4. **独立界面验证与 DSH 极速终审 (`a8-ui-verify` / `a8-dsh-review`)**：标准化目标仓库 `scripts/tests/ui-verify/` 与 `logs/ui-verify/`，提供 `/a8-ui-verify` 一键界面验证；DSH 终审默认 `medium` 推理深度并预打包 diff 摘要；
@@ -42,7 +42,8 @@ a8-agent-mind/
 │   ├── a8-ui-verify/           # 【能力3：跨仓库自动化 UI 验证】(/a8-ui-verify)
 │   ├── a8-ui-design/           # 【能力4：企业级秩序与极简美学的 UI 设计规范】
 │   ├── a8-dsh-review/          # 【能力5：极速有界收敛 DSH 终审循环与归档】(/a8-dsh-review)
-│   └── a8-commit/              # 【能力6：标准化 Git 提交与推送（敏感拦截/原子拆分/无 AI 署名）】(/a8-commit)
+│   ├── a8-trace/               # 【能力6：开发决策过程 TSV 账本（备选/回退/证据/风险）】(/a8-trace)
+│   └── a8-commit/              # 【能力7：提交前强制审查与标准化 Git 推送（无 AI 署名）】(/a8-commit)
 └── rules/
     └── mind-rules.md           # 【全局核心】通用架构红线（含显式状态机）、标准工程目录、AI 自主终审与地图治理总则
 ```
@@ -67,7 +68,7 @@ a8-agent-mind/
 插件内置 `dsh-reviewer` 子代理与 `review.ps1` 将自动复用目标仓库对应的 DSH 会话、分离推理噪音、按 YAGNI ($F \times S < 10$ 熔断) 控制在 2~3 轮内收敛；结论除直接返回主会话推进修复外，还会自动归档至 `reviews/`，可在 A8 DevTools / A8 Agent Mind Dashboard「**DSH 终审记录**」页查看历史列表与完整报告。
 
 #### 场景 B：提交前强制审查 (`/a8-commit`) 与主动复盘 (`/a8-improve`)
-- **提交前强制质量闸门 (`/a8-commit`)**：日常开发零回合钩子打扰；发起 `/a8-commit` 时强制走完敏感/无关文件拦截、仓内门禁、`judge_router` + Decisions API + 按需 `arch-judge` 语义审查、重大变更文档收口、原子拆分与无署名提交推送（带 `nopush`/`onlycommit` 仅本地 commit，无跳过审查开关）。
+- **提交前强制质量闸门 (`/a8-commit`)**：日常开发零回合钩子打扰；默认发起 `/a8-commit` 时强制走完敏感/无关文件拦截、仓内门禁、`judge_router` + Decisions API + 按需 `arch-judge` 语义审查、重大变更文档收口、原子拆分与无署名提交推送（仅用户显式传 `fast`/`--fast` 可跳过第 3 步语义审查，严禁 AI 擅自启用；带 `nopush`/`onlycommit` 仅本地 commit，两者可组合）。
 - **主动全面复盘与规则清理 (`/a8-improve`)**：只需输入 `/a8-improve`，无需记参数、无需启动子代理；Agent 发现疑似规则/流程/偏好/原则候选项时会自动抽查本机近期历史会话做交叉验证，一体化完成新防线提炼及历史规则库中的**无效、过时与重复逻辑清理**，通过交互卡片编号确认后落盘。
 
 #### 场景 C：独立触发自动化界面验收 (`/a8-ui-verify`)

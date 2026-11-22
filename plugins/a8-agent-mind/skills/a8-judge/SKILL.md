@@ -8,7 +8,7 @@ description: "通用语义架构红线裁判技能。作为 /a8-commit 提交前
 本技能提供跨仓库通用的语义架构审查能力。核心定位：**Git Diff 只是定位“改了什么”的入口指针；真正的终审裁判是具备全仓只读视野的 `arch-judge`（能够主动阅读 `AGENTS.md`、`docs/` 设计文档、完整代码文件与上下游调用链），而 `judge_router.py` 与 `decisions_client.py` 负责变更/文档路由与零输出 Token 先验概率初筛。**
 
 ## 触发机制：收归 `/a8-commit` 提交前强制闸门 + 开发中途按需 `/a8-judge`
-- **提交前强制执行（主路径）**：日常多轮编码免打扰；执行 `/a8-commit` 时必须强制经过三段式审查（`judge_router.py` 语法路由 → 激活维度即跑 `decisions_client.py` Decisions API 初筛 → 告警/异常或命中 4 类高危架构面必跑 `arch-judge` 语义终审），无 `fast` 跳过口；
+- **提交前默认强制执行（主路径）**：日常多轮编码免打扰；默认 `/a8-commit` 必须经过三段式审查（`judge_router.py` 语法路由 → 激活维度即跑 `decisions_client.py` Decisions API 初筛 → 告警/异常或命中 4 类高危架构面必跑 `arch-judge` 语义终审）；仅当用户显式传 `/a8-commit fast` 时可跳过本语义审查（AI 严禁擅自启用）；
 - **4 类高危架构面（必跑 `arch-judge`）**：
   1. 跨模块 / 跨端边界或核心依赖调整（新增重依赖、打破原有分层、跨进程/跨语言契约变更）；
   2. 并发锁、线程模型或显式异步/多阶段状态机生命周期重构；

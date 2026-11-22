@@ -1,6 +1,6 @@
 # a8-agent-mind 设计与演进架构规范 (design.md)
 
-> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、共享术语表、验证地图 (`docs/verify.md`)、显式状态机与双层仓库地图治理 (`mind-rules.md`)”**、**“全阶段自主工程工作流内功 (`a8-workflow`)”**、**“事前提示词深化与重写 (`/a8-prompt`)”**、**“提交前强制红线与文档总闸门 (`/a8-commit` + `a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**、**“UI 设计规范 (`a8-ui-design`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，彻底卸载回合级 `Stop` Hook，构建日常零打扰、落库前强把关的智能体心智中枢（严控 8 大核心技能：3 个自动内功 + 5 个手动大招）。
+> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind）。基于 Google Antigravity 插件机制与 **Google Gemini Decisions API (`gemini-decision-1`)**，融合**“全局文档、共享术语表、验证地图 (`docs/verify.md`)、显式状态机与双层仓库地图治理 (`mind-rules.md`)”**、**“精简研发主线工作流内功 (`a8-workflow`)”**、**“事前提示词深化与重写 (`/a8-prompt`)”**、**“开发决策过程 TSV 账本 (`/a8-trace`)”**、**“提交前强制红线与文档总闸门 (`/a8-commit` + `a8-judge`)”**、**“DSH 极速有界终审闭环 (`/a8-dsh-review`)”**、**“经验复盘与规则库清理 (`/a8-improve`)”**、**“UI 设计规范 (`a8-ui-design`)”**与**“独立 UI 端到端验证 (`/a8-ui-verify`)”**，彻底卸载回合级 `Stop` Hook，构建日常零打扰、落库前强把关的智能体心智中枢（严控 9 大核心技能：3 个自动内功 + 6 个手动大招）。
 
 ---
 
@@ -11,7 +11,7 @@
 2. **认知与记忆仓库地图 (Memory / 快慢双轨文档治理)**：由全局 `mind-rules.md` 强制驱动，确立 **常青文档 (`docs/evergreen/*.md`) + 按日期工作记录 (`docs/records/YYYYMMDD-*.md`) + 暂缓区 (`docs/deferred/`)** 双层分域体系；日间开发写完轻量工作记录（简单修复靠单测与注释）后，直接在当前对话利用既有上下文顺手轻更新 `docs/evergreen/`、`docs/verify.md` 与根目录 `AGENTS.md`（不额外起 `docs-sync` 子代理）；每晚 20:00 定时任务通过 `scripts/scan_docs_sync.mjs` 增量扫描 `repos.md` 在管仓，仅针对有变动或体检异常的仓库按 **`docs-sync`** 慢轨规范对照真实源码全量整理补齐；
 3. **提交前强制总闸门 (`/a8-commit`) + 主动经验精炼 (`/a8-improve`)**：
    - 彻底卸载回合级 `PreInvocation + Stop` Hook，日常多轮编码与试错零打扰、零隐藏 API 消耗；
-   - 执行 `/a8-commit` 提交代码前**强制**完成敏感/无关文件拦截、仓内门禁、`judge_router` → Decisions API → 告警/高危面 `arch-judge` 三段式红线终审（无跳过开关）与重大变更文档收口；
+   - 默认 `/a8-commit` 提交代码前**强制**完成敏感/无关文件拦截、仓内门禁、`judge_router` → Decisions API → 告警/高危面 `arch-judge` 三段式红线终审与重大变更文档收口（支持用户显式传 `fast` 仅跳过语义红线审查，严禁 AI 擅自启用）；
    - 当用户需要跨会话深度复盘、全面审视经验，或清理无效/冲突/重复规则时，主动调用 `/a8-improve` 一体化完成沉淀与精简。
 4. **独立界面验证 (`/a8-ui-verify`)**：标准化目标仓库 `scripts/tests/ui-verify/` 脚本目录与 `logs/ui-verify/` 产物目录，由用户按需触发全链路浏览器验证。
 
@@ -77,11 +77,11 @@
         │  • 运行方式：插件内建自完整 Subagent        │  <-- 提速：--patch medium + 预打包 diff
         │  • 熔断纪律：仅修 F×S ≥ 10，跳过 lint 已查项 │  <-- 交付：返还主会话 + reviews/*.md 归档
         └─────────────────────┬──────────────────────┘
-                              │ (回合结束自动触发 / 用户按需主动发起)
+                              │ (用户主动发起)
                               ▼
         ┌────────────────────────────────────────────┐
         │   /a8-commit (提交前强制质量总闸门) & /a8-improve │
-        │  • 强制审查：敏文件拦截 → Lint → Decisions → Judge│  <-- 不可跳过；日常编码零 Stop Hook 打扰
+        │  • 强制审查：敏文件拦截 → Lint → Decisions → Judge│  <-- 默认强检（显式 fast 仅跳过语义审）；日常零 Stop Hook 打扰
         │  • 文档收口：重大改动补记录轻更常青随代码同提  │  <-- 每晚 20:00 scan_docs_sync 全量兜底
         │  • /a8-improve：沉淀新规+清理无效与重复规则 │  <-- 主会话零子代理，确认后落盘
         └────────────────────────────────────────────┘
@@ -94,7 +94,7 @@
 ```
 
 #### 3.1 提交前强制闸门与 `a8-improve` 职责分离
-- **职责纯洁性**：回合级 `Stop` Hook 已彻底卸载；代码红线初筛/语义终审与重大变更文档收口统一在 `/a8-commit` 提交前强制闭环（无跳过开关），`/a8-improve` 专职深度五维纠偏沉淀**以及**规则库中的无效/冲突/重复逻辑清理；
+- **职责纯洁性**：回合级 `Stop` Hook 已彻底卸载；代码红线初筛/语义终审与重大变更文档收口统一在 `/a8-commit` 提交前闭环（默认强检，仅用户显式传 `fast` 可跳过语义审查，严禁 AI 擅自启用），`/a8-improve` 专职深度五维纠偏沉淀**以及**规则库中的无效/冲突/重复逻辑清理；
 - **五维纠偏信号捕获**：除显式批评外，强制回溯 `Silent edit`（外部静默修改）、`Repeated nudge`（连续微调终值）、`Revert / Rejection` 与 `Confirmed non-obvious choice`；
 - **防膨胀过滤漏斗 (`Rewrite Stricter`)**：命中既有规则覆盖范围且仍犯错时，判定为旧规失效并收紧重写（补齐数值/API/绝对词），严禁堆砌第 2 条重复规则；可精确机械拦截项一律优先写入目标仓库 `scripts/lints/`；
 - **真实 Why 与审计锚点**：严禁编造原因（AI 推演必标 `*inferred*:` 并列入 `Needs your answer`），规则下方保留 `<!-- YYYY-MM-DD: "用户原话" -->` 时间戳注释；
@@ -169,9 +169,11 @@ E:\a8-devtools\plugins\a8-agent-mind/
 │   │       └── improve_card.html   # Generative UI 紧凑复盘卡片模板
 │   ├── a8-ui-verify/               # 【能力4：独立自动化 UI 验证 (/a8-ui-verify)】
 │   │   └── SKILL.md                # scripts/tests/ui-verify/ 与 logs/ui-verify/ 验证协议
-│   ├── a8-ui-design/               # 【能力5：UI 设计感与工业美学规范】
-│   └── a8-commit/                  # 【能力6：标准化 Git 提交与推送 (/a8-commit)】
-│       └── SKILL.md                # 敏感/无关文件拦截、原子拆分、中文两档模板、无署名与默认 push（支持 nopush/onlycommit）
+│   ├── a8-ui-design/               # 【能力5：UI 设计感与工业美学规范（纯自动）】
+│   ├── a8-trace/                   # 【能力6：开发决策过程 TSV 账本 (/a8-trace)】
+│   │   └── SKILL.md                # 7 列 TSV（含备选/试错回退/真实证据）+ Attention 关注点，弥补只交结果总结的盲区
+│   └── a8-commit/                  # 【能力7：提交前强制审查与标准化推送 (/a8-commit)】
+│       └── SKILL.md                # 敏感/无关文件拦截、三段强制红线审查、文档收口、原子拆分、无署名与默认 push
 └── rules/
     └── mind-rules.md               # 【全局核心】架构设计哲学、文档与双层仓库地图自动治理总则
 ```
