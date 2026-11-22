@@ -102,7 +102,7 @@
   1. `check_plugin_agents.py` 校验 `plugins/*/agents/*.md`（`arch-judge.md`、`docs-sync.md`、`dsh-reviewer.md`）全部显式声明 `subagent: true`、`mainAgent: false` 与单行 `tools: [...]`，防止运行时被静默降级为只读 9 工具集；
   2. `scan_docs_sync.mjs` 输出合法 JSON，精准跳过 `role: test-bed` 靶场及无新增提交/工作区变动的仓库（`needs_review: false`），并正确报告 `broken_links`、`unmarked_superseded_records`、`in_flight_records` 与 `< 20KB` 体积警告；`--mark-done <repo>` 后复扫幂等返回 `needs_review: false`；
   3. `run_repo_lints.py` 输出 `"ok": true` 并写入 `%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\harness_metrics.jsonl`；`judge_router.py .` 输出合法路由 JSON 且 `relevant_docs` 仅含 `.md` 文档（自动跳过 `.html` 可视化指南）；
-  4. 执行 `/a8-commit` 前确认三段式审查（`judge_router.py` → 激活维度必跑 `decisions_client.py` → 告警或高危面必跑 `arch-judge`）不可跳过且无 `fast` 旁路。
+  4. 默认 `/a8-commit` 确认三段式审查（`judge_router.py` → 激活维度必跑 `decisions_client.py` → 告警或高危面必跑 `arch-judge`）强制执行；显式 `/a8-commit fast` 仅跳过第 3 步语义红线审查，Step 1 敏文件拦截与 Step 2 确定性门禁仍强检且汇总表如实注明。
 - **第一现场日志路径**：`%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\harness_metrics.jsonl`、`%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\nightly_docs_sync_state.json`、`plugins/a8-agent-mind/reviews/`、`logs/grok-proposals/`。
 
 ### D6：便携发布打包流水线实机验收（`scripts/release.mjs`）

@@ -255,7 +255,7 @@
     <nav class="links">
       <a href="#pipeline">全流程泳道</a>
       <a href="#router">场景分流</a>
-      <a href="#skills">8 大技能图谱</a>
+      <a href="#skills">9 大技能图谱</a>
       <a href="#dual">双轨与防线</a>
       <a href="#prompts">一键话术</a>
     </nav>
@@ -416,19 +416,19 @@
     </div>
   </section>
 
-  <!-- ==================== 图 3：8 大核心技能生命周期矩阵 ==================== -->
+  <!-- ==================== 图 3：9 大核心技能生命周期矩阵 ==================== -->
   <section class="sec" id="skills">
     <div class="panel">
       <div class="panel-head">
         <div class="panel-title">
           <span class="idx">图 03</span>
-          <span>8 大核心技能全景矩阵（3 个自动内功 + 5 个手动大招）</span>
+          <span>9 大核心技能全景矩阵（3 个自动内功 + 6 个手动大招）</span>
         </div>
-        <span class="hint">点击下排蓝色/彩色大招块可直接复制命令</span>
+        <span class="hint">点击下排彩色大招块可直接复制命令</span>
       </div>
 
       <div class="svg-wrap">
-        <svg class="diagram" viewBox="0 0 1100 264" xmlns="http://www.w3.org/2000/svg">
+        <svg class="diagram" viewBox="0 0 1100 316" xmlns="http://www.w3.org/2000/svg">
           <!-- Column Headers (4 Phases) -->
           <rect x="130" y="8" width="224" height="28" rx="5" fill="var(--subtle)" stroke="var(--border)" />
           <text x="242" y="26" text-anchor="middle" fill="var(--fg-sec)" font-size="12" font-weight="700">① 事前准备</text>
@@ -440,7 +440,7 @@
           <text x="719" y="26" text-anchor="middle" fill="var(--fg-sec)" font-size="12" font-weight="700">③ 审查与真机验收</text>
 
           <rect x="848" y="8" width="240" height="28" rx="5" fill="var(--subtle)" stroke="var(--border)" />
-          <text x="968" y="26" text-anchor="middle" fill="var(--fg-sec)" font-size="12" font-weight="700">④ 交付与复盘进化</text>
+          <text x="968" y="26" text-anchor="middle" fill="var(--fg-sec)" font-size="12" font-weight="700">④ 审过程 · 交付 · 进化</text>
 
           <!-- Row 1: Auto Skills -->
           <rect x="8" y="48" width="110" height="96" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
@@ -450,7 +450,7 @@
           <!-- a8-workflow spans across phases -->
           <rect x="130" y="48" width="958" height="40" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
           <text x="146" y="72" fill="var(--green)" font-size="12.5" font-weight="700" font-family="var(--font-mono)">a8-workflow</text>
-          <text x="256" y="72" fill="var(--fg)" font-size="12">全程自动路由（5 场景指南 · 问路模式 · 自然语言直达）</text>
+          <text x="256" y="72" fill="var(--fg)" font-size="12">精简研发主线路由（5 份轻量化场景指南 · 1~2 行小改自动豁免）</text>
 
           <!-- a8-ui-design -->
           <rect x="366" y="96" width="224" height="48" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
@@ -459,50 +459,55 @@
 
           <!-- a8-judge -->
           <rect x="602" y="96" width="234" height="48" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
-          <text x="616" y="116" fill="var(--green)" font-size="12" font-weight="700" font-family="var(--font-mono)">a8-judge · 高风险自动</text>
-          <text x="616" y="134" fill="var(--fg-sec)" font-size="11.5">跨边界/状态机交卷前跑 1 次</text>
+          <text x="616" y="116" fill="var(--green)" font-size="12" font-weight="700" font-family="var(--font-mono)">a8-judge · 嵌入提交门禁</text>
+          <text x="616" y="134" fill="var(--fg-sec)" font-size="11.5">提交前强制跑 · 中途可手调</text>
 
           <!-- Row 2: Manual Skills -->
-          <rect x="8" y="158" width="110" height="96" rx="6" fill="var(--brand-soft)" stroke="var(--brand-border)" />
-          <text x="63" y="199" text-anchor="middle" fill="var(--brand)" font-size="12.5" font-weight="700">手动大招</text>
-          <text x="63" y="219" text-anchor="middle" fill="var(--brand)" font-size="11">5 个 · 点即复制</text>
+          <rect x="8" y="158" width="110" height="148" rx="6" fill="var(--brand-soft)" stroke="var(--brand-border)" />
+          <text x="63" y="226" text-anchor="middle" fill="var(--brand)" font-size="12.5" font-weight="700">手动大招</text>
+          <text x="63" y="246" text-anchor="middle" fill="var(--brand)" font-size="11">6 个 · 点即复制</text>
 
           <!-- /a8-prompt -->
           <g class="svg-node" onclick="copyText('/a8-prompt')">
-            <rect class="node-box" x="130" y="158" width="224" height="96" rx="6" fill="var(--brand-soft)" stroke="var(--brand-border)" />
-            <text x="144" y="182" fill="var(--brand)" font-size="13" font-weight="700" font-family="var(--font-mono)">/a8-prompt</text>
-            <text x="144" y="204" fill="var(--fg)" font-size="12.5" font-weight="600">深化改写 Prompt</text>
-            <text x="144" y="224" fill="var(--fg-sec)" font-size="11.5">答专家 4 问 · 重写即停不改码</text>
-            <text x="144" y="242" fill="var(--brand)" font-size="11">点击复制命令</text>
+            <rect class="node-box" x="130" y="158" width="224" height="148" rx="6" fill="var(--brand-soft)" stroke="var(--brand-border)" />
+            <text x="144" y="192" fill="var(--brand)" font-size="13" font-weight="700" font-family="var(--font-mono)">/a8-prompt</text>
+            <text x="144" y="218" fill="var(--fg)" font-size="12.5" font-weight="600">深化改写 Prompt</text>
+            <text x="144" y="240" fill="var(--fg-sec)" font-size="11.5">答专家 4 问 · 重写即停不改码</text>
+            <text x="144" y="286" fill="var(--brand)" font-size="11">点击复制命令</text>
           </g>
 
           <!-- coding phase: intentionally empty manual slot -->
-          <rect x="366" y="158" width="224" height="96" rx="6" fill="var(--subtle)" stroke="var(--border)" stroke-dasharray="4 3" />
-          <text x="478" y="202" text-anchor="middle" fill="var(--fg-muted)" font-size="12" font-weight="600">编码期免记斜杠命令</text>
-          <text x="478" y="222" text-anchor="middle" fill="var(--fg-muted)" font-size="11.5">直接说大白话即可触发专项本领</text>
+          <rect x="366" y="158" width="224" height="148" rx="6" fill="var(--subtle)" stroke="var(--border)" stroke-dasharray="4 3" />
+          <text x="478" y="226" text-anchor="middle" fill="var(--fg-muted)" font-size="12" font-weight="600">编码期免记斜杠命令</text>
+          <text x="478" y="246" text-anchor="middle" fill="var(--fg-muted)" font-size="11.5">说大白话自动命中对应主线指南</text>
 
           <!-- /a8-dsh-review + /a8-ui-verify -->
           <g class="svg-node" onclick="copyText('/a8-dsh-review')">
-            <rect class="node-box" x="602" y="158" width="234" height="44" rx="6" fill="var(--amber-soft)" stroke="var(--amber-border)" />
-            <text x="616" y="177" fill="var(--amber)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-dsh-review</text>
-            <text x="616" y="194" fill="var(--fg-sec)" font-size="11.5">跨文件深审 · 2~3 轮快速收敛</text>
+            <rect class="node-box" x="602" y="158" width="234" height="70" rx="6" fill="var(--amber-soft)" stroke="var(--amber-border)" />
+            <text x="616" y="186" fill="var(--amber)" font-size="12.5" font-weight="700" font-family="var(--font-mono)">/a8-dsh-review</text>
+            <text x="616" y="208" fill="var(--fg-sec)" font-size="11.5">跨文件深审 · 2~3 轮快速收敛</text>
           </g>
           <g class="svg-node" onclick="copyText('/a8-ui-verify')">
-            <rect class="node-box" x="602" y="210" width="234" height="44" rx="6" fill="var(--purple-soft)" stroke="var(--purple-border)" />
-            <text x="616" y="229" fill="var(--purple)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-ui-verify</text>
-            <text x="616" y="246" fill="var(--fg-sec)" font-size="11.5">真浏览器点测 · 截图存 logs/</text>
+            <rect class="node-box" x="602" y="236" width="234" height="70" rx="6" fill="var(--purple-soft)" stroke="var(--purple-border)" />
+            <text x="616" y="264" fill="var(--purple)" font-size="12.5" font-weight="700" font-family="var(--font-mono)">/a8-ui-verify</text>
+            <text x="616" y="286" fill="var(--fg-sec)" font-size="11.5">真浏览器点测 · 截图存 logs/</text>
           </g>
 
-          <!-- /a8-commit + /a8-improve -->
+          <!-- /a8-trace + /a8-commit + /a8-improve -->
+          <g class="svg-node" onclick="copyText('/a8-trace')">
+            <rect class="node-box" x="848" y="158" width="240" height="44" rx="6" fill="var(--brand-soft)" stroke="var(--brand-border)" />
+            <text x="862" y="177" fill="var(--brand)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-trace</text>
+            <text x="862" y="194" fill="var(--fg-sec)" font-size="11.5">导出 TSV 决策账本（备选/回退/证据）</text>
+          </g>
           <g class="svg-node" onclick="copyText('/a8-commit')">
-            <rect class="node-box" x="848" y="158" width="240" height="44" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
-            <text x="862" y="177" fill="var(--green)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-commit [nopush]</text>
-            <text x="862" y="194" fill="var(--fg-sec)" font-size="11.5">强制红线审 · 文档收口 · 无署名</text>
+            <rect class="node-box" x="848" y="210" width="240" height="44" rx="6" fill="var(--green-soft)" stroke="var(--green-border)" />
+            <text x="862" y="229" fill="var(--green)" font-size="11.5" font-weight="700" font-family="var(--font-mono)">/a8-commit [fast] [nopush]</text>
+            <text x="862" y="246" fill="var(--fg-sec)" font-size="11.5">默认红线审 · fast跳语义审 · 无署名</text>
           </g>
           <g class="svg-node" onclick="copyText('/a8-improve')">
-            <rect class="node-box" x="848" y="210" width="240" height="44" rx="6" fill="var(--rose-soft)" stroke="var(--rose-border)" />
-            <text x="862" y="229" fill="var(--rose)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-improve</text>
-            <text x="862" y="246" fill="var(--fg-sec)" font-size="11.5">自主查近期会话验真 · 卡片审批</text>
+            <rect class="node-box" x="848" y="262" width="240" height="44" rx="6" fill="var(--rose-soft)" stroke="var(--rose-border)" />
+            <text x="862" y="281" fill="var(--rose)" font-size="12" font-weight="700" font-family="var(--font-mono)">/a8-improve</text>
+            <text x="862" y="298" fill="var(--fg-sec)" font-size="11.5">本轮有候选项才查历史佐证 · 删旧规</text>
           </g>
         </svg>
       </div>
@@ -619,7 +624,7 @@
   </section>
 
   <footer class="foot">
-    A8 Agent Mind v1.4 · 3 自动内功 + 5 手动大招 · 搭配官方 <code>/plan</code> 与 <code>/swarm</code> 协同生效
+    A8 Agent Mind v1.4 · 3 自动内功 + 6 手动大招 · 搭配官方 <code>/plan</code> 与 <code>/swarm</code> 协同生效
   </footer>
 </main>
 
@@ -669,11 +674,11 @@ function copyText(txt) {
 
 const STEPS = [
   { tag: '01 对齐路线', tone: 'green', doText: '2~3 句复述真实目标与最小范围；有更简官方方案先提醒一次', forbid: '禁区：带着模糊猜测直接开改', cmd: '/a8-prompt' },
-  { tag: '02 摸清现状', tone: 'green', doText: '先读 AGENTS.md + docs/verify.md；修 Bug 先真机复现 2 次，调性能先测基线', forbid: '禁区：禁造假症状、禁凭源码臆测', cmd: '' },
-  { tag: '03 先定形状', tone: 'green', doText: '跨边界先比 >=2 套所有权方案；先定强类型/状态机，先删旧再加新', forbid: '禁区：禁留未批准的新旧兼容层', cmd: '' },
-  { tag: '04 小步验绿', tone: 'green', doText: '按单个可验证单元推进，最终必跑 docs/verify.md 真实运行面', forbid: '禁区：编译/Mock 绿不算过关', cmd: '' },
-  { tag: '05 清理审查', tone: 'amber', doText: '按 5 类白名单清废话注释，跑通仓内 Lint；提交前在 /a8-commit 强制过三段红线审查', forbid: '禁区：禁留遮掩 Bug 的 Lint 忽略', cmd: '/a8-dsh-review' },
-  { tag: '06 交卷留档', tone: 'purple', doText: '输出 <=40 行实测简报；写工作记录后顺手轻更常青（0 冗余子代理）', forbid: '禁区：日常绝不偷跑 git commit', cmd: '/a8-commit' }
+  { tag: '02 摸清现状', tone: 'green', doText: '先读 AGENTS.md + docs/verify.md；修 Bug 用最轻量路径坐实复现，调性能先测基线', forbid: '禁区：禁自动拉重型 UI/压测/交叉对比', cmd: '' },
+  { tag: '03 先定形状', tone: 'green', doText: '跨边界先权衡接口与所有权；定强类型/状态机，先删旧再加新', forbid: '禁区：禁留未批准兼容层、禁自动建多原型', cmd: '' },
+  { tag: '04 小步验绿', tone: 'green', doText: '日常优先轻量编译、局部单测与 Lint；触及驱动/端口/构建产物再补跑最小实机面', forbid: '禁区：禁假 Mock，也不盲目重跑全套端到端', cmd: '' },
+  { tag: '05 清理审查', tone: 'amber', doText: '主会话按 5 类白名单自查注释、跑通仓内 Lint；提交前在 /a8-commit 强制过三段红线审查', forbid: '禁区：禁留遮掩 Bug 的 Lint 忽略', cmd: '/a8-dsh-review' },
+  { tag: '06 交卷留档', tone: 'purple', doText: '输出 <=40 行实测简报；写工作记录顺手轻更常青，需审过程敲 /a8-trace', forbid: '禁区：日常绝不偷跑 git commit', cmd: '/a8-commit' }
 ];
 
 function selectStep(i) {
@@ -695,33 +700,33 @@ function selectStep(i) {
 const SCENARIOS = [
   {
     id: 'bug', name: '修顽固 Bug', code: 'bug-fix', tone: 'rose',
-    nodes: ['查已有修复', '真机独立复现×2', '二分定位/连败2次证伪', '最小根治 + 同面复验'],
-    forbid: '红线：未真实复现严禁改码；禁在下游判空兜底',
-    prompt: '这个报错偶尔复现，先查清真实根因在真环境复现两遍再彻底修好'
+    nodes: ['查已有修复', '轻量真实复现坐实', '二分定位/连败2次证伪', '最小根治 + 同面复验'],
+    forbid: '红线：未真实复现禁改码；不自动拉重型浏览器 UI 测',
+    prompt: '这个报错帮我用最小路径复现坐实根因，彻底修好并回归验证'
   },
   {
     id: 'feature', name: '新功能 / 纯重构', code: 'feature', tone: 'green',
-    nodes: ['比选 >=2 套接口形状', '定强类型与显式状态机', '先减后加同波迁调用方', '独立清注释 + 真机验绿'],
-    forbid: '红线：纯重构禁夹带新功能；未降低理解负担须回退',
-    prompt: '先别写实现代码，帮我对比两套数据结构和接口方案定型后再分步落地'
+    nodes: ['权衡接口与所有权', '定强类型与显式状态机', '先减后加同波迁调用方', '自查注释 + 轻量验绿'],
+    forbid: '红线：纯重构禁夹带新功能；不自动多方案实做对比',
+    prompt: '先别写实现代码，帮我定好数据结构和接口形状再分步落地'
   },
   {
     id: 'perf', name: '性能排障 / 调优', code: 'perf', tone: 'amber',
     nodes: ['隔离测纯净基线', '剖析定位真正瓶颈', '按 7 阶梯单变量试错', '压测防伪 7 问终审'],
-    forbid: '红线：无基线禁优化；压测缺条件一律判无效',
+    forbid: '红线：仅你点名调优才启用；无基线禁优化',
     prompt: '先测纯净基线并用剖析定位瓶颈，再做性能调优，数字必须过防伪核查'
   },
   {
     id: 'analyze', name: '查原理 / 爆炸半径', code: 'analyze', tone: 'brand',
-    nodes: ['并行查源码与 Git 历史', '渐进画图讲清机制', '穿透协议/DB 查盲区', '写小脚本实证安全前提'],
+    nodes: ['查调用链与 Git 历史', '渐进画图讲清机制', '穿透协议/DB 查盲区', '写小脚本实证安全前提'],
     forbid: '红线：严格只读，绝对禁止改动业务源码',
     prompt: '帮我讲透这个模块的运行机制和改动爆炸半径，只读分析不改代码'
   },
   {
-    id: 'long', name: '跨天 / 多代理长任务', code: 'long-task', tone: 'purple',
-    nodes: ['立验收标准 + 独占文件', '物理隔离并发推进', '记决策账本 logs/*.tsv', '安全暂停与冷启动续跑'],
-    forbid: '红线：禁止多代理同改一文件；严禁放宽测试门槛',
-    prompt: '先帮我恢复这个仓库最近进度，列清下一步独占文件范围再继续'
+    id: 'long', name: '跨天 / 无人值守长任务', code: 'long-task', tone: 'purple',
+    nodes: ['立验收标准 + 文件边界', '基线先行小步试错', '按磁盘副作用监工', '安全暂停与冷启动续跑'],
+    forbid: '红线：进度只认磁盘实测副作用，严禁私自放宽门禁',
+    prompt: '按跨阶段计划列清验收标准和文件范围，等我确认后再开跑'
   }
 ];
 
@@ -770,9 +775,9 @@ const CHIPS = [
   { title: '画图讲透原理', tag: '只读图解', say: '帮我彻底讲透这个模块的运行机制和历史原因，画图说明不改代码' },
   { title: '实测爆炸半径', tag: '风险穿透', say: '准备改这处公共逻辑，帮我排查爆炸半径并写脚本实证安全前提' },
   { title: '先比选接口形状', tag: '架构定型', say: '先别写实现，帮我对比两套数据结构和接口方案再拍板' },
-  { title: '多方案隔离擂台', tag: '并行融合', say: '按多方案擂台模式在隔离目录并行做出候选，打分选底座后融合' },
-  { title: '独立清废话注释', tag: '代码洁癖', say: '派独立子代理清查当前 Diff 注释，硬约束升级为类型或静态检查' },
-  { title: '动态脚本找漏洞', tag: '实跑对抗', say: '对当前改动写脚本动态实跑边界对抗测试，只报真实复现缺陷' },
+  { title: '导出决策过程账本', tag: '过程审计', say: '/a8-trace 把刚才开发的取舍、备选、试错回退和证据导出成 TSV 账本' },
+  { title: '快速提交跳过语义审', tag: '显式提速', say: '/a8-commit fast 跑完敏文件拦截与仓内门禁后直接提交推送' },
+  { title: '按白名单清废话注释', tag: '代码洁癖', say: '在当前主会话按 5 类白名单清理本次 Diff 注释，硬约束转类型或 Lint' },
   { title: '建立/巡检验证地图', tag: '防假绿', say: '实地摸清本仓端口与测试入口，生成或更新 docs/verify.md 并实跑' }
 ];
 
