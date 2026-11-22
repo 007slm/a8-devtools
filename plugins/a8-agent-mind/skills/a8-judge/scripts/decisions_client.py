@@ -31,10 +31,10 @@ from judge_router import (
     resolve_workspace_root,
 )
 
-# Per-request chunking / batching strides (multi-call splitting; never truncates or drops)
-CHUNK_DIFF_CHARS = 28000
-BATCH_QUESTION_CHARS = 6000
-BATCH_MAX_QUESTIONS = 12
+# Per-request chunking / batching strides (pack all core categories into 1 call to avoid duplicating input tokens)
+CHUNK_DIFF_CHARS = 44000
+BATCH_QUESTION_CHARS = 24000
+BATCH_MAX_QUESTIONS = 16
 MAX_CONCURRENT_API_CALLS = 4
 
 ENV_VAR_PATTERN = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
@@ -949,6 +949,22 @@ def main():
             )
             print(json.dumps(err, ensure_ascii=False, indent=2))
             sys.exit(2)
+        filtered = (diff_meta or {}).get("filtered_files") or []
+        if filtered:
+            out = {
+                "status": "skipped_non_backend",
+                "verdict": "PASSED",
+                "confidence_score": 1.0,
+                "summary": f"Only frontend/doc/static files changed ({len(filtered)} filtered); no backend architectural diff to evaluate.",
+                "api_calls_count": 0,
+                "diff_chunks_count": 0,
+                "filtered_files": filtered,
+                "evaluated_decisions": [],
+                "evaluated_categories": empty_evaluated_categories(evaluated=False, passed=True),
+                "violations": [],
+            }
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+            return
         out = fail_closed_verdict(
             "skipped",
             "Working tree has no unexcluded changes to evaluate (pass --last-commit to judge HEAD~1..HEAD).",

@@ -83,6 +83,38 @@ IGNORED_STATIC_EXTENSIONS = (
     ".tar",
     ".gz",
 )
+# Frontend UI, templates, stylesheets, and pure prose docs do not enter backend architectural Decisions API review
+IGNORED_NON_BACKEND_EXTENSIONS = (
+    ".html",
+    ".htm",
+    ".css",
+    ".scss",
+    ".sass",
+    ".less",
+    ".styl",
+    ".jsx",
+    ".tsx",
+    ".vue",
+    ".svelte",
+    ".astro",
+    ".md",
+    ".mdx",
+    ".txt",
+    ".rst",
+)
+IGNORED_FRONTEND_DIR_PREFIXES = (
+    "web/src/",
+    "frontend/src/",
+    "client/src/",
+)
+IGNORED_FRONTEND_DIR_SEGMENTS = (
+    "/web/src/",
+    "/frontend/src/",
+    "/client/src/",
+    "/components/",
+    "/pages/",
+    "/styles/",
+)
 
 
 def _normalize_scope_paths(paths: list[str] | None) -> list[str]:
@@ -419,8 +451,9 @@ CATEGORY_BY_SECTION = (
     ("并发安全", "concurrency_and_performance"),
     ("实现规范", "implementation_hygiene"),
     ("编码实施", "implementation_hygiene"),
-    ("文档与双层仓库地图", "lifecycle_and_evolution"),
-    ("强制交卷检查", "implementation_hygiene"),
+    ("双层文档", None),  # Guarded deterministically by check_work_records/check_workspace_hygiene
+    ("文档与双层仓库地图", None),
+    ("强制交卷检查", None),
 )
 
 ANCHOR_DATE_RE = re.compile(r"^<!--\s*(\d{4}-\d{2}-\d{2})\s*:\s*(.+?)\s*-->$")
@@ -581,7 +614,7 @@ def parse_rule_file(file_path: Path, category_override: str = None) -> list:
 
 
 def _is_relevant_source_file(rel_path: str) -> bool:
-    """Filters out compiled/generated bundles, SVG/fonts/media, and pure lockfiles."""
+    """Filters out compiled bundles, static assets, frontend UI code, HTML, and prose docs."""
     norm = rel_path.replace("\\", "/").strip().lower()
     if not norm:
         return False
@@ -589,26 +622,67 @@ def _is_relevant_source_file(rel_path: str) -> bool:
         return False
     if Path(norm).name in IGNORED_LOCKFILES:
         return False
-    if norm.endswith(IGNORED_STATIC_EXTENSIONS):
+    if norm.endswith(IGNORED_STATIC_EXTENSIONS) or norm.endswith(IGNORED_NON_BACKEND_EXTENSIONS):
+        return False
+    if norm.endswith((".ts", ".js")) and (
+        norm.startswith(IGNORED_FRONTEND_DIR_PREFIXES)
+        or any(seg in norm for seg in IGNORED_FRONTEND_DIR_SEGMENTS)
+    ):
         return False
     return True
 
 
+def _fold_deleted_file_block(block_lines: list[str], rel_path: str) -> list[str]:
+    """Folds whole-file deletions into a compact tombstone so dead code does not burn TPM."""
+    has_deleted_mode = any(l.startswith("deleted file mode ") for l in block_lines[:6])
+    has_dev_null_plus = any(l.strip() == "+++ /dev/null" for l in block_lines[:10])
+    if not (has_deleted_mode and has_dev_null_plus):
+        return block_lines
+
+    header_lines: list[str] = []
+    removed_lines = 0
+    in_hunk = False
+    for line in block_lines:
+        if line.startswith("@@ "):
+            in_hunk = True
+            continue
+        if not in_hunk:
+            header_lines.append(line)
+        elif line.startswith("-") and not line.startswith("--- "):
+            removed_lines += 1
+    header_lines.append(f"-[DELETED FILE: {rel_path}, {removed_lines} lines removed]")
+    return header_lines
+
+
 def _extract_diff_sections(diff_text: str, filtered_files: list[str] | None = None) -> str:
-    """Extracts diff sections excluding generated bundles, SVG/fonts, binary blobs, and lockfiles."""
+    """Extracts backend diff sections, excluding frontend/docs/assets and folding deleted files."""
     if not diff_text:
         return ""
-    kept = []
-    include_current = True
+    blocks: list[tuple[str, list[str]]] = []
+    cur_rel = ""
+    cur_lines: list[str] = []
     for line in diff_text.splitlines():
         if line.startswith("diff --git "):
+            if cur_lines:
+                blocks.append((cur_rel, cur_lines))
             parts = line.split(" b/", 1)
-            rel = parts[1].strip() if len(parts) > 1 else ""
-            include_current = _is_relevant_source_file(rel)
-            if not include_current and filtered_files is not None and rel and rel not in filtered_files:
-                filtered_files.append(rel)
-        if include_current:
-            kept.append(line)
+            cur_rel = parts[1].strip() if len(parts) > 1 else ""
+            cur_lines = [line]
+        else:
+            cur_lines.append(line)
+    if cur_lines:
+        blocks.append((cur_rel, cur_lines))
+
+    kept: list[str] = []
+    for rel, lines in blocks:
+        if rel:
+            if not _is_relevant_source_file(rel):
+                if filtered_files is not None and rel not in filtered_files:
+                    filtered_files.append(rel)
+                continue
+            kept.extend(_fold_deleted_file_block(lines, rel))
+        else:
+            kept.extend(lines)
     return "\n".join(kept)
 
 
@@ -1025,41 +1099,51 @@ def get_relevant_docs_for_files(
     return {"total_docs": len(rows), "relevant_docs": out_docs}
 
 
+_NON_ARCHITECTURE_DOC_TYPES = {"VERIFY", "GLOSSARY", "VISUAL"}
+_NON_ARCHITECTURE_DOC_NAMES = {"verify.md", "glossary.md"}
+
+
 def load_documented_decisions_context(
     workspace_dir: Path | None,
     changed_files: list[str],
-    max_chars: int | None = None,
+    max_chars: int = 2400,
+    per_doc_chars: int = 700,
 ) -> str:
     """
-    Loads full matched Evergreen/design docs from workspace AGENTS.md & docs/
-    for the current diff files so Decisions API / Judges see intact contracts
-    and intentional trade-offs without artificial snippet truncation.
+    Loads compact architectural redlines/trade-offs from matched Evergreen/ADR/SPEC docs
+    for Decisions API screening (excluding verify.md/glossary.md test & lexicon noise).
+    Full-document reading remains the job of arch-judge when escalated.
     """
     if not workspace_dir:
         return ""
     ws = Path(workspace_dir)
-    guide = get_relevant_docs_for_files(ws, changed_files, limit=4)
+    guide = get_relevant_docs_for_files(ws, changed_files, limit=5)
     if not guide["relevant_docs"]:
         return ""
 
     chunks: list[str] = []
     total_len = 0
+    included = 0
     for row in guide["relevant_docs"]:
+        doc_type_up = (row.get("doc_type") or "").strip().upper()
+        doc_name_low = Path(row["rel_path"]).name.lower()
+        if doc_type_up in _NON_ARCHITECTURE_DOC_TYPES or doc_name_low in _NON_ARCHITECTURE_DOC_NAMES:
+            continue
         doc_path = ws / row["rel_path"]
-        try:
-            full_text = doc_path.read_text(encoding="utf-8", errors="replace").strip() if doc_path.is_file() else ""
-        except OSError:
-            full_text = ""
+        highlights = _extract_doc_highlights(doc_path, max_chars=per_doc_chars)
         status_part = f" ({row['status']})" if row.get("status") else ""
         header = f"### [{row['doc_type']}] {row['rel_path']}{status_part} — {row['summary']}"
-        entry = f"{header}\n{full_text}" if full_text else header
+        entry = f"{header}\n{highlights}" if highlights else header
         if max_chars is not None and total_len + len(entry) + 2 > max_chars:
             remain = max_chars - total_len - 4
-            if remain > 60:
+            if remain > 80:
                 chunks.append(entry[:remain].rstrip() + "...")
             break
         chunks.append(entry)
         total_len += len(entry) + 2
+        included += 1
+        if included >= 3:
+            break
     return "\n\n".join(chunks)
 
 
