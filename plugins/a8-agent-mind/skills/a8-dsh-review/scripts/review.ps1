@@ -3,7 +3,7 @@
     A8 Agent Mind - DSH (DeepSeek Harness) 架构终审执行与双通道归档脚本
 .DESCRIPTION
     1. 自动基于 $PSScriptRoot 定位插件根目录及 reviews/ 归档目录；
-    2. 根据 -WorkspaceDir 动态映射 $env:USERPROFILE\.dsh\sessions\--<Slug>-- 自动复用最近会话；
+    2. 根据 -WorkspaceDir 动态映射 $env:USERPROFILE\.dsh\sessions\--<Slug>--，Round 1 默认启干净新会话，Round >= 2 自动复用同任务会话并注入战线冻结纪律；
     3. 严格分离 dsh.cmd headless 的 stdout(终审正文) 与 stderr(reasoning 噪音)，UTF-8 无 BOM 编码；
     4. 生成带标准 YAML Frontmatter 的归档报告至 <plugin_dir>/reviews/，同时输出结构化 JSON 给调用方，
        并在执行后自动清理临时 Prompt 文件。
@@ -261,240 +261,39 @@ function Resolve-DshModelConfig {
     return @{ Provider = $provider; Model = $model }
 }
 
-function Get-DshDocumentedContext {
-    param(
-        [Parameter(Mandatory = $true)][string]$WorkspacePath,
-        [string[]]$ChangedFiles = @()
-    )
-    $agentsPath = Join-Path $WorkspacePath "AGENTS.md"
-    if (-not (Test-Path $agentsPath)) {
-        return ""
-    }
-    $lines = [System.IO.File]::ReadAllLines($agentsPath, $Utf8NoBom)
-    $entries = New-Object System.Collections.Generic.List[object]
-    $pendingHeader = $null
-    $colMap = $null
-    foreach ($raw in $lines) {
-        $line = $raw.Trim()
-        if (-not $line.StartsWith("|")) {
-            $pendingHeader = $null
-            $colMap = $null
-            continue
-        }
-        $cells = $line.Trim("|") -split "\|"
-        if ($cells.Count -eq 0) {
-            continue
-        }
-        $isSep = $true
-        foreach ($c in $cells) {
-            $ct = $c.Trim()
-            if ($ct -and ($ct -notmatch "^:?[-]{2,}:?$")) {
-                $isSep = $false
-                break
-            }
-        }
-        if ($isSep) {
-            if ($null -ne $pendingHeader) {
-                $colMap = @{}
-                for ($hi = 0; $hi -lt $pendingHeader.Count; $hi++) {
-                    $hn = ([regex]::Replace($pendingHeader[$hi], '[`*\s]', '')).ToLowerInvariant()
-                    if (-not $hn) { continue }
-                    if (-not $colMap.ContainsKey("type") -and $hn -match "类型|type") { $colMap["type"] = $hi }
-                    elseif (-not $colMap.ContainsKey("status") -and $hn -match "状态|status") { $colMap["status"] = $hi }
-                    elseif (-not $colMap.ContainsKey("assoc") -and $hn -match "源码|关联|code|source|scope") { $colMap["assoc"] = $hi }
-                    elseif (-not $colMap.ContainsKey("summary") -and $hn -match "用途|说明|摘要|职责|summary|desc|purpose") { $colMap["summary"] = $hi }
-                    elseif (-not $colMap.ContainsKey("module") -and $hn -match "模块|域|domain|module") { $colMap["module"] = $hi }
-                    elseif (-not $colMap.ContainsKey("doc") -and $hn -match "文档|路径|doc|path") { $colMap["doc"] = $hi }
-                }
-            }
-            continue
-        }
-
-        $docCellIdx = -1
-        $docMatch = $null
-        for ($ci = 0; $ci -lt $cells.Count; $ci++) {
-            $m = [regex]::Match($cells[$ci], "(docs[/\\][^\s`\)\]<>\""]+?\.md)", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-            if ($m.Success) {
-                $docCellIdx = $ci
-                $docMatch = $m
-                break
-            }
-        }
-        if ($null -eq $docMatch) {
-            $pendingHeader = $cells
-            $colMap = $null
-            continue
-        }
-        if ($cells.Count -lt 3) {
-            continue
-        }
-
-        $relDoc = $docMatch.Groups[1].Value -replace "\\", "/"
-        $useMap = ($null -ne $colMap -and $colMap.Count -gt 0)
-        if ($useMap) {
-            $docType = if ($colMap.ContainsKey("type") -and $colMap["type"] -lt $cells.Count) { $cells[$colMap["type"]].Trim('`', '*', ' ') } else { "" }
-            $status = if ($colMap.ContainsKey("status") -and $colMap["status"] -lt $cells.Count) { $cells[$colMap["status"]].Trim('`', '*', ' ') } else { "" }
-            $sumIdx = if ($colMap.ContainsKey("summary") -and $colMap["summary"] -lt $cells.Count) { $colMap["summary"] } else { $cells.Count - 1 }
-            $summary = ([regex]::Replace($cells[$sumIdx], '`([^`]*)`', '$1')).Trim()
-        } else {
-            $otherIndices = @()
-            for ($oi = 0; $oi -lt $cells.Count; $oi++) {
-                if ($oi -ne $docCellIdx) { $otherIndices += $oi }
-            }
-            $docType = $cells[$otherIndices[0]].Trim('`', '*', ' ')
-            if ($cells.Count -le 4) {
-                $status = ""
-            } else {
-                $status = $cells[$otherIndices[2]].Trim('`', '*', ' ')
-            }
-            $summary = ([regex]::Replace($cells[$otherIndices[-1]], '`([^`]*)`', '$1')).Trim()
-        }
-        if (-not $docType) {
-            $docType = if ($relDoc -match "(?i)/evergreen/") { "EVERGREEN" } else { "SPEC" }
-        }
-        if (-not $status -and $docType -match "^(?i)EVERGREEN$") {
-            $status = "ACTIVE"
-        }
-
-        $assocPaths = @()
-        $targetIndices = $null
-        if ($useMap -and ($colMap.ContainsKey("assoc") -or $colMap.ContainsKey("module"))) {
-            $targetIndices = @()
-            if ($colMap.ContainsKey("assoc") -and $colMap["assoc"] -lt $cells.Count) { $targetIndices += $colMap["assoc"] }
-            if ($colMap.ContainsKey("module") -and $colMap["module"] -lt $cells.Count) { $targetIndices += $colMap["module"] }
-        }
-        for ($ci = 0; $ci -lt $cells.Count; $ci++) {
-            if ($ci -eq $docCellIdx) { continue }
-            if ($null -ne $targetIndices) {
-                if ($targetIndices -notcontains $ci) { continue }
-            } elseif ($useMap) {
-                if (($colMap.ContainsKey("type") -and $colMap["type"] -eq $ci) -or
-                    ($colMap.ContainsKey("status") -and $colMap["status"] -eq $ci) -or
-                    ($colMap.ContainsKey("summary") -and $colMap["summary"] -eq $ci)) { continue }
-            }
-            foreach ($pm in [regex]::Matches($cells[$ci], '`([^`]+)`')) {
-                $cand = $pm.Groups[1].Value.Trim().TrimEnd('/').Replace("\", "/").ToLowerInvariant()
-                if ($cand -and ($cand -notmatch '\s') -and ($cand -notmatch '^\d+(?:\.\d+)+$') -and ($cand -ne ".") -and ($cand -ne "..") -and ($cand.Contains("/") -or $cand.Contains(".")) -and -not $cand.StartsWith("http") -and -not $cand.StartsWith("docs/")) {
-                    if ($assocPaths -notcontains $cand) {
-                        $assocPaths += $cand
-                    }
-                }
-            }
-        }
-        $entries.Add([PSCustomObject]@{
-            RelPath = $relDoc
-            DocType = $docType
-            Status = $status
-            Summary = $summary
-            AssocPaths = $assocPaths
-        })
-    }
-    if ($entries.Count -eq 0) {
-        return ""
-    }
-
-    $normChanged = @()
-    foreach ($cf in $ChangedFiles) {
-        if (-not [string]::IsNullOrWhiteSpace($cf)) {
-            $normChanged += $cf.Trim().Replace("\", "/").TrimStart('.', '/').ToLowerInvariant()
-        }
-    }
-
-    $scored = New-Object System.Collections.Generic.List[object]
-    for ($idx = 0; $idx -lt $entries.Count; $idx++) {
-        $ent = $entries[$idx]
-        $score = 0
-        $docLower = $ent.RelPath.ToLowerInvariant()
-        foreach ($cf in $normChanged) {
-            if ($cf -eq $docLower) {
-                $score += 10
-            }
-            foreach ($ap in $ent.AssocPaths) {
-                $apClean = $ap.TrimStart('.', '/')
-                if ($cf -eq $apClean -or $cf.StartsWith($apClean + "/") -or $cf.Contains($apClean)) {
-                    $score += 5
-                }
-            }
-        }
-        if ($score -eq 0 -and ($ent.DocType -match "^(ADR|SPEC|EVERGREEN|GUIDE)$") -and $idx -lt 2) {
-            $score = 1
-        }
-        if ($score -gt 0) {
-            $scored.Add([PSCustomObject]@{ Score = $score; Entry = $ent })
-        }
-    }
-
-    $buf = New-Object System.Collections.Generic.List[string]
-    $buf.Add("### 已备案架构决策与设计文档（AGENTS.md & docs/，由 review.ps1 自动注入）")
-    $buf.Add("> **审查纪律**：以下设计考量已在仓库 `docs/` 中明确论证并生效；若代码实现与既有决策权衡一致，**严禁重复将既定权衡判为 `VIOLATED`**，仅核查是否真正闭环及是否存在未解决的真实因果链缺陷。")
-    foreach ($ent in ($entries | Select-Object -First 8)) {
-        $statusText = if ($ent.Status) { " ($($ent.Status))" } else { "" }
-        $buf.Add("- [$($ent.DocType)] ``$($ent.RelPath)``${statusText}: $($ent.Summary)")
-    }
-
-    $topMatched = $scored | Sort-Object -Property Score -Descending | Select-Object -First 2
-    foreach ($item in $topMatched) {
-        $docFile = Join-Path $WorkspacePath ($item.Entry.RelPath -replace "/", "\")
-        if (-not (Test-Path $docFile)) {
-            continue
-        }
-        $docLines = [System.IO.File]::ReadAllLines($docFile, $Utf8NoBom)
-        $picked = New-Object System.Collections.Generic.List[string]
-        $inCode = $false
-        $charCount = 0
-        foreach ($dl in $docLines) {
-            $t = $dl.Trim()
-            if ($t.StartsWith('```')) {
-                $inCode = -not $inCode
-                continue
-            }
-            if ($inCode -or [string]::IsNullOrWhiteSpace($t) -or $t -eq "---" -or $t.StartsWith("|")) {
-                continue
-            }
-            $picked.Add($dl)
-            $charCount += $dl.Length + 1
-            if ($charCount -ge 1100) {
-                $picked.Add("... (更多细节可用只读工具查阅 $($item.Entry.RelPath))")
-                break
-            }
-        }
-        if ($picked.Count -gt 0) {
-            $buf.Add("#### 关联设计文档摘录：" + '`' + $item.Entry.RelPath + '`' + "`n" + ($picked -join "`n"))
-        }
-    }
-    return ($buf -join "`n")
-}
-
 function Get-DshTriageDisciplinePrompt {
+    param([int]$Round = 1)
+    $roundFreeze = ""
+    if ($Round -ge 2) {
+        $roundFreeze = @"
+
+6. **第 $Round 轮复审战线冻结（Scope Freeze）**：本轮只核验上一轮真实阻断项的修复是否闭环、是否引入新回归；**严禁在未改动区域另开新战线挑刺**。若上一轮阻断项已修复且无新回归，立即输出通过。
+"@
+    }
     return @"
-## 核心审查纪律与缺陷分级红线（由 review.ps1 强制注入）
-1. **两维缺陷评分 (F × S 熔断)**：对识别出的每一个问题，必须分别评估 **发生频率 F (1~10)** 与 **严重程度 S (1~10)**，并在条目中显式标出 ``(F=?, S=?, F×S=?)``。
-2. **乘积低于 10 严禁要求改代码**：凡综合乘积 **F × S < 10** 的发现，必须一律归入「已知非阻塞边界 / 观察项」仅作问题记录，**严禁将其判为阻断项 (`VIOLATED`) 或要求修改代码**。
-3. **践行 YAGNI、严禁过度设计**：**严禁为无人询问的罕见边缘场景、推测性极端并发或假想的未来情况要求追加防御逻辑或超前设计**；仅有 **F × S >= 10** 且具备明确因果链的真实缺陷或架构红线破坏才允许判为不通过。
-4. **状态与并发不变量校验**：涉及状态机、缓存失效或并发资源借还时，先提炼必须恒真的核心不变量（守恒、单调时间戳/Epoch、移除即失效），再沿因果链反证是否存在真实路径击穿（仍受 F × S >= 10 约束）。
-5. **结论格式**：报告末行严格输出 ``【终审通过 (PASSED) / 准予 Commit & Push】``、``【不通过 (VIOLATED)】`` 或 ``【需人工拍板 (REQUIRES_APPROVAL)】``。
+## 核心审查纪律与需求锚定红线（由 review.ps1 强制注入）
+1. **严格按用户原始需求审查（严禁偏离需求与按个人偏好挑刺）**：仅围绕下文「用户原始需求、验收条件与不做边界（Non-Goals）」审视代码。超出需求范围的“顺便抽象、额外健壮性、命名/注释/风格品味偏好”**一律不得判为阻断项 (`VIOLATED`)**。
+2. **两类问题才允许阻断（只修真 Bug 与破损需求）**：
+   - ① **真实 Bug / 状态机或并发因果链击穿**（评估发生频率 F 1~10 与严重度 S 1~10，标出 ``(F=?, S=?, F×S=?)``，仅 **F × S >= 10** 可阻断）；
+   - ② **破损或遗漏的用户需求 / 显式契约违背**。
+   凡 **F × S < 10**、主观偏好或命名/文档措辞建议，一律归入「非阻塞参考」，严禁要求改码或阻断。
+3. **反凑数挑刺纪律**：**如果没有发现真实 Bug 或破损需求，直接输出通过就是最高质量审查，严禁为了显得严格而硬找毛病。**
+4. **尊重原生加载的 `AGENTS.md` 与既定权衡**：仓库 `AGENTS.md` 已由 DSH 原生加载；如涉及既有设计权衡，请按 `AGENTS.md` 索引只读查阅对应 `docs/evergreen/*.md`，严禁将已备案权衡判为 `VIOLATED`。
+5. **结论格式**：报告末行严格输出 ``【终审通过 (PASSED) / 准予 Commit & Push】``、``【不通过 (VIOLATED)】`` 或 ``【需人工拍板 (REQUIRES_APPROVAL)】``。$roundFreeze
 "@
 }
 
 function Build-DshPrepackedContext {
     param([Parameter(Mandatory = $true)][string]$WorkspacePath)
     $parts = New-Object System.Collections.Generic.List[string]
-    $changedFiles = New-Object System.Collections.Generic.List[string]
     try {
         $gitCheck = & git -C $WorkspacePath rev-parse --is-inside-work-tree 2>$null
         if ($LASTEXITCODE -eq 0 -and ($gitCheck -join "").Trim() -eq "true") {
             $statusArray = @(& git -C $WorkspacePath -c core.quotepath=false status --short 2>$null)
-            foreach ($sLine in $statusArray) {
-                if ($sLine.Length -gt 3) {
-                    $p = $sLine.Substring(3).Trim().Trim('"')
-                    if ($p -match " -> (.+)$") { $p = $matches[1].Trim().Trim('"') }
-                    if ($p) { $changedFiles.Add($p) }
-                }
-            }
             $statusLines = $statusArray -join "`n"
             $diffStat = (& git -C $WorkspacePath -c core.quotepath=false diff --stat HEAD 2>$null) -join "`n"
             if (-not [string]::IsNullOrWhiteSpace($statusLines) -or -not [string]::IsNullOrWhiteSpace($diffStat)) {
-                $parts.Add("## 预打包变更上下文（由 review.ps1 注入，避免重复扫描全仓）")
+                $parts.Add("## 预打包变更范围（由 review.ps1 注入，避免重复扫描全仓）")
                 if (-not [string]::IsNullOrWhiteSpace($statusLines)) {
                     $trimmedStatus = ($statusLines -split "`r?`n" | Select-Object -First 40) -join "`n"
                     $parts.Add("### Git Status (Top 40)`n``````text`n$trimmedStatus`n``````")
@@ -508,15 +307,11 @@ function Build-DshPrepackedContext {
     } catch {
         # 非 Git 目录忽略
     }
-    $docCtx = Get-DshDocumentedContext -WorkspacePath $WorkspacePath -ChangedFiles $changedFiles.ToArray()
-    if (-not [string]::IsNullOrWhiteSpace($docCtx)) {
-        $parts.Add($docCtx)
-    }
     $lintDir = Join-Path $WorkspacePath "scripts\lints"
     if (Test-Path $lintDir) {
         $lintScripts = (Get-ChildItem -Path $lintDir -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ", "
         if ($lintScripts) {
-            $parts.Add("- 项目已配置机械检查目录 ``scripts/lints/`` ($lintScripts)：机械格式/禁用 API 类规则已由项目 Lint 覆盖，DSH 请聚焦跨文件因果链、显式状态机、边界隔离与全生命周期闭环。")
+            $parts.Add("- 项目已配置机械检查目录 ``scripts/lints/`` ($lintScripts)：机械格式/禁用 API 类规则已由项目 Lint 覆盖，DSH 请仅聚焦需求闭环、真实 Bug 与跨文件因果链缺陷。")
         }
     }
     if ($parts.Count -eq 0) {
@@ -550,7 +345,7 @@ if ($ArchiveOnly) {
     if ([string]::IsNullOrWhiteSpace($promptText)) {
         throw "Prompt 文件内容为空: $PromptFile"
     }
-    $disciplineBlock = (Get-DshTriageDisciplinePrompt).Trim()
+    $disciplineBlock = (Get-DshTriageDisciplinePrompt -Round $Round).Trim()
     $prepacked = ""
     if (-not $NoDiffSummary) {
         $prepacked = Build-DshPrepackedContext -WorkspacePath $resolvedWorkspace
@@ -561,7 +356,8 @@ if ($ArchiveOnly) {
         $promptText = $disciplineBlock + "`n`n---`n`n" + $promptText
     }
 
-    if (-not $NewSession -and [string]::IsNullOrWhiteSpace($usedSession)) {
+    # Round 1 默认启干净新会话，防止跨任务历史上下文串味；仅 Round >= 2 或显式传 -SessionId 时复用会话
+    if (-not $NewSession -and [string]::IsNullOrWhiteSpace($usedSession) -and $Round -gt 1) {
         $usedSession = Find-LatestDshSession -WorkspacePath $resolvedWorkspace
     }
 
