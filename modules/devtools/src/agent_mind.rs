@@ -324,7 +324,7 @@ pub struct AgentMindOverviewDto {
     pub telemetry: HarnessTelemetryDto,
 }
 
-fn clean_display_path(path: &Path) -> String {
+pub(crate) fn clean_display_path(path: &Path) -> String {
     let s = path.to_string_lossy();
     if let Some(stripped) = s.strip_prefix(r"\\?\") {
         stripped.to_string()
@@ -333,7 +333,7 @@ fn clean_display_path(path: &Path) -> String {
     }
 }
 
-fn detect_plugin_location() -> Result<(PathBuf, Option<String>, bool), String> {
+pub(crate) fn detect_plugin_location() -> Result<(PathBuf, Option<String>, bool), String> {
     let mut mounted_target: Option<String> = None;
     let mut mount_alive = false;
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -2668,7 +2668,7 @@ pub(crate) fn delete_proposal_in_dir(proposals_dir: &Path, file_name: &str) -> R
     std::fs::remove_file(&target).map_err(|e| format!("删除提案失败: {}", e))
 }
 
-fn unix_secs_to_ymd_cn(unix_secs: u64) -> String {
+pub(crate) fn unix_secs_to_ymd_cn(unix_secs: u64) -> String {
     // Shift UTC seconds to Asia/Shanghai (+08:00) for local day alignment
     let days = ((unix_secs + 8 * 3600) / 86400) as i64;
     let z = days + 719_468;
@@ -3333,6 +3333,55 @@ pub(crate) fn extract_conversation_id_from_json(raw: &str) -> String {
     String::new()
 }
 
+pub(crate) fn launch_antigravity_conversation(
+    conv_title: &str,
+    conv_prompt: &str,
+) -> Result<AdvanceProposalResultDto, String> {
+    let exe = find_antigravity_agentapi_exe().ok_or_else(|| {
+        "未找到 Antigravity language_server.exe，请确认已安装 Antigravity 桌面端".to_string()
+    })?;
+    let (ls_address, csrf_token) = discover_antigravity_ls_env().ok_or_else(|| {
+        "未检测到运行中的 Antigravity Hub 服务（~/.gemini/antigravity/daemon/hub_*.json），请先启动 Antigravity 桌面端后重试".to_string()
+    })?;
+
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.env("ANTIGRAVITY_LS_ADDRESS", &ls_address);
+    if !csrf_token.is_empty() {
+        cmd.env("ANTIGRAVITY_CSRF_TOKEN", &csrf_token);
+    }
+    cmd.args([
+        "agentapi",
+        "new-conversation",
+        "--title",
+        conv_title,
+        conv_prompt,
+    ]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("调用 Antigravity agentapi 失败: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        return Err(format!("创建 Antigravity 会话失败: {}", detail));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let conversation_id = extract_conversation_id_from_json(&stdout);
+    let focused_antigravity = focus_antigravity_window_native();
+    Ok(AdvanceProposalResultDto {
+        conversation_id,
+        focused_antigravity,
+        method: "agentapi".to_string(),
+    })
+}
+
 /// 在 Antigravity 中基于指定提案文件创建新会话并唤醒客户端窗口。
 #[tauri::command]
 pub fn advance_proposal_in_antigravity(
@@ -3368,44 +3417,7 @@ pub fn advance_proposal_in_antigravity(
             )
         });
 
-    let exe = find_antigravity_agentapi_exe().ok_or_else(|| {
-        "未找到 Antigravity language_server.exe，请确认已安装 Antigravity 桌面端".to_string()
-    })?;
-    let (ls_address, csrf_token) = discover_antigravity_ls_env().ok_or_else(|| {
-        "未检测到运行中的 Antigravity Hub 服务（~/.gemini/antigravity/daemon/hub_*.json），请先启动 Antigravity 桌面端后重试".to_string()
-    })?;
-
-    let mut cmd = std::process::Command::new(&exe);
-    cmd.env("ANTIGRAVITY_LS_ADDRESS", &ls_address);
-    if !csrf_token.is_empty() {
-        cmd.env("ANTIGRAVITY_CSRF_TOKEN", &csrf_token);
-    }
-    cmd.args([
-        "agentapi",
-        "new-conversation",
-        "--title",
-        &conv_title,
-        &conv_prompt,
-    ]);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
-    }
-
-    let output = cmd
-        .output()
-        .map_err(|e| format!("调用 Antigravity agentapi 失败: {}", e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if !stderr.is_empty() { stderr } else { stdout };
-        return Err(format!("创建 Antigravity 会话失败: {}", detail));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let conversation_id = extract_conversation_id_from_json(&stdout);
-    let focused_antigravity = focus_antigravity_window_native();
+    let result = launch_antigravity_conversation(&conv_title, &conv_prompt)?;
     if let Ok(raw) = std::fs::read_to_string(&target) {
         let (fm, _) = parse_review_frontmatter(&raw);
         let cur_status = fm.get("status").map(|s| s.trim()).unwrap_or("");
@@ -3414,11 +3426,7 @@ pub fn advance_proposal_in_antigravity(
         }
     }
 
-    Ok(AdvanceProposalResultDto {
-        conversation_id,
-        focused_antigravity,
-        method: "agentapi".to_string(),
-    })
+    Ok(result)
 }
 
 fn resolve_registered_repo_root(plugin_root: &Path, repo_code: &str) -> Result<PathBuf, String> {

@@ -1,4 +1,5 @@
 use crate::agent_mind;
+use crate::brain_wiki;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{Read, Write};
@@ -50,6 +51,39 @@ struct RunRepoLintsPayload {
 struct GitDiffPayload {
     repo_code: String,
     scope: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BrainRelPathPayload {
+    rel_path: String,
+}
+
+#[derive(Deserialize)]
+struct BrainSavePayload {
+    rel_path: String,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct BrainCreateRawPayload {
+    title: String,
+    source: Option<String>,
+    tags: Option<Vec<String>>,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct BrainSetDirPayload {
+    wiki_dir: String,
+}
+
+#[derive(Deserialize)]
+struct BrainLaunchPayload {
+    mode: String,
+    rel_path: Option<String>,
+    topic: Option<String>,
+    title: Option<String>,
+    prompt: Option<String>,
 }
 
 fn is_allowed_local_origin(origin: &str) -> bool {
@@ -355,6 +389,80 @@ fn handle_api(req: &ParsedRequest, stream: &mut TcpStream) {
                 return;
             };
             match agent_mind::get_repo_git_diff(payload.repo_code, payload.scope) {
+                Ok(res) => send_json(stream, "200 OK", json!({ "ok": true, "data": res }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
+        ("GET", "/api/agent-mind/brain/overview") => match brain_wiki::get_brain_wiki_overview() {
+            Ok(dto) => send_json(stream, "200 OK", json!({ "ok": true, "data": dto }), allowed_origin),
+            Err(e) => send_json(stream, "500 Internal Server Error", json!({ "ok": false, "error": e }), allowed_origin),
+        },
+        ("POST", "/api/agent-mind/brain/read") => {
+            let Ok(payload) = serde_json::from_slice::<BrainRelPathPayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match brain_wiki::read_brain_wiki_file(payload.rel_path) {
+                Ok(content) => send_json(stream, "200 OK", json!({ "ok": true, "data": content }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
+        ("POST", "/api/agent-mind/brain/raw/create") => {
+            let Ok(payload) = serde_json::from_slice::<BrainCreateRawPayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match brain_wiki::create_brain_raw_note(payload.title, payload.source, payload.tags, payload.content) {
+                Ok(entry) => send_json(stream, "200 OK", json!({ "ok": true, "data": entry }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
+        ("POST", "/api/agent-mind/brain/save") => {
+            let Ok(payload) = serde_json::from_slice::<BrainSavePayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match brain_wiki::save_brain_wiki_file(payload.rel_path, payload.content) {
+                Ok(()) => send_json(stream, "200 OK", json!({ "ok": true, "data": null }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
+        ("POST", "/api/agent-mind/brain/delete") => {
+            let Ok(payload) = serde_json::from_slice::<BrainRelPathPayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match brain_wiki::delete_brain_wiki_file(payload.rel_path) {
+                Ok(()) => send_json(stream, "200 OK", json!({ "ok": true, "data": null }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
+        ("POST", "/api/agent-mind/brain/open-dir") => match brain_wiki::open_brain_wiki_dir() {
+            Ok(()) => send_json(stream, "200 OK", json!({ "ok": true, "data": null }), allowed_origin),
+            Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+        },
+        ("POST", "/api/agent-mind/brain/set-dir") => {
+            let Ok(payload) = serde_json::from_slice::<BrainSetDirPayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match brain_wiki::set_brain_wiki_dir(payload.wiki_dir) {
+                Ok(dto) => send_json(stream, "200 OK", json!({ "ok": true, "data": dto }), allowed_origin),
+                Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
+            }
+        }
+        ("POST", "/api/agent-mind/brain/launch") => {
+            let Ok(payload) = serde_json::from_slice::<BrainLaunchPayload>(&req.body) else {
+                send_json(stream, "400 Bad Request", json!({ "ok": false, "error": "无效请求体" }), allowed_origin);
+                return;
+            };
+            match brain_wiki::launch_brain_in_antigravity(
+                payload.mode,
+                payload.rel_path,
+                payload.topic,
+                payload.title,
+                payload.prompt,
+            ) {
                 Ok(res) => send_json(stream, "200 OK", json!({ "ok": true, "data": res }), allowed_origin),
                 Err(e) => send_json(stream, "400 Bad Request", json!({ "ok": false, "error": e }), allowed_origin),
             }

@@ -1,8 +1,9 @@
 # 三端同源看板、代码审核与 Grok 每日提案联动（常青文档）
 
 > **所属域**：前端单一构建产物、三端同源适配、提交前 Git Diff 代码审核与 Grok 每日提案闭环（专有术语见 [项目术语表](../glossary.md)）  
-> **适用源码**：`modules/devtools/web/`、`modules/devtools/ui/`、`modules/devtools/src/agent_mind.rs`、`modules/devtools/src/sidecar.rs`、`plugins/a8-agent-mind/sidecars/panel/main.mjs`  
+> **适用源码**：`modules/devtools/web/`、`modules/devtools/ui/`、`modules/devtools/src/agent_mind.rs`、`modules/devtools/src/brain_wiki.rs`、`modules/devtools/src/sidecar.rs`、`plugins/a8-agent-mind/sidecars/panel/main.mjs`、`plugins/a8-agent-mind/sidecars/panel/brain_wiki.mjs`  
 > **相关记录（渐进式披露）**：
+> - [A8 Brain 个人 LLM Wiki 知识大脑与 Antigravity 联动规范](../records/20261122-SPEC-工作台与插件看板-A8Brain个人LLMWiki知识大脑与Antigravity联动.md)
 > - [三端同源 Dashboard 白屏根因与防踩坑指南](../records/20261114-BUG-工作台与插件看板-三端同源Dashboard白屏根因与防踩坑指南.md)
 > - [Grok 每日 AI 提案面板与 Antigravity 联动契约](../records/20261115-SPEC-工作台与插件看板-Grok每日AI提案面板与Antigravity联动契约.md)
 > - [提交前 Git Diff 人工代码审核工作台设计](../records/20261116-SPEC-工作台与插件看板-提交前GitDiff人工代码审核工作台设计.md)
@@ -85,7 +86,17 @@
 
 ---
 
-## 5. 交付验证标准与非目标
+## 5. 个人知识大脑（`A8 Brain` LLM Wiki 与 Antigravity 联动）
+
+- **一级独立入口与双端同构**：在桌面端左侧导航与独立看板/Sidecar 顶栏并列提供 **`知识大脑`**（`brain` / `?tab=brain`，`BrainWikiView.tsx`），共用安全零 HTML 注入渲染器 `MarkdownArticle.tsx`（支持 `[[slug|label]]` 双向链接可点击芯片跳转与断链标识）与统一唤起器 `antigravityLauncher.ts`。
+- **存储、自举与 `config.json` 配置**：默认位于 `plugins/a8-agent-mind/wiki/`（已 `.gitignore` 仅本地保存），首次访问幂等自举 `SCHEMA.md`、`index.md`、`log.md`、`raw/`、`pages/`；支持通过 `set_brain_wiki_dir`（`POST /api/agent-mind/brain/set-dir`）仅改写 `config.json` 的 `wiki_dir` 字段指向任意外部目录/私有仓（`AgentMindModelConfigPanel.tsx` 保存模型参数时保留 `wiki_dir` 等附加键）。
+- **控制面与安全边界（`brain_wiki.rs` ↔ `brain_wiki.mjs`）**：
+  - 8 个对称接口：`get_brain_wiki_overview`（`GET /api/agent-mind/brain/overview`）、`read_brain_wiki_file`（`.../brain/read`）、`create_brain_raw_note`（`.../brain/raw/create`）、`save_brain_wiki_file`（`.../brain/save`）、`delete_brain_wiki_file`（`.../brain/delete`）、`open_brain_wiki_dir`（`.../brain/open-dir`）、`set_brain_wiki_dir`（`.../brain/set-dir`）、`launch_brain_in_antigravity`（`.../brain/launch`，复用 `launch_antigravity_conversation` 支持 `ingest` / `brainstorm` / `lint` 三模式）；
+  - 路径白名单与防逃逸：仅放行 `SCHEMA.md`、`index.md`、`log.md`、`raw/*.md`（最深 2 层）与 `pages/**/*.md`（最深 3 层），经 `canonicalize` / `realpathSync` 断言位于知识库根目录内，禁止删除 3 个核心元数据文件；链接解析自动跳过代码块与行内代码，并统计反向引用（Backlinks）、断链与孤立页面。
+
+---
+
+## 6. 交付验证标准与非目标
 
 - **交付必查清单**：改前端后 `npm run build` 检查 `modules/devtools/ui/index.html` 无 `type="module"`/`crossorigin` 且含 `preload.js` + `assets/index.js`；改服务端后校验无 Origin / `Origin: null` / `plugin://` 返回 `200`，外部 Origin 调用 `/api/*` 返回 `403`；若更新 `main.mjs` 须重启插件 Sidecar 进程。
 - **非目标**：不为插件 Sidecar 单独维护另一套 HTML/前端工程；不允许 `get_repo_git_diff`、提案读取或 `RepoDocsBrowser` 写入越出白名单目录。

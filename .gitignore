@@ -21,10 +21,11 @@ temp_*/
 **/__pycache__/
 .cowdiff/
 
-# A8 Agent Mind local runtime data (host-specific repo maps & review archives; rules remain tracked)
+# A8 Agent Mind local runtime data (host-specific repo maps, review archives & personal LLM Wiki; rules remain tracked)
 plugins/a8-agent-mind/repos.md
 plugins/a8-agent-mind/repos/
 plugins/a8-agent-mind/reviews/
+plugins/a8-agent-mind/wiki/
 
 # OS generated files
 .DS_Store

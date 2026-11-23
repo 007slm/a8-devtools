@@ -4,6 +4,7 @@ import type { EChartsCoreOption } from 'echarts/core';
 import { EChartBox } from './components/EChartBox';
 import { AgentMindView, type AgentMindViewId } from './components/AgentMindView';
 import { AgentMindModelConfigPanel } from './components/AgentMindModelConfigPanel';
+import { BrainWikiView } from './components/BrainWikiView';
 import { CodeReviewTab } from './components/CodeReviewTab';
 import { PortalHero } from './components/PortalHero';
 import {
@@ -26,6 +27,7 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUp,
+  BookMarked,
   BrainCircuit,
   CheckCircle2,
   Command,
@@ -117,6 +119,14 @@ const SIDECAR_HTTP_ROUTES: Record<string, { path: string; method: 'GET' | 'POST'
   update_grok_proposal_status: { path: '/api/agent-mind/proposal/status', method: 'POST' },
   run_repo_lints: { path: '/api/agent-mind/lints/run', method: 'POST' },
   get_repo_git_diff: { path: '/api/agent-mind/git/diff', method: 'POST' },
+  get_brain_wiki_overview: { path: '/api/agent-mind/brain/overview', method: 'GET' },
+  read_brain_wiki_file: { path: '/api/agent-mind/brain/read', method: 'POST' },
+  create_brain_raw_note: { path: '/api/agent-mind/brain/raw/create', method: 'POST' },
+  save_brain_wiki_file: { path: '/api/agent-mind/brain/save', method: 'POST' },
+  delete_brain_wiki_file: { path: '/api/agent-mind/brain/delete', method: 'POST' },
+  open_brain_wiki_dir: { path: '/api/agent-mind/brain/open-dir', method: 'POST' },
+  set_brain_wiki_dir: { path: '/api/agent-mind/brain/set-dir', method: 'POST' },
+  launch_brain_in_antigravity: { path: '/api/agent-mind/brain/launch', method: 'POST' },
 };
 
 async function callTauri<T = any>(command: string, args: Record<string, any> = {}): Promise<T | null> {
@@ -141,6 +151,12 @@ async function callTauri<T = any>(command: string, args: Record<string, any> = {
             file_name: args.fileName ?? args.file_name,
             title: args.title,
             prompt: args.prompt,
+            status: args.status,
+            source: args.source,
+            tags: args.tags,
+            wiki_dir: args.wikiDir ?? args.wiki_dir,
+            mode: args.mode,
+            topic: args.topic,
           })
         : undefined;
     const sidecarBridge = (window as any).sidecar;
@@ -193,6 +209,7 @@ const NAV_ITEMS = [
   { id: 'agent-mind-reviews' as const, group: '心智治理', label: '终审记录', icon: FileCheck2 },
   { id: 'agent-mind-observability' as const, group: '心智治理', label: '可观测', icon: LineChart },
   { id: 'proposals' as const, group: '核心特性', label: '每日提案', icon: Sparkles, badge: 'Grok' },
+  { id: 'brain' as const, group: '核心特性', label: '知识大脑', icon: BookMarked, badge: 'Wiki' },
   { id: 'projects' as const, group: '核心特性', label: '仓库地图', icon: Network },
   { id: 'code-review' as const, group: '核心特性', label: '代码审核', icon: GitPullRequest, badge: 'Git' },
   { id: 'mappings' as const, group: '核心特性', label: '虚拟镜像映射', icon: FolderGit2 },
@@ -201,7 +218,7 @@ const NAV_ITEMS = [
 
 type MainTabId = (typeof NAV_ITEMS)[number]['id'] | 'settings';
 type SettingsSectionId = 'prefs' | 'doctor' | 'model';
-type StandaloneTabId = AgentMindViewId | 'code-review';
+type StandaloneTabId = AgentMindViewId | 'code-review' | 'brain';
 
 const AGENT_MIND_TAB_TO_VIEW: Partial<Record<MainTabId, AgentMindViewId>> = {
   'agent-mind-rules': 'rules',
@@ -233,6 +250,7 @@ export default function App() {
     const tab = params.get('tab');
     if (
       tab === 'code-review' ||
+      tab === 'brain' ||
       tab === 'rules' ||
       tab === 'reviews' ||
       tab === 'observability' ||
@@ -512,6 +530,7 @@ export default function App() {
       { id: 'tab-agent-mind-reviews', title: '前往：心智治理 · 终审记录', hint: 'DSH 审查历史', action: () => switchTab('agent-mind-reviews') },
       { id: 'tab-agent-mind-observability', title: '前往：心智治理 · 可观测', hint: 'Harness 遥测趋势', action: () => switchTab('agent-mind-observability') },
       { id: 'tab-proposals', title: '前往：每日提案', hint: 'Grok AI 每日提案与批注', action: () => switchTab('proposals') },
+      { id: 'tab-brain', title: '前往：知识大脑 (A8 Brain)', hint: '个人 LLM Wiki 随手记、双链浏览与头脑风暴', action: () => switchTab('brain') },
       { id: 'tab-projects', title: '前往：仓库地图', hint: '多仓库架构索引', action: () => switchTab('projects') },
       { id: 'tab-code-review', title: '前往：代码审核（Commit 前人工审查）', hint: 'Git Diff 逐行批注与反馈复制', action: () => switchTab('code-review') },
       { id: 'tab-mappings', title: '前往：虚拟镜像映射', hint: '工作区总览', action: () => switchTab('mappings') },
@@ -707,6 +726,7 @@ export default function App() {
                   { id: 'reviews', label: '终审记录' },
                   { id: 'observability', label: '可观测' },
                   { id: 'proposals', label: '每日提案' },
+                  { id: 'brain', label: '知识大脑' },
                   { id: 'projects', label: '仓库地图' },
                   { id: 'code-review', label: '代码审核' },
                 ] as const
@@ -748,6 +768,8 @@ export default function App() {
           <div className="max-w-[1440px] mx-auto">
             {standaloneTab === 'code-review' ? (
               <CodeReviewTab callTauri={callTauri} pushToast={pushToast} />
+            ) : standaloneTab === 'brain' ? (
+              <BrainWikiView callTauri={callTauri} pushToast={pushToast} isStandalone />
             ) : (
               <AgentMindView
                 callTauri={callTauri}
@@ -1653,6 +1675,19 @@ export default function App() {
                 transition={{ duration: 0.16 }}
               >
                 <CodeReviewTab callTauri={callTauri} pushToast={pushToast} />
+              </motion.div>
+            )}
+
+            {/* 视图 3.6：个人知识大脑（A8 Brain LLM Wiki） */}
+            {activeTab === 'brain' && (
+              <motion.div
+                key="brain"
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.16 }}
+              >
+                <BrainWikiView callTauri={callTauri} pushToast={pushToast} />
               </motion.div>
             )}
 

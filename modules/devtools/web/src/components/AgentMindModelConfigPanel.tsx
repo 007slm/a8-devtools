@@ -8,6 +8,8 @@ interface AgentMindConfigJson {
   endpoint?: string;
   timeout_seconds?: number;
   confidence_threshold?: number;
+  wiki_dir?: string;
+  [key: string]: unknown;
 }
 
 interface AgentMindOverviewConfigSlice {
@@ -28,6 +30,7 @@ export function AgentMindModelConfigPanel({
   const [cfgTimeout, setCfgTimeout] = useState('15');
   const [cfgThreshold, setCfgThreshold] = useState('0.85');
   const [cfgApiKey, setCfgApiKey] = useState('');
+  const [rawConfig, setRawConfig] = useState<AgentMindConfigJson>({});
   const [loading, setLoading] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
 
@@ -37,6 +40,7 @@ export function AgentMindModelConfigPanel({
       try {
         const res = await callTauri<AgentMindOverviewConfigSlice>('get_agent_mind_overview');
         if (res?.config_json) {
+          setRawConfig(res.config_json);
           setCfgModel(res.config_json.model || '');
           setCfgEndpoint(res.config_json.endpoint || '');
           setCfgTimeout(String(res.config_json.timeout_seconds ?? 15));
@@ -69,6 +73,7 @@ export function AgentMindModelConfigPanel({
     setSavingConfig(true);
     try {
       const payload = {
+        ...rawConfig,
         api_key: cfgApiKey.trim() || '${GEMINI_API_KEY}',
         model: cfgModel.trim() || 'gemini-decision-1',
         endpoint: endpointTrimmed,

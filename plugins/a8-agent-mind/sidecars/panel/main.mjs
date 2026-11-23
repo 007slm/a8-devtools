@@ -15,6 +15,17 @@ import {
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  buildBrainLaunchPrompt,
+  createBrainRawNote,
+  deleteBrainWikiFile,
+  ensureBrainWikiScaffold,
+  readBrainWikiFile,
+  resolveWikiDirForPlugin,
+  saveBrainWikiFile,
+  scanBrainWikiOverview,
+  setBrainWikiDir,
+} from './brain_wiki.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pluginRoot = resolve(__dirname, '..', '..');
@@ -2132,6 +2143,93 @@ const server = createServer(async (req, res) => {
       const body = await readJsonBody(req);
       const result = getRepoGitDiff(body.repo_code, body.scope);
       sendJson(res, 200, { ok: true, data: result }, headers);
+      return;
+    }
+
+    if (method === 'GET' && urlPath === '/api/agent-mind/brain/overview') {
+      const data = scanBrainWikiOverview(pluginRoot);
+      sendJson(res, 200, { ok: true, data }, headers);
+      return;
+    }
+
+    if (method === 'POST' && urlPath === '/api/agent-mind/brain/read') {
+      const body = await readJsonBody(req);
+      const content = readBrainWikiFile(pluginRoot, body.rel_path);
+      sendJson(res, 200, { ok: true, data: content }, headers);
+      return;
+    }
+
+    if (method === 'POST' && urlPath === '/api/agent-mind/brain/raw/create') {
+      const body = await readJsonBody(req);
+      const entry = createBrainRawNote(pluginRoot, {
+        title: body.title,
+        source: body.source,
+        tags: body.tags,
+        content: body.content,
+      });
+      sendJson(res, 200, { ok: true, data: entry }, headers);
+      return;
+    }
+
+    if (method === 'POST' && urlPath === '/api/agent-mind/brain/save') {
+      const body = await readJsonBody(req);
+      saveBrainWikiFile(pluginRoot, body.rel_path, body.content);
+      sendJson(res, 200, { ok: true, data: null }, headers);
+      return;
+    }
+
+    if (method === 'POST' && urlPath === '/api/agent-mind/brain/delete') {
+      const body = await readJsonBody(req);
+      deleteBrainWikiFile(pluginRoot, body.rel_path);
+      sendJson(res, 200, { ok: true, data: null }, headers);
+      return;
+    }
+
+    if (method === 'POST' && urlPath === '/api/agent-mind/brain/open-dir') {
+      const { wikiDir } = resolveWikiDirForPlugin(pluginRoot);
+      ensureBrainWikiScaffold(wikiDir);
+      const cmd =
+        process.platform === 'win32'
+          ? 'explorer.exe'
+          : process.platform === 'darwin'
+            ? 'open'
+            : 'xdg-open';
+      const child = spawn(cmd, [wikiDir], { detached: true, windowsHide: true, stdio: 'ignore' });
+      child.unref();
+      sendJson(res, 200, { ok: true, data: null }, headers);
+      return;
+    }
+
+    if (method === 'POST' && urlPath === '/api/agent-mind/brain/set-dir') {
+      const body = await readJsonBody(req);
+      const data = setBrainWikiDir(pluginRoot, body.wiki_dir);
+      sendJson(res, 200, { ok: true, data }, headers);
+      return;
+    }
+
+    if (method === 'POST' && urlPath === '/api/agent-mind/brain/launch') {
+      const body = await readJsonBody(req);
+      const { wikiDir } = resolveWikiDirForPlugin(pluginRoot);
+      ensureBrainWikiScaffold(wikiDir);
+      const defaults = buildBrainLaunchPrompt(wikiDir, body.mode, body.rel_path, body.topic);
+      const convTitle = String(body.title || '').trim() || defaults.title;
+      const convPrompt = String(body.prompt || '').trim() || defaults.prompt;
+      const parsed = invokeAgentApi(['new-conversation', '--title', convTitle, convPrompt], {
+        projectId: process.env.ANTIGRAVITY_PROJECT_ID,
+      });
+      sendJson(
+        res,
+        200,
+        {
+          ok: true,
+          data: {
+            conversation_id: extractConversationId(parsed),
+            focused_antigravity: true,
+            method: 'agentapi',
+          },
+        },
+        headers,
+      );
       return;
     }
 

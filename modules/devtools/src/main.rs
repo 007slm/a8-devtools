@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agent_mind;
+mod brain_wiki;
 mod net_speed;
 mod settings;
 mod sidecar;
@@ -872,6 +873,14 @@ fn main() {
             agent_mind::update_grok_proposal_status,
             agent_mind::run_repo_lints,
             agent_mind::get_repo_git_diff,
+            brain_wiki::get_brain_wiki_overview,
+            brain_wiki::read_brain_wiki_file,
+            brain_wiki::create_brain_raw_note,
+            brain_wiki::save_brain_wiki_file,
+            brain_wiki::delete_brain_wiki_file,
+            brain_wiki::open_brain_wiki_dir,
+            brain_wiki::set_brain_wiki_dir,
+            brain_wiki::launch_brain_in_antigravity,
         ]);
 
     let app_built = app
