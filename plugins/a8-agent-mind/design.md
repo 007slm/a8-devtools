@@ -149,7 +149,7 @@ E:\a8-devtools\plugins\a8-agent-mind/
 │   ├── a8-workflow/                # 【能力0：全阶段自主工程工作流总控与 5 份场景指南】(自动触发 / /a8-workflow)
 │   │   ├── SKILL.md                # 接单门禁、5 场景指南路由、子代理隔离与 A8 交卷收口
 │   │   ├── guides/                 # analyze / bug-fix / perf / feature / long-task
-│   │   └── references/             # pstack-source-map.md (85 项来源映射与升级台账)
+│   │   └── references/             # pstack-source-map.md (86 项来源映射与升级台账)
 │   ├── a8-prompt/                  # 【事前打磨：提示词专家级深化与重写】(/a8-prompt，仅改写Prompt并停步)
 │   │   └── SKILL.md                # 轻量贴合仓内地图答专家 4 问，做深不做大，重写即停
 │   ├── a8-judge/                   # 【能力1：架构红线裁决 (/a8-judge · 嵌入 /a8-commit，日常不自动触发)】

@@ -1,12 +1,12 @@
-# 上游 `pstack` v0.15.46 来源映射表与升级比对指南
+# 上游 `pstack` v0.15.48 来源映射表与升级比对指南
 
-> 本映射表记录 `a8-workflow` 与 `a8-agent-mind` 吸收改编上游 `pstack` 的 MIT 许可证、全部 85 个核心单元映射、剥离/不采纳清单与升级比对方法（上游原始路径列按原仓库文件名保留，仅用于后续差异比对）。
+> 本映射表记录 `a8-workflow` 与 `a8-agent-mind` 吸收改编上游 `pstack` 的 MIT 许可证、全部 86 个核心单元映射、剥离/不采纳清单与升级比对方法（上游原始路径列按原仓库文件名保留，仅用于后续差异比对）。
 
 ## 一、 上游版本锚点与 MIT License
 
 - **上游仓库**：`https://github.com/cursor/plugins/tree/main/pstack`（作者 `Lauren Tan` / poteto）
-- **版本与基准 Commit**：`v0.15.46`，SHA `0b46ec399d55f2829e88822998f53b84944837d3`（`2026-11-19T22:12:08Z`）
-- **盘点基数**：`61` 个 `SKILL.md`（`34` 功能 + `24` `principle-*` + `3` Benny）+ `22` 个 Playbook + `2` 个 Agent = **85 单元**（另并入核对 37 份配套参考）。
+- **版本与基准 Commit**：`v0.15.48`，SHA `9e278fe4d4ecd8bfe98b1b79bf4be662efb338cc`（`2026-11-23T18:41:29-06:00`）
+- **盘点基数**：`62` 个 `SKILL.md`（`35` 功能 + `24` `principle-*` + `3` Benny）+ `22` 个 Playbook + `2` 个 Agent = **86 单元**（另并入核对 37 份配套参考）。
 
 ```text
 MIT License
@@ -32,12 +32,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## 二、 85 个上游单元逐项映射总表（0 遗漏）
+## 二、 86 个上游单元逐项映射总表（0 遗漏）
 
-> **缩写**：`@wf`=`plugins/a8-agent-mind/skills/a8-workflow/SKILL.md`；`@ana`/`@bug`/`@perf`/`@feat`/`@long`=`.../a8-workflow/guides/{analyze,bug-fix,perf,feature,long-task}.md`；`@prompt`=`.../skills/a8-prompt/SKILL.md`；`@trace`=`.../skills/a8-trace/SKILL.md`；`@rules`=`plugins/a8-agent-mind/rules/mind-rules.md`；`@tokens`=`.../rules/TOKENS.md`；`@improve`=`.../skills/a8-improve/SKILL.md`；`@sync`=`.../agents/docs-sync.md`；`@ui`=`.../skills/a8-ui-design/SKILL.md`；`<repo>`=目标仓根。上游路径相对 `pstack/` 保持原文。  
-> **统计**：吸收 29 + 合并 11 + 部分吸收 28 + 剥离 10 + 拒绝 7 = **85 项**（瘦身后剔除高耗 Token 流程与多工作区隔离逻辑，后者完全交由 Antigravity 原生 `swarm` 处理）。
+> **缩写**：`@wf`=`plugins/a8-agent-mind/skills/a8-workflow/SKILL.md`；`@ana`/`@bug`/`@perf`/`@feat`/`@long`=`.../a8-workflow/guides/{analyze,bug-fix,perf,feature,long-task}.md`；`@prompt`=`.../skills/a8-prompt/SKILL.md`；`@brain`=`.../skills/a8-brain/SKILL.md`；`@trace`=`.../skills/a8-trace/SKILL.md`；`@rules`=`plugins/a8-agent-mind/rules/mind-rules.md`；`@tokens`=`.../rules/TOKENS.md`；`@improve`=`.../skills/a8-improve/SKILL.md`；`@sync`=`.../agents/docs-sync.md`；`@ui`=`.../skills/a8-ui-design/SKILL.md`；`<repo>`=目标仓根。上游路径相对 `pstack/` 保持原文。  
+> **统计**：吸收 29 + 合并 11 + 部分吸收 29 + 剥离 10 + 拒绝 7 = **86 项**（瘦身后剔除高耗 Token 流程与多工作区隔离逻辑，后者完全交由 Antigravity 原生 `swarm` 处理）。
 
-### 2.1 顶层功能与方法技能（34 个，`skills/*/SKILL.md`）
+### 2.1 顶层功能与方法技能（35 个，`skills/*/SKILL.md`）
 
 |# |上游路径|阶段|处置|A8 落地位置|核心吸收动作 / 剥离与拒绝原因|
 |:---:|:---|:---|:---:|:---|:---|
@@ -75,6 +75,7 @@ SOFTWARE.
 |32|`skills/typescript-best-practices/SKILL.md`|编码|部分吸收|`@feat` §1, `@rules` §2|判别联合/边界解析/强类型建模；不另设独立技能|
 |33|`skills/unslop/SKILL.md`|表达|部分吸收|`@wf` §4, `@rules` §1|中文去水（禁套话/一概念一词/禁黑话）；剥英文条款|
 |34|`skills/why/SKILL.md`|调研|合并|`@ana` §2|查 `git log` 与记录动机，严分引文/`[推断]`/空白|
+|86|`skills/reframe/SKILL.md`|定名|部分吸收|`@brain` Mode 4|并入 `/a8-brain` Mode 4（消歧+3～6 核心术语+1～2 跨领域类比断裂点+重写并衔接 Wiki 复利）；裁剪原版 8～12 术语与强制逐链打开核验开销|
 
 ### 2.2 工程原则技能（24 个，`skills/principle-*/SKILL.md`）
 
@@ -162,16 +163,16 @@ SOFTWARE.
 
 ## 四、 未来 `pstack` 升级比对指南
 
-1. **网页对比**：`https://github.com/cursor/plugins/compare/0b46ec399d55f2829e88822998f53b84944837d3...main`
-2. **本地稀疏克隆与 Diff**（放系统临时目录，不污染仓库）：
+1. **网页对比**：`https://github.com/cursor/plugins/compare/9e278fe4d4ecd8bfe98b1b79bf4be662efb338cc...main`
+2. **本地局部拉取与 Diff**（放系统临时目录，不污染仓库；兼容旧版 Git 无 `sparse-checkout` 子命令的场景）：
    ```powershell
    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
    $tmp = Join-Path $env:TEMP "pstack-upstream-diff"
    if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
-   git clone --filter=blob:none --sparse https://github.com/cursor/plugins.git $tmp
-   git -C $tmp sparse-checkout set pstack
-   git -C $tmp log --oneline 0b46ec399d55f2829e88822998f53b84944837d3..HEAD -- pstack
-   git -C $tmp diff --stat 0b46ec399d55f2829e88822998f53b84944837d3..HEAD -- pstack
-   git -C $tmp log -p 0b46ec399d55f2829e88822998f53b84944837d3..HEAD -- pstack
+   git clone --filter=blob:none --no-checkout https://github.com/cursor/plugins.git $tmp
+   git -C $tmp checkout HEAD -- pstack
+   git -C $tmp log --oneline 9e278fe4d4ecd8bfe98b1b79bf4be662efb338cc..HEAD -- pstack
+   git -C $tmp diff --stat 9e278fe4d4ecd8bfe98b1b79bf4be662efb338cc..HEAD -- pstack
+   git -C $tmp log -p 9e278fe4d4ecd8bfe98b1b79bf4be662efb338cc..HEAD -- pstack
    ```
 3. **同步步骤**：① 盘点新增/变更/删废单元及新 Tag/SHA；② 剥离平台耦合、高耗 Token 流程与英文语法，按平实中文合入；③ 守住 `mind-rules.md <= 20,000 B`、`TOKENS.md < 1,000 B`、`a8-workflow/*.md` 远低于 `20,000 B`；④ 更新本映射表锚点、映射表并清理 `$tmp`；⑤ 运行 `E:\a8-devtools\scripts\lints\` 全部 4 项检查全绿。

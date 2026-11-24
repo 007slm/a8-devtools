@@ -50,4 +50,4 @@ description: "跨仓库研发主线工作流总控与 5 份精简场景指南路
 
 ---
 
-> **来源声明**：参考改编自 `cursor/plugins/pstack v0.15.46` (MIT License)，全量映射与升级比对方法见 [pstack-source-map.md](references/pstack-source-map.md)。
+> **来源声明**：参考改编自 `cursor/plugins/pstack v0.15.48` (MIT License)，全量映射与升级比对方法见 [pstack-source-map.md](references/pstack-source-map.md)。
