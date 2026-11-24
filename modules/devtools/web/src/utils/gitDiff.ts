@@ -1,7 +1,58 @@
 export type DiffScope = 'all' | 'staged' | 'unstaged';
 export type DiffViewMode = 'unified' | 'split';
+export type DiffFileCategory = 'source' | 'test' | 'config_docs' | 'generated';
 export type ReviewTag = 'design' | 'bug' | 'change' | 'question';
 export type ReviewVerdict = 'request_changes' | 'approve_with_notes' | 'approved';
+
+export interface RemovedTestHit {
+  filePath: string;
+  name: string;
+  line: number | null;
+  side: 'old' | 'new';
+  kind: 'removed' | 'disabled';
+}
+
+export const DIFF_CATEGORY_ORDER: readonly DiffFileCategory[] = [
+  'source',
+  'test',
+  'config_docs',
+  'generated',
+] as const;
+
+export const DIFF_CATEGORY_META: Record<
+  DiffFileCategory,
+  {
+    label: string;
+    shortLabel: string;
+    badgeClass: string;
+    defaultCollapsedWhenSourcePresent: boolean;
+  }
+> = {
+  source: {
+    label: '核心源码',
+    shortLabel: '源码',
+    badgeClass: 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/25',
+    defaultCollapsedWhenSourcePresent: false,
+  },
+  test: {
+    label: '测试代码',
+    shortLabel: '测试',
+    badgeClass: 'bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/25',
+    defaultCollapsedWhenSourcePresent: true,
+  },
+  config_docs: {
+    label: '配置与文档',
+    shortLabel: '配置文档',
+    badgeClass: 'bg-zinc-500/10 text-zinc-700 dark:text-zinc-300 border-zinc-400/30',
+    defaultCollapsedWhenSourcePresent: true,
+  },
+  generated: {
+    label: '锁文件与产物',
+    shortLabel: '产物',
+    badgeClass: 'bg-zinc-500/8 text-muted border-zinc-300/70 dark:border-border/70',
+    defaultCollapsedWhenSourcePresent: true,
+  },
+};
 
 export interface GitDiffFileEntry {
   path: string;
@@ -324,4 +375,320 @@ export function formatReviewFeedbackMarkdown(params: {
 
   lines.push('', '请按上述意见调整后告知我，我会在工作台刷新 Diff 复核；在得到明确放行前不要执行 `git commit`。');
   return lines.join('\n');
+}
+
+const LOCKFILE_NAMES = new Set([
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'yarn.lock',
+  'cargo.lock',
+  'poetry.lock',
+  'uv.lock',
+  'go.sum',
+  'composer.lock',
+  'gemfile.lock',
+  'gradle.lockfile',
+  'bun.lock',
+  'bun.lockb',
+]);
+
+const CONFIG_EXACT_NAMES = new Set([
+  'pom.xml',
+  'build.gradle',
+  'build.gradle.kts',
+  'settings.gradle',
+  'settings.gradle.kts',
+  'gradle.properties',
+  'package.json',
+  'jsconfig.json',
+  'cargo.toml',
+  'pyproject.toml',
+  'setup.py',
+  'setup.cfg',
+  'makefile',
+  '.gitignore',
+  '.gitattributes',
+  '.editorconfig',
+  '.npmrc',
+  '.nvmrc',
+  'oxlintrc.json',
+]);
+
+/**
+ * 按确定性路径与命名约定对变更文件分层（Java / Maven-Gradle 优先，兼顾全栈项目）
+ */
+export function classifyDiffFile(file: Pick<GitDiffFileEntry, 'path' | 'is_binary'>): DiffFileCategory {
+  const norm = file.path.replace(/\\/g, '/');
+  const lower = norm.toLowerCase();
+  const slashIdx = norm.lastIndexOf('/');
+  const base = slashIdx >= 0 ? norm.slice(slashIdx + 1) : norm;
+  const baseLower = base.toLowerCase();
+
+  // 1. 锁文件与打包/生成产物
+  if (
+    LOCKFILE_NAMES.has(baseLower) ||
+    /(?:^|\/)(?:dist|build|target|out|generated|\.next|ui\/assets)\//.test(lower) ||
+    /\.(?:min\.js|min\.css|map|snap|pb\.go|d\.ts\.map)$/i.test(baseLower) ||
+    /\.generated\.[a-z0-9]+$/i.test(baseLower)
+  ) {
+    return 'generated';
+  }
+
+  // 2. 测试代码与测试资源（Java Maven/Gradle src/test 最高优先级，大小写敏感避免误伤 Commit.java/Limit.java）
+  if (
+    /(?:^|\/)(?:src\/(?:test|it|integration-test|integration-tests|androidtest)|test|tests|__tests__|__mocks__|e2e|integration-test|integration-tests|unit-test|unit-tests|specs?|testdata|fixtures)\//i.test(
+      lower
+    ) ||
+    /(?:Test|Tests|TestCase|IT|ITCase|Spec|Specs)\.(?:java|kt|kts|groovy|scala)$/.test(base) ||
+    /^Test[A-Z].*\.(?:java|kt|kts|groovy|scala)$/.test(base) ||
+    /(?:\.test|\.spec|-test|-spec)\.(?:ts|tsx|js|jsx|mjs|cjs)$/i.test(baseLower) ||
+    /(?:^test_.*|_test)\.py$/i.test(baseLower) ||
+    baseLower === 'conftest.py' ||
+    /_test\.(?:go|rs)$/i.test(baseLower)
+  ) {
+    return 'test';
+  }
+
+  // 非测试目录下的二进制资产归入产物
+  if (file.is_binary) {
+    return 'generated';
+  }
+
+  // 3. 文档与构建/工程配置
+  if (
+    /(?:^|\/)(?:docs|doc|\.github|\.gitlab|\.vscode|\.idea|\.agents)\//.test(lower) ||
+    CONFIG_EXACT_NAMES.has(baseLower) ||
+    /^(?:readme|changelog|license|contributing|agents|gemini|claude)(?:\.[a-z0-9]+)?$/i.test(baseLower) ||
+    /^(?:tsconfig(?:\.[^.]+)?\.json|vite\.config\.[a-z]+|vitest\.config\.[a-z]+|jest\.config\.[a-z]+|dockerfile(?:\..+)?|docker-compose.*\.ya?ml|\.prettierrc.*|\.eslintrc.*|requirements.*\.txt)$/i.test(
+      baseLower
+    ) ||
+    /\.(?:md|mdx|txt|rst|adoc|ya?ml|toml|ini|properties|cfg|conf|env|json|jsonc|json5)$/i.test(baseLower)
+  ) {
+    return 'config_docs';
+  }
+
+  // 4. 核心业务源码（.java/.kt/.ts/.tsx/.js/.sql/MyBatis .xml/.py/.go/.rs 等）
+  return 'source';
+}
+
+export function sortFilesByReviewCategory<T extends Pick<GitDiffFileEntry, 'path' | 'is_binary'>>(
+  files: T[]
+): T[] {
+  const rank = (cat: DiffFileCategory) => DIFF_CATEGORY_ORDER.indexOf(cat);
+  return [...files].sort((a, b) => {
+    const diff = rank(classifyDiffFile(a)) - rank(classifyDiffFile(b));
+    if (diff !== 0) return diff;
+    return a.path.localeCompare(b.path);
+  });
+}
+
+const JAVA_TEST_ANNOTATION_RE = /^\s*@(?:Test|ParameterizedTest|RepeatedTest|TestFactory|DynamicTest)\b/;
+const JAVA_DISABLE_ANNOTATION_RE = /^\s*@(?:Disabled|Ignore)\b/;
+const JAVA_METHOD_NAME_RE =
+  /\b(?:void|fun)\s+([A-Za-z_][A-Za-z0-9_]*|`[^`]+`)\s*(?:<[^>]*>)?\s*\(/;
+const JAVA_LEGACY_TEST_METHOD_RE = /\bvoid\s+(test[A-Z0-9_][A-Za-z0-9_]*)\s*\(/;
+const JS_TEST_CALL_RE = /^\s*(?:it|test)(?:\.(?:only|concurrent))?\s*\(\s*(['"`])(.+?)\1/;
+const JS_SKIP_CALL_RE = /^\s*(?:it|test)\.skip\s*\(\s*(['"`])(.+?)\1/;
+const PY_TEST_DEF_RE = /^\s*(?:async\s+)?def\s+(test_[A-Za-z0-9_]+)\s*\(/;
+const PY_SKIP_DECORATOR_RE = /^\s*@(?:pytest\.mark\.skip(?:if)?|unittest\.skip(?:If|Unless)?)\b/;
+const GO_TEST_FUNC_RE = /^\s*func\s+(Test[A-Za-z0-9_]+)\s*\(/;
+
+function findUpcomingJavaMethodName(
+  lines: DiffLine[],
+  fromIdx: number,
+  allowedTypes: Set<DiffLine['type']>
+): { name: string; line: DiffLine } | null {
+  let scanned = 0;
+  for (let i = fromIdx + 1; i < lines.length && scanned < 7; i++) {
+    const ln = lines[i];
+    if (!allowedTypes.has(ln.type)) continue;
+    const trimmed = ln.content.trim();
+    if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
+      continue;
+    }
+    scanned++;
+    if (trimmed.startsWith('@')) continue;
+    const m = ln.content.match(JAVA_METHOD_NAME_RE);
+    if (m) {
+      return { name: m[1].replace(/^`|`$/g, ''), line: ln };
+    }
+    // 遇到非注解且非方法声明的代码行即停止前探，避免跨到下一个方法
+    if (trimmed.includes(';') || trimmed.startsWith('class ') || trimmed.startsWith('interface ')) {
+      break;
+    }
+  }
+  return null;
+}
+
+/**
+ * 删测雷达（借鉴 /summarize-pr removed-tests 思想）：
+ * 识别测试文件中被删除或新增 @Disabled/@Ignore/.skip 禁用的测试用例，自动剔除仅改签名/重排的误报。
+ */
+export function detectRemovedTests(
+  file: GitDiffFileEntry,
+  preParsedHunks?: DiffHunk[]
+): RemovedTestHit[] {
+  if (file.is_binary || classifyDiffFile(file) !== 'test') return [];
+
+  const hunks = preParsedHunks ?? parseUnifiedFileDiff(file.diff_text);
+  if (hunks.length === 0) return [];
+
+  const lowerPath = file.path.toLowerCase();
+  const isJvm = /\.(?:java|kt|kts|groovy|scala)$/.test(lowerPath);
+  const isJs = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(lowerPath);
+  const isPy = /\.py$/.test(lowerPath);
+  const isGo = /\.go$/.test(lowerPath);
+
+  if (!isJvm && !isJs && !isPy && !isGo) return [];
+
+  const removedCandidates: RemovedTestHit[] = [];
+  const disabledCandidates: RemovedTestHit[] = [];
+  const addedActiveNames = new Set<string>();
+
+  for (const hunk of hunks) {
+    const lines = hunk.lines;
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i];
+
+      if (isJvm) {
+        if (ln.type === 'add') {
+          if (JAVA_TEST_ANNOTATION_RE.test(ln.content)) {
+            const found = findUpcomingJavaMethodName(lines, i, new Set(['add', 'context']));
+            if (found) addedActiveNames.add(found.name);
+          } else if (JAVA_DISABLE_ANNOTATION_RE.test(ln.content)) {
+            const found = findUpcomingJavaMethodName(lines, i, new Set(['add', 'context']));
+            disabledCandidates.push({
+              filePath: file.path,
+              name: found ? found.name : `L${ln.newLine ?? '?'}`,
+              line: ln.newLine,
+              side: 'new',
+              kind: 'disabled',
+            });
+          } else {
+            const legacy = ln.content.match(JAVA_LEGACY_TEST_METHOD_RE);
+            if (legacy) addedActiveNames.add(legacy[1]);
+          }
+        } else if (ln.type === 'del') {
+          if (JAVA_TEST_ANNOTATION_RE.test(ln.content)) {
+            const found = findUpcomingJavaMethodName(lines, i, new Set(['del', 'context']));
+            removedCandidates.push({
+              filePath: file.path,
+              name: found ? found.name : `L${ln.oldLine ?? '?'}`,
+              line: found?.line.oldLine ?? ln.oldLine,
+              side: 'old',
+              kind: 'removed',
+            });
+          } else {
+            const legacy = ln.content.match(JAVA_LEGACY_TEST_METHOD_RE);
+            if (legacy) {
+              removedCandidates.push({
+                filePath: file.path,
+                name: legacy[1],
+                line: ln.oldLine,
+                side: 'old',
+                kind: 'removed',
+              });
+            }
+          }
+        }
+      } else if (isJs) {
+        if (ln.type === 'add') {
+          const skipM = ln.content.match(JS_SKIP_CALL_RE);
+          if (skipM) {
+            disabledCandidates.push({
+              filePath: file.path,
+              name: skipM[2],
+              line: ln.newLine,
+              side: 'new',
+              kind: 'disabled',
+            });
+          } else {
+            const activeM = ln.content.match(JS_TEST_CALL_RE);
+            if (activeM) addedActiveNames.add(activeM[2]);
+          }
+        } else if (ln.type === 'del') {
+          const delM = ln.content.match(JS_TEST_CALL_RE);
+          if (delM) {
+            removedCandidates.push({
+              filePath: file.path,
+              name: delM[2],
+              line: ln.oldLine,
+              side: 'old',
+              kind: 'removed',
+            });
+          }
+        }
+      } else if (isPy) {
+        if (ln.type === 'add') {
+          const defM = ln.content.match(PY_TEST_DEF_RE);
+          if (defM) addedActiveNames.add(defM[1]);
+          else if (PY_SKIP_DECORATOR_RE.test(ln.content)) {
+            for (let j = i + 1; j < Math.min(lines.length, i + 5); j++) {
+              if (lines[j].type === 'del') continue;
+              const nextDef = lines[j].content.match(PY_TEST_DEF_RE);
+              if (nextDef) {
+                disabledCandidates.push({
+                  filePath: file.path,
+                  name: nextDef[1],
+                  line: ln.newLine,
+                  side: 'new',
+                  kind: 'disabled',
+                });
+                break;
+              }
+            }
+          }
+        } else if (ln.type === 'del') {
+          const delM = ln.content.match(PY_TEST_DEF_RE);
+          if (delM) {
+            removedCandidates.push({
+              filePath: file.path,
+              name: delM[1],
+              line: ln.oldLine,
+              side: 'old',
+              kind: 'removed',
+            });
+          }
+        }
+      } else if (isGo) {
+        if (ln.type === 'add') {
+          const addM = ln.content.match(GO_TEST_FUNC_RE);
+          if (addM) addedActiveNames.add(addM[1]);
+        } else if (ln.type === 'del') {
+          const delM = ln.content.match(GO_TEST_FUNC_RE);
+          if (delM) {
+            removedCandidates.push({
+              filePath: file.path,
+              name: delM[1],
+              line: ln.oldLine,
+              side: 'old',
+              kind: 'removed',
+            });
+          }
+        }
+      }
+    }
+  }
+
+  const seen = new Set<string>();
+  const results: RemovedTestHit[] = [];
+
+  for (const hit of disabledCandidates) {
+    const key = `disabled:${hit.name}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      results.push(hit);
+    }
+  }
+  for (const hit of removedCandidates) {
+    // 同一测试名若在同文件重新添加（如仅改签名/注解）则不算删除；但若已被新增 @Disabled/.skip 禁用则不再重复报删除
+    if (addedActiveNames.has(hit.name) || seen.has(`disabled:${hit.name}`)) continue;
+    const key = `removed:${hit.name}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      results.push(hit);
+    }
+  }
+
+  return results;
 }

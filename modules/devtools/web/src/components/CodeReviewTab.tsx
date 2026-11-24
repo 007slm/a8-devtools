@@ -1,7 +1,9 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@heroui/react';
 import {
+  AlertTriangle,
   Check,
+  CheckCheck,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -24,17 +26,24 @@ import {
   X,
 } from 'lucide-react';
 import {
+  DIFF_CATEGORY_META,
+  DIFF_CATEGORY_ORDER,
   REVIEW_TAG_META,
   buildSplitRows,
+  classifyDiffFile,
+  detectRemovedTests,
   formatAnchorLabel,
   formatReviewFeedbackMarkdown,
   parseUnifiedFileDiff,
+  sortFilesByReviewCategory,
+  type DiffFileCategory,
   type DiffHunk,
   type DiffLine,
   type DiffScope,
   type DiffViewMode,
   type GitDiffFileEntry,
   type GitReviewDiffResult,
+  type RemovedTestHit,
   type ReviewAnnotation,
   type ReviewTag,
   type ReviewVerdict,
@@ -308,6 +317,8 @@ const InlineAnnotationCard = memo(function InlineAnnotationCard({
 
 const DiffFileCard = memo(function DiffFileCard({
   file,
+  category,
+  removedTests,
   preparedHunks,
   viewMode,
   isCollapsed,
@@ -330,6 +341,8 @@ const DiffFileCard = memo(function DiffFileCard({
   registerRef,
 }: {
   file: GitDiffFileEntry;
+  category: DiffFileCategory;
+  removedTests: RemovedTestHit[];
   preparedHunks: PreparedHunk[];
   viewMode: DiffViewMode;
   isCollapsed: boolean;
@@ -363,6 +376,7 @@ const DiffFileCard = memo(function DiffFileCard({
   }, [file.path, file.diff_text]);
 
   const badge = STATUS_BADGE[file.status] ?? STATUS_BADGE.M;
+  const catMeta = DIFF_CATEGORY_META[category];
   const fileLevelAnns = useMemo(
     () => fileAnnotations.filter((a) => a.side === 'file'),
     [fileAnnotations]
@@ -423,6 +437,11 @@ const DiffFileCard = memo(function DiffFileCard({
           <span className={`px-1.5 py-0.5 rounded border text-[10px] font-mono ${badge.cls}`}>
             {badge.label}
           </span>
+          <span
+            className={`px-1.5 py-0.5 rounded border text-[10px] font-medium whitespace-nowrap ${catMeta.badgeClass}`}
+          >
+            {catMeta.shortLabel}
+          </span>
           <FileCode2 className="w-3.5 h-3.5 text-muted shrink-0" />
           <span className="font-mono text-[11.5px] font-medium text-foreground truncate select-text">
             {file.status === 'R' && file.old_path ? `${file.old_path} → ${file.path}` : file.path}
@@ -439,6 +458,15 @@ const DiffFileCard = memo(function DiffFileCard({
             <span className="text-emerald-600 dark:text-emerald-400">+{file.additions}</span>{' '}
             <span className="text-rose-600 dark:text-rose-400">-{file.deletions}</span>
           </span>
+          {removedTests.length > 0 && (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-[10px] font-medium whitespace-nowrap"
+              title="检测到该测试文件删除或禁用了测试用例，请确认是否缩小了验证边界"
+            >
+              <AlertTriangle className="w-2.5 h-2.5" />
+              <span>删/禁测 {removedTests.length}</span>
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
@@ -491,6 +519,28 @@ const DiffFileCard = memo(function DiffFileCard({
           </button>
         </div>
       </div>
+
+      {/* Removed/Disabled tests alert */}
+      {removedTests.length > 0 && (
+        <div className="px-3 py-2 border-b border-rose-500/20 bg-rose-500/6 flex flex-wrap items-center gap-1.5 text-[11px] text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          <span className="font-medium shrink-0">
+            检测到 {removedTests.length} 处删除或禁用的测试用例（请确认验证边界未被悄悄削弱）：
+          </span>
+          {removedTests.map((hit) => (
+            <span
+              key={`${hit.kind}-${hit.name}-${hit.line ?? 'x'}`}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-rose-500/25 bg-white/80 dark:bg-surface/70 font-mono text-[10.5px] text-rose-700 dark:text-rose-200"
+            >
+              <span className="font-sans text-[9.5px] opacity-80">
+                {hit.kind === 'disabled' ? '禁用' : '删除'}
+              </span>
+              <span>{hit.name}</span>
+              {hit.line !== null && <span className="opacity-70">L{hit.line}</span>}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* File-level annotations */}
       {fileLevelAnns.map((ann) => (
@@ -824,6 +874,10 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
   const [focusMode, setFocusMode] = useState<'single' | 'all'>('single');
   const [showFileTree, setShowFileTree] = useState<boolean>(true);
   const [fileSearch, setFileSearch] = useState<string>('');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'source' | 'test' | 'other'>('all');
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<DiffFileCategory>>(
+    () => new Set(['test', 'config_docs', 'generated'])
+  );
   const [activeFilePath, setActiveFilePath] = useState<string>('');
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(() => new Set());
 
@@ -896,15 +950,20 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
         });
         setDiffResult(res);
         if (res && res.files.length > 0) {
+          const sorted = sortFilesByReviewCategory(res.files);
+          const hasSource = sorted.some((f) => classifyDiffFile(f) === 'source');
+          setCollapsedGroups(
+            hasSource ? new Set<DiffFileCategory>(['test', 'config_docs', 'generated']) : new Set()
+          );
           const initialActive =
-            activeFilePath && res.files.some((f) => f.path === activeFilePath)
+            activeFilePath && sorted.some((f) => f.path === activeFilePath)
               ? activeFilePath
-              : res.files[0].path;
+              : sorted[0].path;
           setActiveFilePath(initialActive);
           // 全部文件模式下，多于 5 个文件时默认折叠除首文件外的其余文件，避免瞬间挂载数万 DOM 节点
-          if (res.files.length > 5) {
+          if (sorted.length > 5) {
             setCollapsedFiles(
-              new Set(res.files.filter((f) => f.path !== initialActive).map((f) => f.path))
+              new Set(sorted.filter((f) => f.path !== initialActive).map((f) => f.path))
             );
           } else {
             setCollapsedFiles(new Set());
@@ -930,13 +989,30 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRepo, scope]);
 
-  const files = diffResult?.files ?? [];
+  const files = useMemo(
+    () => sortFilesByReviewCategory(diffResult?.files ?? []),
+    [diffResult]
+  );
+
+  const categoryByPath = useMemo(() => {
+    const map = new Map<string, DiffFileCategory>();
+    for (const file of files) {
+      map.set(file.path, classifyDiffFile(file));
+    }
+    return map;
+  }, [files]);
 
   const filteredFiles = useMemo(() => {
     const q = fileSearch.trim().toLowerCase();
-    if (!q) return files;
-    return files.filter((f) => f.path.toLowerCase().includes(q));
-  }, [files, fileSearch]);
+    return files.filter((f) => {
+      const cat = categoryByPath.get(f.path) ?? 'source';
+      if (categoryFilter === 'source' && cat !== 'source') return false;
+      if (categoryFilter === 'test' && cat !== 'test') return false;
+      if (categoryFilter === 'other' && cat !== 'config_docs' && cat !== 'generated') return false;
+      if (q && !f.path.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [files, categoryByPath, categoryFilter, fileSearch]);
 
   /** 一次性预解析 Hunk 与 Split 行配对，不在滚动或打字时重算 */
   const preparedByPath = useMemo(() => {
@@ -957,6 +1033,68 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
     }
     return map;
   }, [files]);
+
+  /** 删测雷达：扫描测试文件中被删除或新增 @Disabled/@Ignore/.skip 禁用的用例 */
+  const removedTestsByPath = useMemo(() => {
+    const map = new Map<string, RemovedTestHit[]>();
+    for (const file of files) {
+      if (categoryByPath.get(file.path) !== 'test') continue;
+      const prepared = preparedByPath.get(file.path);
+      const hunks = prepared ? prepared.map((p) => p.hunk) : undefined;
+      const hits = detectRemovedTests(file, hunks);
+      if (hits.length > 0) {
+        map.set(file.path, hits);
+      }
+    }
+    return map;
+  }, [files, categoryByPath, preparedByPath]);
+
+  const allRemovedTests = useMemo(() => {
+    const list: RemovedTestHit[] = [];
+    for (const hits of removedTestsByPath.values()) {
+      list.push(...hits);
+    }
+    return list;
+  }, [removedTestsByPath]);
+
+  const categorySummary = useMemo(() => {
+    const stats: Record<
+      DiffFileCategory,
+      { count: number; additions: number; deletions: number; reviewed: number; removedTests: number }
+    > = {
+      source: { count: 0, additions: 0, deletions: 0, reviewed: 0, removedTests: 0 },
+      test: { count: 0, additions: 0, deletions: 0, reviewed: 0, removedTests: 0 },
+      config_docs: { count: 0, additions: 0, deletions: 0, reviewed: 0, removedTests: 0 },
+      generated: { count: 0, additions: 0, deletions: 0, reviewed: 0, removedTests: 0 },
+    };
+    for (const file of files) {
+      const cat = categoryByPath.get(file.path) ?? 'source';
+      const bucket = stats[cat];
+      bucket.count++;
+      bucket.additions += file.additions;
+      bucket.deletions += file.deletions;
+      if (reviewedPaths.has(file.path)) bucket.reviewed++;
+      bucket.removedTests += removedTestsByPath.get(file.path)?.length ?? 0;
+    }
+    return stats;
+  }, [files, categoryByPath, reviewedPaths, removedTestsByPath]);
+
+  const groupedFilteredFiles = useMemo(() => {
+    const buckets: Record<DiffFileCategory, GitDiffFileEntry[]> = {
+      source: [],
+      test: [],
+      config_docs: [],
+      generated: [],
+    };
+    for (const file of filteredFiles) {
+      const cat = categoryByPath.get(file.path) ?? 'source';
+      buckets[cat].push(file);
+    }
+    return DIFF_CATEGORY_ORDER.map((category) => ({
+      category,
+      files: buckets[category],
+    })).filter((g) => g.files.length > 0);
+  }, [filteredFiles, categoryByPath]);
 
   const annotationsByFile = useMemo(() => {
     const map = new Map<string, ReviewAnnotation[]>();
@@ -1004,6 +1142,15 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
   const jumpToFile = useCallback(
     (path: string) => {
       setActiveFilePath(path);
+      const cat = categoryByPath.get(path);
+      if (cat) {
+        setCollapsedGroups((prev) => {
+          if (!prev.has(cat)) return prev;
+          const next = new Set(prev);
+          next.delete(cat);
+          return next;
+        });
+      }
       setCollapsedFiles((prev) => {
         if (!prev.has(path)) return prev;
         const next = new Set(prev);
@@ -1019,7 +1166,55 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
         if (el) el.scrollIntoView({ behavior: 'auto', block: 'start' });
       });
     },
-    [focusMode]
+    [focusMode, categoryByPath]
+  );
+
+  const jumpToRemovedTestFile = useCallback(
+    (path: string) => {
+      if (categoryFilter === 'source' || categoryFilter === 'other') {
+        setCategoryFilter('all');
+      }
+      setFileSearch('');
+      setCollapsedGroups((prev) => {
+        if (!prev.has('test')) return prev;
+        const next = new Set(prev);
+        next.delete('test');
+        return next;
+      });
+      jumpToFile(path);
+    },
+    [categoryFilter, jumpToFile]
+  );
+
+  const toggleGroupCollapse = useCallback((category: DiffFileCategory) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      return next;
+    });
+  }, []);
+
+  const toggleCategoryReviewed = useCallback(
+    (category: DiffFileCategory, categoryFiles: GitDiffFileEntry[]) => {
+      if (categoryFiles.length === 0) return;
+      const allReviewed = categoryFiles.every((f) => reviewedPaths.has(f.path));
+      setReviewedPaths((prev) => {
+        const next = new Set(prev);
+        for (const f of categoryFiles) {
+          if (allReviewed) next.delete(f.path);
+          else next.add(f.path);
+        }
+        return next;
+      });
+      pushToast(
+        allReviewed
+          ? `已取消「${DIFF_CATEGORY_META[category].label}」全部已审标记`
+          : `已将「${DIFF_CATEGORY_META[category].label}」(${categoryFiles.length} 个文件) 全部标记已审`,
+        'info'
+      );
+    },
+    [reviewedPaths, pushToast]
   );
 
   const toggleCollapse = useCallback((path: string) => {
@@ -1039,7 +1234,12 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
         if (nowReviewed) {
           next.add(path);
           if (advanceNext) {
-            const nextUnreviewed = files.find((f) => f.path !== path && !next.has(f.path));
+            const curIdx = filteredFiles.findIndex((f) => f.path === path);
+            const ordered =
+              curIdx >= 0
+                ? [...filteredFiles.slice(curIdx + 1), ...filteredFiles.slice(0, curIdx)]
+                : filteredFiles;
+            const nextUnreviewed = ordered.find((f) => f.path !== path && !next.has(f.path));
             if (nextUnreviewed) {
               setTimeout(() => jumpToFile(nextUnreviewed.path), 40);
             }
@@ -1050,7 +1250,7 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
         return next;
       });
     },
-    [files, jumpToFile]
+    [filteredFiles, jumpToFile]
   );
 
   const extractLinesExcerpt = useCallback(
@@ -1230,22 +1430,45 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
           ) : null
         }
         metrics={[
-          { label: '变更文件', value: files.length },
+          {
+            label: '核心 / 测试',
+            value: `${categorySummary.source.count} / ${categorySummary.test.count}`,
+            hint: `共 ${files.length} 个文件：核心源码 ${categorySummary.source.count} · 测试 ${categorySummary.test.count} · 配置文档 ${categorySummary.config_docs.count} · 产物 ${categorySummary.generated.count}`,
+          },
           {
             label: '审阅进度',
             value: `${reviewedCount}/${files.length}`,
             tone: files.length > 0 && reviewedCount === files.length ? 'emerald' : 'default',
+            hint: `核心源码已审 ${categorySummary.source.reviewed}/${categorySummary.source.count}`,
           },
           {
-            label: '新增 / 删除',
-            value: diffResult ? `+${diffResult.total_additions} / -${diffResult.total_deletions}` : '0 / 0',
+            label: categorySummary.source.count > 0 ? '源码净改' : '新增 / 删除',
+            value:
+              categorySummary.source.count > 0
+                ? `+${categorySummary.source.additions} / -${categorySummary.source.deletions}`
+                : diffResult
+                  ? `+${diffResult.total_additions} / -${diffResult.total_deletions}`
+                  : '0 / 0',
             tone: 'blue',
+            hint: diffResult
+              ? `全部文件合计 +${diffResult.total_additions} / -${diffResult.total_deletions}（测试 +${categorySummary.test.additions} / -${categorySummary.test.deletions}）`
+              : undefined,
           },
           {
             label: '行内批注',
             value: annotations.length,
             tone: annotations.length > 0 ? 'amber' : 'default',
           },
+          ...(allRemovedTests.length > 0
+            ? [
+                {
+                  label: '删/禁测试',
+                  value: allRemovedTests.length,
+                  tone: 'rose' as const,
+                  hint: `共检测到 ${allRemovedTests.length} 处删除或禁用测试用例`,
+                },
+              ]
+            : []),
         ]}
       />
 
@@ -1408,8 +1631,8 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
       {/* 2. 主工作区：左侧文件树 + 右侧 Diff 审阅画布 */}
       <section className="rounded-2xl bg-white dark:bg-surface border border-zinc-200/85 dark:border-border/80 overflow-hidden flex h-[calc(100vh-275px)] min-h-[420px]">
         {showFileTree && (
-          <aside className="w-64 shrink-0 border-r border-zinc-200/85 dark:border-border/70 flex flex-col">
-            <div className="p-2.5 border-b border-zinc-200/75 dark:border-border/60">
+          <aside className="w-72 shrink-0 border-r border-zinc-200/85 dark:border-border/70 flex flex-col">
+            <div className="p-2.5 border-b border-zinc-200/75 dark:border-border/60 space-y-2">
               <div className="relative flex items-center">
                 <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 pointer-events-none" />
                 <input
@@ -1419,72 +1642,255 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
                   className="w-full h-7 pl-7 pr-2 rounded-lg border border-zinc-200/90 dark:border-border/70 bg-zinc-50/60 dark:bg-surface-secondary/50 text-[11px] text-foreground outline-none focus:border-zinc-400"
                 />
               </div>
-            </div>
 
-            <div className="flex-1 overflow-y-auto divide-y divide-zinc-200/50 dark:divide-border/40">
-              {filteredFiles.length === 0 ? (
-                <div className="px-3 py-6 text-center text-[11px] text-muted">
-                  {loadingDiff ? '正在拉取 Git Diff…' : '当前范围没有待审核改动'}
-                </div>
-              ) : (
-                filteredFiles.map((file) => {
-                  const { dir, base } = splitFilePath(file.path);
-                  const badge = STATUS_BADGE[file.status] ?? STATUS_BADGE.M;
-                  const isActive = activeFilePath === file.path;
-                  const isReviewed = reviewedPaths.has(file.path);
-                  const annCount = annotationsByFile.get(file.path)?.length ?? 0;
+              {/* 分类聚焦筛选条（单行基线稳定，快速隔离源码与测试） */}
+              <div className="grid grid-cols-4 gap-0.5 rounded-lg border border-zinc-200/85 dark:border-border/70 p-0.5 text-[10.5px]">
+                {(
+                  [
+                    { id: 'all', label: '全部', count: files.length },
+                    { id: 'source', label: '源码', count: categorySummary.source.count },
+                    { id: 'test', label: '测试', count: categorySummary.test.count },
+                    {
+                      id: 'other',
+                      label: '其他',
+                      count: categorySummary.config_docs.count + categorySummary.generated.count,
+                    },
+                  ] as const
+                ).map((opt) => {
+                  const active = categoryFilter === opt.id;
                   return (
-                    <div
-                      key={file.path}
-                      className={`px-2.5 py-2 flex items-start gap-2 ${
-                        isActive
-                          ? 'bg-zinc-100/90 dark:bg-surface-secondary/70'
-                          : 'hover:bg-zinc-50 dark:hover:bg-surface-secondary/35'
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setCategoryFilter(opt.id)}
+                      className={`h-6 px-1 rounded-md inline-flex items-center justify-center gap-1 whitespace-nowrap cursor-pointer ${
+                        active
+                          ? 'bg-zinc-100 dark:bg-surface-secondary font-semibold text-foreground'
+                          : 'text-muted hover:text-foreground'
                       }`}
                     >
-                      <button
-                        type="button"
-                        onClick={() => toggleReviewed(file.path, false)}
-                        title={isReviewed ? '取消已审阅标记' : '标记为已审阅'}
-                        className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 cursor-pointer ${
-                          isReviewed
-                            ? 'bg-emerald-600 border-emerald-600 text-white'
-                            : 'border-zinc-300 dark:border-border text-transparent hover:border-zinc-400'
-                        }`}
-                      >
-                        <Check className="w-2.5 h-2.5" />
-                      </button>
+                      <span>{opt.label}</span>
+                      <span className="font-mono text-[9.5px] opacity-75">{opt.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
+            {/* 删测雷达强提醒：即便测试组折叠也绝不漏掉被删/禁用的测试用例 */}
+            {allRemovedTests.length > 0 && (
+              <div className="px-2.5 py-2 border-b border-rose-500/20 bg-rose-500/6 space-y-1.5">
+                <div className="flex items-center justify-between gap-1.5 text-[10.5px] font-medium text-rose-700 dark:text-rose-300">
+                  <span className="inline-flex items-center gap-1 min-w-0">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    <span className="truncate">检测到 {allRemovedTests.length} 处删/禁测试</span>
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {Array.from(removedTestsByPath.entries()).map(([filePath, hits]) => {
+                    const { base } = splitFilePath(filePath);
+                    return (
                       <button
+                        key={filePath}
                         type="button"
-                        onClick={() => jumpToFile(file.path)}
-                        className="flex-1 min-w-0 text-left cursor-pointer"
+                        onClick={() => jumpToRemovedTestFile(filePath)}
+                        title={hits.map((h) => `${h.kind === 'disabled' ? '禁用' : '删除'}: ${h.name}`).join('\n')}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-rose-500/30 bg-white/80 dark:bg-surface/70 text-[10px] font-mono text-rose-700 dark:text-rose-200 hover:bg-rose-500/12 cursor-pointer max-w-full"
                       >
-                        <div className="flex items-center justify-between gap-1.5">
-                          <span
-                            className={`text-[11.5px] font-medium truncate ${
-                              isReviewed ? 'text-muted line-through' : 'text-foreground'
-                            }`}
-                          >
-                            {base}
-                          </span>
-                          <span className={`px-1 rounded border text-[9.5px] font-mono shrink-0 ${badge.cls}`}>
-                            {badge.label}
-                          </span>
-                        </div>
-                        {dir && <div className="text-[10px] font-mono text-muted truncate mt-0.5">{dir}</div>}
-                        <div className="flex items-center justify-between gap-2 mt-1 text-[10px] font-mono">
-                          <span className="text-muted">
-                            <span className="text-emerald-600 dark:text-emerald-400">+{file.additions}</span>{' '}
-                            <span className="text-rose-600 dark:text-rose-400">-{file.deletions}</span>
-                          </span>
-                          {annCount > 0 && (
-                            <span className="px-1.5 py-0 rounded-full bg-amber-500/12 text-amber-700 dark:text-amber-300 font-sans">
-                              {annCount} 批注
+                        <span className="truncate">{base}</span>
+                        <span className="shrink-0 opacity-75">×{hits.length}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto">
+              {filteredFiles.length === 0 ? (
+                <div className="px-3 py-6 text-center text-[11px] text-muted space-y-2">
+                  <div>
+                    {loadingDiff
+                      ? '正在拉取 Git Diff…'
+                      : files.length > 0
+                        ? '当前分类或关键词下没有匹配文件'
+                        : '当前范围没有待审核改动'}
+                  </div>
+                  {!loadingDiff && files.length > 0 && (categoryFilter !== 'all' || fileSearch.trim()) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCategoryFilter('all');
+                        setFileSearch('');
+                      }}
+                      className="px-2.5 py-1 rounded-md border border-zinc-200/90 dark:border-border/70 text-[10.5px] text-foreground hover:bg-zinc-50 dark:hover:bg-surface-secondary cursor-pointer"
+                    >
+                      重置筛选查看全部 ({files.length})
+                    </button>
+                  )}
+                </div>
+              ) : (
+                groupedFilteredFiles.map(({ category, files: groupFiles }) => {
+                  const meta = DIFF_CATEGORY_META[category];
+                  const isForceExpanded = categoryFilter !== 'all' || Boolean(fileSearch.trim());
+                  const isGroupCollapsed = !isForceExpanded && collapsedGroups.has(category);
+                  const groupReviewed = groupFiles.filter((f) => reviewedPaths.has(f.path)).length;
+                  const groupAdditions = groupFiles.reduce((acc, f) => acc + f.additions, 0);
+                  const groupDeletions = groupFiles.reduce((acc, f) => acc + f.deletions, 0);
+                  const groupRemovedTests = groupFiles.reduce(
+                    (acc, f) => acc + (removedTestsByPath.get(f.path)?.length ?? 0),
+                    0
+                  );
+                  const allGroupReviewed = groupReviewed === groupFiles.length;
+
+                  return (
+                    <div
+                      key={category}
+                      className="border-b last:border-b-0 border-zinc-200/70 dark:border-border/60"
+                    >
+                      {/* 分组头 */}
+                      <div className="px-2 py-1.5 bg-zinc-50/85 dark:bg-surface-secondary/40 flex items-center justify-between gap-1.5 sticky top-0 z-10 border-b border-zinc-200/60 dark:border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!isForceExpanded) toggleGroupCollapse(category);
+                          }}
+                          className={`flex items-center gap-1.5 min-w-0 flex-1 text-left ${
+                            isForceExpanded ? 'cursor-default' : 'cursor-pointer'
+                          }`}
+                        >
+                          {!isForceExpanded && (
+                            <span className="text-muted shrink-0">
+                              {isGroupCollapsed ? (
+                                <ChevronRight className="w-3 h-3" />
+                              ) : (
+                                <ChevronDown className="w-3 h-3" />
+                              )}
                             </span>
                           )}
+                          <span className="text-[11px] font-semibold text-foreground truncate">
+                            {meta.label}
+                          </span>
+                          <span className="text-[10px] font-mono text-muted shrink-0">
+                            {groupReviewed}/{groupFiles.length}
+                          </span>
+                          {groupRemovedTests > 0 && (
+                            <span
+                              className="px-1 py-0 rounded border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-[9.5px] font-medium shrink-0"
+                              title={`本组检测到 ${groupRemovedTests} 处删除/禁用测试`}
+                            >
+                              删测 {groupRemovedTests}
+                            </span>
+                          )}
+                        </button>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-[9.5px] font-mono text-muted">
+                            <span className="text-emerald-600 dark:text-emerald-400">+{groupAdditions}</span>{' '}
+                            <span className="text-rose-600 dark:text-rose-400">-{groupDeletions}</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => toggleCategoryReviewed(category, groupFiles)}
+                            title={
+                              allGroupReviewed
+                                ? `取消「${meta.label}」全部已审`
+                                : `将「${meta.label}」全部标记为已审`
+                            }
+                            className={`p-1 rounded cursor-pointer ${
+                              allGroupReviewed
+                                ? 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10'
+                                : 'text-muted hover:text-foreground hover:bg-zinc-200/60 dark:hover:bg-surface-secondary'
+                            }`}
+                          >
+                            <CheckCheck className="w-3 h-3" />
+                          </button>
                         </div>
-                      </button>
+                      </div>
+
+                      {!isGroupCollapsed && (
+                        <div className="divide-y divide-zinc-200/50 dark:divide-border/40">
+                          {groupFiles.map((file) => {
+                            const { dir, base } = splitFilePath(file.path);
+                            const badge = STATUS_BADGE[file.status] ?? STATUS_BADGE.M;
+                            const isActive = activeFilePath === file.path;
+                            const isReviewed = reviewedPaths.has(file.path);
+                            const annCount = annotationsByFile.get(file.path)?.length ?? 0;
+                            const removedCount = removedTestsByPath.get(file.path)?.length ?? 0;
+                            return (
+                              <div
+                                key={file.path}
+                                className={`px-2.5 py-2 flex items-start gap-2 ${
+                                  isActive
+                                    ? 'bg-zinc-100/90 dark:bg-surface-secondary/70'
+                                    : 'hover:bg-zinc-50 dark:hover:bg-surface-secondary/35'
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => toggleReviewed(file.path, false)}
+                                  title={isReviewed ? '取消已审阅标记' : '标记为已审阅'}
+                                  className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 cursor-pointer ${
+                                    isReviewed
+                                      ? 'bg-emerald-600 border-emerald-600 text-white'
+                                      : 'border-zinc-300 dark:border-border text-transparent hover:border-zinc-400'
+                                  }`}
+                                >
+                                  <Check className="w-2.5 h-2.5" />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => jumpToFile(file.path)}
+                                  className="flex-1 min-w-0 text-left cursor-pointer"
+                                >
+                                  <div className="flex items-center justify-between gap-1.5">
+                                    <span
+                                      className={`text-[11.5px] font-medium truncate ${
+                                        isReviewed ? 'text-muted line-through' : 'text-foreground'
+                                      }`}
+                                    >
+                                      {base}
+                                    </span>
+                                    <span
+                                      className={`px-1 rounded border text-[9.5px] font-mono shrink-0 ${badge.cls}`}
+                                    >
+                                      {badge.label}
+                                    </span>
+                                  </div>
+                                  {dir && (
+                                    <div className="text-[10px] font-mono text-muted truncate mt-0.5">
+                                      {dir}
+                                    </div>
+                                  )}
+                                  <div className="flex items-center justify-between gap-1.5 mt-1 text-[10px] font-mono">
+                                    <span className="text-muted">
+                                      <span className="text-emerald-600 dark:text-emerald-400">
+                                        +{file.additions}
+                                      </span>{' '}
+                                      <span className="text-rose-600 dark:text-rose-400">
+                                        -{file.deletions}
+                                      </span>
+                                    </span>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      {removedCount > 0 && (
+                                        <span className="px-1.5 py-0 rounded-full bg-rose-500/12 text-rose-700 dark:text-rose-300 font-sans">
+                                          删测 {removedCount}
+                                        </span>
+                                      )}
+                                      {annCount > 0 && (
+                                        <span className="px-1.5 py-0 rounded-full bg-amber-500/12 text-amber-700 dark:text-amber-300 font-sans">
+                                          {annCount} 批注
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   );
                 })
@@ -1503,11 +1909,29 @@ export function CodeReviewTab({ projects: externalProjects, callTauri, pushToast
                 可切换上方仓库或 Diff 范围（全部未提交 / 已暂存 / 未暂存），在提交 `git commit` 前逐行批注设计问题或放行。
               </div>
             </div>
+          ) : !loadingDiff && visibleFiles.length === 0 ? (
+            <div className="h-full min-h-[320px] flex flex-col items-center justify-center text-center gap-2.5 text-muted">
+              <FileCode2 className="w-7 h-7 opacity-60" />
+              <div className="text-[12.5px] font-medium text-foreground">当前筛选分类下暂无变更文件</div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-3 rounded-lg text-[11px]"
+                onPress={() => {
+                  setCategoryFilter('all');
+                  setFileSearch('');
+                }}
+              >
+                查看全部变更 ({files.length})
+              </Button>
+            </div>
           ) : (
             visibleFiles.map((file) => (
               <DiffFileCard
                 key={file.path}
                 file={file}
+                category={categoryByPath.get(file.path) ?? 'source'}
+                removedTests={removedTestsByPath.get(file.path) ?? []}
                 preparedHunks={preparedByPath.get(file.path) ?? []}
                 viewMode={viewMode}
                 isCollapsed={focusMode === 'single' ? false : collapsedFiles.has(file.path)}
