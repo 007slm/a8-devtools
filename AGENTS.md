@@ -78,4 +78,4 @@ flowchart LR
    - **双层文档、验证地图与术语表**：普通小改靠单测与行内注释；重大变更写 `docs/records/` 后直接在当前上下文顺手轻更新 `docs/evergreen/`、`docs/verify.md` 与 `AGENTS.md`（勿额外起 `docs-sync` 子代理），全量对齐交由每晚 20:00 定时任务梳理补齐（`docs/` 根目录仅允许 `glossary.md` 与 `verify.md`）；文档写作遵循术语表二选一原则（不在 [`docs/glossary.md`](docs/glossary.md) 中的非通用概念，要么补入术语表并用普通话讲清，要么在正文直接用普通话解释）；
    - **真实验证面路由（禁止假绿交卷）**：严禁仅凭 `cargo check`、Vite 开发模式或 Mock 测试绿灯宣布完成；改动对应模块须对照 [验证地图](docs/verify.md) 跑通 D1~D6 对应真实运行表面并附第一现场实证；
    - **Rust 门禁**：`cargo test --workspace` 与 `cargo check --workspace` 全绿；
-   - **前端与结构门禁**：`modules/devtools/web` 执行 `npm run build`（`tsc -b && vite build`）；根目录执行 `node scripts/lints/check_swallowed_exceptions.mjs`、`node scripts/lints/check_workspace_hygiene.mjs`、`node scripts/lints/check_work_records.mjs` 与 `py -3 scripts/lints/check_plugin_agents.py` 全绿通过。
+   - **前端与结构门禁**：`modules/devtools/web` 执行 `npm run build`（`tsc -b && vite build`）；仓库静态结构与文档门禁由插件 `Stop` Hook 与 `/a8-commit` 自动执行（完整验证面见 [docs/verify.md](docs/verify.md)）。

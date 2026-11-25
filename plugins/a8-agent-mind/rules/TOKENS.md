@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # 上下文与 Token 预算契约 (TOKENS.md)
 
 > 本契约严控 `< 1KB`，固化日常研发 5 条核心节流规则：

@@ -32,7 +32,7 @@
   node scripts/lints/check_work_records.mjs
   py -3 scripts/lints/check_plugin_agents.py
   ```
-- **真通过物理判据**：`cargo check` 与 `cargo test --workspace` 退出码 `0`（覆盖 `cowfs` `unit_test.rs` 7 项、`whiteout`/`config`、`devtools` `main.rs`/`sidecar.rs`/`agent_mind.rs` 全部 Rust 单测，注意默认运行会跳过未装 WinFsp 或需按 D2 单独实测的挂载行为）；4 项仓库门禁全部输出 `[PASS]`，且 `AGENTS.md`、规则文件、`docs/glossary.md`、`docs/verify.md` 物理体积均 `<= 20,000 B`。
+- **真通过物理判据**：`cargo check` 与 `cargo test --workspace` 退出码 `0`（覆盖 `cowfs` `unit_test.rs` 7 项、`whiteout`/`config`、`devtools` `main.rs`/`sidecar.rs`/`agent_mind.rs` 全部 Rust 单测，注意默认运行会跳过未装 WinFsp 或需按 D2 单独实测的挂载行为）；4 项仓库门禁全部输出 `[PASS]`，且 `AGENTS.md`、规则、`plugins/*/skills/*/SKILL.md`、`plugins/*/agents/*.md`、`plugins/*/design.md`、`docs/glossary.md`、`docs/verify.md` 物理体积均 `<= 20,000 B`，同时 `plugins/*/rules/*.md` 与 `.agents/rules/*.md` 通过 `RULE_ACTIVATION_CONTRACT` 激活契约校验。
 - **第一现场日志路径**：终端输出、`target/debug/`、`scripts/lints/`。
 
 ### D2：WinFsp 写时复制、`bindflt` 直通与 Explorer 角标实机
@@ -88,21 +88,23 @@
 - **真通过物理判据**：单实例锁生效；托盘 32×32 位图每 5000ms 更新，隐入托盘后停止向 WebView 发 `net-speed-update`；`devtools_settings.json` 的 `autostart` 与注册表键 `a8-devtools` 严格一致；托盘右键退出后 `:18765` 端口随主进程自动回收。
 - **第一现场日志路径**：`%LOCALAPPDATA%\cowlink\devtools_settings.json`、`%USERPROFILE%\.gemini\antigravity\daemon\hub_*.json`。
 
-### D5：A8 Agent Mind 插件前置审查闸门、夜间扫描与裁判路由闭环
+### D5：A8 Agent Mind 插件轻量确定性 Stop Hook、前置审查闸门、夜间扫描与裁判路由闭环
 - **前置条件**：Python 3（`py -3`）与 Node.js（`node`），仓库位于 Git 管理下。
-- **启动与探活**：确认插件根目录已彻底移除 `hooks.json` / `hooks/stop_reflect.py`（日常对话零 Hook 拦截），提交前强制质量闸门由 `skills/a8-commit/SKILL.md` 驱动。
+- **启动与探活**：确认插件根目录存在 `hooks.json` 与 `hooks/stop_lint.py`（仅执行本地确定性静态 Lint，绝不调 LLM），提交前语义红线审查闸门由 `skills/a8-commit/SKILL.md` 驱动。
 - **执行命令**：
   ```powershell
   py -3 scripts/lints/check_plugin_agents.py
+  py -3 -m unittest plugins/a8-agent-mind/hooks/test_stop_lint.py
   node plugins/a8-agent-mind/scripts/scan_docs_sync.mjs
   py -3 plugins/a8-agent-mind/scripts/run_repo_lints.py .
   py -3 plugins/a8-agent-mind/skills/a8-judge/scripts/judge_router.py .
   ```
 - **真通过物理判据**：
   1. `check_plugin_agents.py` 校验 `plugins/*/agents/*.md`（`arch-judge.md`、`docs-sync.md`、`dsh-reviewer.md`）全部显式声明 `subagent: true`、`mainAgent: false` 与单行 `tools: [...]`，防止运行时被静默降级为只读 9 工具集；
-  2. `scan_docs_sync.mjs` 输出合法 JSON，精准跳过 `role: test-bed` 靶场及无新增提交/工作区变动的仓库（`needs_review: false`），并正确报告 `broken_links`、`unmarked_superseded_records`、`in_flight_records` 与 `< 20KB` 体积警告；`--mark-done <repo>` 后复扫幂等返回 `needs_review: false`；
-  3. `run_repo_lints.py` 输出 `"ok": true` 并写入 `%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\harness_metrics.jsonl`；`judge_router.py .` 输出合法路由 JSON 且 `relevant_docs` 仅含 `.md` 文档（自动跳过 `.html` 可视化指南）；
-  4. 默认 `/a8-commit` 确认三段式审查（`judge_router.py` → 激活维度必跑 `decisions_client.py` → 告警或高危面必跑 `arch-judge`）强制执行；显式 `/a8-commit fast` 仅跳过第 3 步语义红线审查，Step 1 敏文件拦截与 Step 2 确定性门禁仍强检且汇总表如实注明。
+  2. `test_stop_lint.py` 全绿，且通过真实 `stdin` JSON 调用 `py -3 hooks/stop_lint.py` 验证：纯问答/只读回合、`continuationActive: true` 与全绿工作区均返回 `{}` 放行；存在 Lint 违规时返回 `{"decision": "continue", "reason": "..."}` 精确报错并写入 `stop_hook` 遥测；
+  3. `scan_docs_sync.mjs` 输出合法 JSON，精准跳过 `role: test-bed` 靶场及无新增提交/工作区变动的仓库（`needs_review: false`），并正确报告 `broken_links`、`unmarked_superseded_records`、`in_flight_records` 与 `< 20KB` 体积警告；`--mark-done <repo>` 后复扫幂等返回 `needs_review: false`；
+  4. `run_repo_lints.py` 输出 `"ok": true` 并写入 `%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\harness_metrics.jsonl`；`judge_router.py .` 输出合法路由 JSON 且 `relevant_docs` 仅含 `.md` 文档（自动跳过 `.html` 可视化指南）；
+  5. 默认 `/a8-commit` 确认三段式审查（`judge_router.py` → 激活维度必跑 `decisions_client.py` → 告警或高危面必跑 `arch-judge`）强制执行；显式 `/a8-commit fast` 仅跳过第 3 步语义红线审查，Step 1 敏文件拦截与 Step 2 确定性门禁仍强检且汇总表如实注明。
 - **第一现场日志路径**：`%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\harness_metrics.jsonl`、`%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\nightly_docs_sync_state.json`、`plugins/a8-agent-mind/reviews/`、`logs/grok-proposals/`。
 
 ### D6：便携发布打包流水线实机验收（`scripts/release.mjs`）

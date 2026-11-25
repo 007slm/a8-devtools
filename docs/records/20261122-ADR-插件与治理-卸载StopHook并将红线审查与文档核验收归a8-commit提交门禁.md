@@ -1,9 +1,11 @@
 # ADR：卸载 Stop Hook 并将红线审查与文档核验收归 a8-commit 提交门禁
 
 - **日期**：2026-11-22
-- **状态**：已落地（当时有效）
+- **状态**：部分失效（被 20261125-ADR 更新）
 - **域**：agent-mind-governance.md
 - **取代**：20261120-ADR-插件与治理-严格Git回合增量快照与无Git静默边界.md（第 1 节 PreInvocation + Stop 钩子）
+
+> **[部分失效（2026-11-25）]** 以下正文为当时历史快照。语义红线审查（Decisions API / `arch-judge`）与重大变更文档收口仍继续归口 `/a8-commit` 提交闸门，但“日常零 Stop Hook”边界已被 [提示词与 Lint 双线解耦及轻量确定性 Stop Hook 设计](20261125-ADR-插件与治理-提示词与Lint双线解耦及轻量确定性StopHook设计.md) 更新：现行方案通过极轻本地确定性 `Stop` Hook（`hooks/stop_lint.py`，0 Token、不调 LLM）自动执行 `<repo>/scripts/lints/`，同时将 Lint 脚本路径从常驻提示词中彻底剥离。
 
 ---
 

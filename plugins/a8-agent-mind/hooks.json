@@ -1,0 +1,11 @@
+{
+  "a8-repo-lint": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "py -3 hooks/stop_lint.py",
+        "timeout": 25
+      }
+    ]
+  }
+}
