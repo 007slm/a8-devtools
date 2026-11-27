@@ -169,29 +169,37 @@ function isFileWriteLocked(filePath) {
   }
 }
 
-function prepareOverlayDllForBuild(dryRun) {
+function prepareLockedBinariesForBuild(dryRun) {
   if (process.platform !== 'win32' || !fs.existsSync(TARGET_RELEASE_DIR)) return;
 
-  // 顺手清理上次因 explorer.exe 占用而改名遗留的旧 DLL（若已无人占用则删除）
+  const lockableTargets = [
+    { file: 'cowlink_overlay.dll', reason: '资源管理器 (explorer.exe)' },
+    { file: 'cowfs.exe', reason: '运行中的工作区挂载进程 (cowfs.exe)' },
+  ];
+
+  // 顺手清理上次因占用而热改名遗留的旧文件（若已无人占用则删除）
   for (const name of fs.readdirSync(TARGET_RELEASE_DIR)) {
-    if (!name.startsWith('cowlink_overlay.dll.old.')) continue;
-    const stalePath = path.join(TARGET_RELEASE_DIR, name);
-    if (!isFileWriteLocked(stalePath) && !dryRun) {
-      fs.rmSync(stalePath, { force: true });
+    const isOldBackup = lockableTargets.some((t) => name.startsWith(`${t.file}.old.`));
+    if (!isOldBackup) continue;
+    const oldFilePath = path.join(TARGET_RELEASE_DIR, name);
+    if (!isFileWriteLocked(oldFilePath) && !dryRun) {
+      fs.rmSync(oldFilePath, { force: true });
     }
   }
 
-  const dllPath = path.join(TARGET_RELEASE_DIR, 'cowlink_overlay.dll');
-  if (!isFileWriteLocked(dllPath)) return;
+  for (const target of lockableTargets) {
+    const binPath = path.join(TARGET_RELEASE_DIR, target.file);
+    if (!isFileWriteLocked(binPath)) continue;
 
-  const backupPath = path.join(TARGET_RELEASE_DIR, `cowlink_overlay.dll.old.${Date.now()}`);
-  console.log('\n==> 检测到 cowlink_overlay.dll 正被资源管理器 (explorer.exe) 占用，执行热改名避让');
-  console.log(`    ${dllPath} -> ${path.basename(backupPath)}`);
-  if (dryRun) {
-    console.log('    [dry-run] 已跳过改名');
-    return;
+    const backupPath = path.join(TARGET_RELEASE_DIR, `${target.file}.old.${Date.now()}`);
+    console.log(`\n==> 检测到 ${target.file} 正被${target.reason}占用，执行热改名避让`);
+    console.log(`    ${binPath} -> ${path.basename(backupPath)}`);
+    if (dryRun) {
+      console.log('    [dry-run] 已跳过改名');
+      continue;
+    }
+    fs.renameSync(binPath, backupPath);
   }
-  fs.renameSync(dllPath, backupPath);
 }
 
 function sha256File(filePath) {
@@ -339,7 +347,7 @@ function main() {
     );
   }
 
-  prepareOverlayDllForBuild(opts.dryRun);
+  prepareLockedBinariesForBuild(opts.dryRun);
   runStep('Rust 工作空间 Release 编译', 'cargo', ['build', '--release', '--workspace'], REPO_ROOT, opts.dryRun);
 
   // 5. Stage dist package + checksums + zip
