@@ -10,10 +10,10 @@
 | 改动模块 / 路径 | 必跑验证面 | 仅靠哪些测试绿灯不算数（禁止假绿） |
 | :--- | :--- | :--- |
 | **`modules/cowfs/`** (`libcowfs`、`cowfs.exe`) | **D1 + D2** | 仅跑 `tests/unit_test.rs` 临时目录单测，未验证 WinFsp 真实挂载 Copy-Up 与 `bindflt` `--direct` 目录物理属性 |
-| **`modules/cowlink_overlay/`** (`cowlink_overlay.dll`) | **D1 + D2 + D6** | 仅跑 `cargo check`，未检查 HKLM 前导 7 空格注册表项、内嵌角标释放与 `release.mjs` 对 Explorer 文件锁的热改名避让 |
+| **`modules/cowlink_overlay/`** (`cowlink_overlay.dll`) | **D1 + D2 + D6** | 仅跑 `cargo check`，未检查 HKLM 前导 7 空格注册表项、内嵌角标释放与 `release.mjs` 对 Explorer / `cowfs.exe` 文件锁的热改名避让 |
 | **`modules/devtools/` Rust 宿主** (`main.rs`、`sidecar.rs`、`agent_mind.rs`、`net_speed.rs`、`taskbar_window.rs`、`settings.rs`) | **D1 + D3 + D4** | 仅跑 `cargo test`，未启动实机校验单实例唤醒、零黑窗、`:18765` Origin `403` 拦截、UIA 网速条及注册表开机自启 |
 | **`modules/devtools/web/` 与 `modules/devtools/ui/`** | **D1 + D3** | 仅在 `vite` 开发服预览通过，未执行 `npm run build` 核验 `ui/index.html` 经典 IIFE 剥离与三端实机加载零白屏 |
-| **`plugins/a8-agent-mind/`** (`sidecars/panel/main.mjs`、`agents/`、`skills/`、`scripts/`、`decisions/`) | **D1 + D5** | 改完 Agent/技能/Sidecar 后未跑 `check_plugin_agents.py`、`scan_docs_sync.mjs`、`judge_router.py` 与 `:18766` Token/Origin 实测 |
+| **`plugins/a8-agent-mind/`** (`sidecars/panel/main.mjs`、`agents/`、`skills/`、`scripts/`、`decisions/`) | **D1 + D5** | 改完 Agent/技能/Sidecar 后未跑 `check_plugin_agents.py`、`scan_docs_sync.mjs`、`judge_router.py`、`test_statechart_engine.mjs` 与 `:18766` Token/Origin 实测 |
 | **`scripts/lints/` 与 `scripts/release.mjs`** | **D1 + D6** | 仅改单一检查脚本未跑全套 4 项门禁，或未通过 `release.mjs` 核验 `dist/` 产物完整性与 `SHA256SUMS.txt` |
 
 ---
@@ -95,20 +95,21 @@
   ```powershell
   py -3 scripts/lints/check_plugin_agents.py
   py -3 -m unittest plugins/a8-agent-mind/hooks/test_stop_lint.py
+  node --test scripts/tests/test_statechart_engine.mjs
   node plugins/a8-agent-mind/scripts/scan_docs_sync.mjs
   py -3 plugins/a8-agent-mind/scripts/run_repo_lints.py .
   py -3 plugins/a8-agent-mind/skills/a8-judge/scripts/judge_router.py .
   ```
 - **真通过物理判据**：
   1. `check_plugin_agents.py` 校验 `plugins/*/agents/*.md`（`arch-judge.md`、`docs-sync.md`、`dsh-reviewer.md`）全部显式声明 `subagent: true`、`mainAgent: false` 与单行 `tools: [...]`，防止运行时被静默降级为只读 9 工具集；
-  2. `test_stop_lint.py` 全绿，且通过真实 `stdin` JSON 调用 `py -3 hooks/stop_lint.py` 验证：纯问答/只读回合、`continuationActive: true` 与全绿工作区均返回 `{}` 放行；存在 Lint 违规时返回 `{"decision": "continue", "reason": "..."}` 精确报错并写入 `stop_hook` 遥测；
+  2. `test_stop_lint.py` 全绿，且通过真实 `stdin` JSON 调用 `py -3 hooks/stop_lint.py` 验证：纯问答/只读回合、`continuationActive: true` 与全绿工作区均返回 `{}` 放行；存在 Lint 违规时返回 `{"decision": "continue", "reason": "..."}` 精确报错并写入 `stop_hook` 遥测；`test_statechart_engine.mjs` 全绿，验证 `a8-statechart/scripts/statechart.mjs` 状态机 BFS 穷举（Safety/死锁/陷阱）与 Mermaid 输出；
   3. `scan_docs_sync.mjs` 输出合法 JSON，精准跳过 `role: test-bed` 靶场及无新增提交/工作区变动的仓库（`needs_review: false`），并正确报告 `broken_links`、`unmarked_superseded_records`、`in_flight_records` 与 `< 20KB` 体积警告；`--mark-done <repo>` 后复扫幂等返回 `needs_review: false`；
   4. `run_repo_lints.py` 输出 `"ok": true` 并写入 `%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\harness_metrics.jsonl`；`judge_router.py .` 输出合法路由 JSON 且 `relevant_docs` 仅含 `.md` 文档（自动跳过 `.html` 可视化指南）；
   5. 默认 `/a8-commit` 确认三段式审查（`judge_router.py` → 激活维度必跑 `decisions_client.py` → 告警或高危面必跑 `arch-judge`）强制执行；显式 `/a8-commit fast` 仅跳过第 3 步语义红线审查，Step 1 敏文件拦截与 Step 2 确定性门禁仍强检且汇总表如实注明。
 - **第一现场日志路径**：`%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\harness_metrics.jsonl`、`%USERPROFILE%\.gemini\antigravity\plugin_data\a8-agent-mind\nightly_docs_sync_state.json`、`plugins/a8-agent-mind/reviews/`、`logs/grok-proposals/`。
 
 ### D6：便携发布打包流水线实机验收（`scripts/release.mjs`）
-- **前置条件**：D1 全部通过；退出运行中的 `a8-devtools.exe`（或传 `--restart`）；若 `explorer.exe` 锁定 `cowlink_overlay.dll`，脚本会自动热改名为 `cowlink_overlay.dll.old.<ts>` 避让。
+- **前置条件**：D1 全部通过；退出运行中的 `a8-devtools.exe`（或传 `--restart`）；若 `explorer.exe` 锁定 `cowlink_overlay.dll` 或挂载进程锁定 `cowfs.exe`，脚本会自动热改名为 `<文件名>.old.<ts>` 避让并清理已释放的旧 `.old.*` 残留。
 - **启动与探活**：先执行 `node scripts/release.mjs --dry-run` 核对计划步骤。
 - **执行命令**：
   ```powershell

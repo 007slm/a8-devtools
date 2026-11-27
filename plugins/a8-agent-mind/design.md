@@ -1,6 +1,6 @@
 # a8-agent-mind 设计与演进架构规范 (design.md)
 
-> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind），严控 **10 大核心技能（2 自动内功 + 8 手动大招）**，遵循**治理三线分离总原则**：Rule 写提示词、Lint 在会话 `Stop` 后做机械检查、Decision 在 `commit` 之前做语义判定。  
+> **模块定位**：面向自主智能体的工程良知与持续演进心智中枢（A8 Agent Mind），严控 **11 大核心技能（2 自动内功 + 9 手动大招）**，遵循**治理三线分离总原则**：Rule 写提示词、Lint 在会话 `Stop` 后做机械检查、Decision 在 `commit` 之前做语义判定。  
 > **常青真源与使用路由**：现行全量红线、5 级防线阶梯、双层文档/术语表契约与机械门禁细节统一维护于 [`docs/evergreen/agent-mind-governance.md`](../../docs/evergreen/agent-mind-governance.md)（避免重复堆砌）；安装步骤与插件脚本能力路由表见 [`readme.md`](readme.md)。
 
 ---
@@ -48,7 +48,7 @@
   ├──► Rule 线：mind-rules.md 仅提供提示词规范要求（不暴露 Lint 脚本路径）
   ├──► Lint 线（Stop Hook）：修改文件后回合停步自动静默跑 scripts/lints/，违规回传报错与改法
   ├──► 日间快轨：重大变更写轻量记录 (docs/records/) 并顺手轻更常青文档（不起 docs-sync）
-  ├──► 按需人工大招：/a8-prompt（深化重写） · /a8-brain（知识大脑） · /a8-trace（决策账本）
+  ├──► 按需人工大招：/a8-prompt（深化重写） · /a8-brain（知识大脑） · /a8-statechart（状态机穷举出图） · /a8-trace（决策账本）
   │                  /a8-dsh-review（DSH 有界终审，F×S ≥ 10） · /a8-ui-verify（独立界面验收）
   ├──► Decision 线（/a8-commit 提交前强检，显式 fast 仅跳语义审）：
   │      敏文件拦截 → 仓内 Lint 兜底 → judge_router → Decisions API → 按需 arch-judge → 文档收口 → 推送
@@ -92,11 +92,12 @@ E:\a8-devtools\plugins\a8-agent-mind/
 ├── reviews/                        # DSH 终审按仓隔离归档 (reviews/<repo>/*.md，.gitignore)
 ├── wiki/                           # 个人 LLM Wiki 知识库（供 /a8-brain 按需索引读写）
 ├── agents/                         # arch-judge.md / docs-sync.md / dsh-reviewer.md
-├── skills/                         # 10 大核心技能（2 自动 + 8 手动）
+├── skills/                         # 11 大核心技能（2 自动 + 9 手动）
 │   ├── a8-workflow/                # [自动] 研发主线总控 + guides/ (5 场景) + references/
 │   ├── a8-ui-design/               # [自动] 企业级秩序与极简美学 UI 规范
 │   ├── a8-prompt/                  # [手动] 事前提示词专家级深化与重写
 │   ├── a8-brain/                   # [手动] LLM Wiki 知识大脑、定名重构与体检
+│   ├── a8-statechart/              # [手动] 高危状态机零依赖 BFS 穷举检验与 Mermaid 状态图 (scripts/statechart.mjs)
 │   ├── a8-judge/                   # [手动/嵌入commit] 元特征路由 + Decisions API + schemas/scripts
 │   ├── a8-dsh-review/              # [手动] DSH 有界终审闭环与归档 (scripts/review.ps1)
 │   ├── a8-ui-verify/               # [手动] 跨仓自动化 UI 验收协议

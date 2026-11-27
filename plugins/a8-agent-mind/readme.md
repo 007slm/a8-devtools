@@ -1,6 +1,6 @@
 # A8 Agent Mind (`a8-agent-mind`)
 
-> **面向自主智能体的工程良知与持续演进心智中枢**（10 大核心技能：2 个自动内功 + 8 个手动大招）。融合**精简研发主线工作流 (`a8-workflow`)**、**事前提示词深化重写 (`/a8-prompt`)**、**个人 LLM Wiki 知识大脑 (`/a8-brain`)**、**开发决策过程 TSV 账本 (`/a8-trace`)**、**Google Gemini Decisions API 架构红线裁决 (`/a8-judge`)**、**DeepSeek Harness 有界深度终审 (`/a8-dsh-review`)**、**标准化 Git 提交强制门禁 (`/a8-commit`)**、**经验沉淀与规则库清理 (`/a8-improve`)**、**独立 UI 验证 (`/a8-ui-verify`)**、**UI 设计规范 (`a8-ui-design`)** 及 **全局文档与双层仓库地图治理规范 (`mind-rules.md`)**。
+> **面向自主智能体的工程良知与持续演进心智中枢**（11 大核心技能：2 个自动内功 + 9 个手动大招）。融合**精简研发主线工作流 (`a8-workflow`)**、**事前提示词深化重写 (`/a8-prompt`)**、**个人 LLM Wiki 知识大脑 (`/a8-brain`)**、**高危状态机穷举检验与状态图 (`/a8-statechart`)**、**开发决策过程 TSV 账本 (`/a8-trace`)**、**Google Gemini Decisions API 架构红线裁决 (`/a8-judge`)**、**DeepSeek Harness 有界深度终审 (`/a8-dsh-review`)**、**标准化 Git 提交强制门禁 (`/a8-commit`)**、**经验沉淀与规则库清理 (`/a8-improve`)**、**独立 UI 验证 (`/a8-ui-verify`)**、**UI 设计规范 (`a8-ui-design`)** 及 **全局文档与双层仓库地图治理规范 (`mind-rules.md`)**。
 
 ---
 
@@ -42,6 +42,7 @@ a8-agent-mind/
 │   ├── a8-ui-design/           # 【自动内功：企业级秩序与极简美学的 UI 设计规范】
 │   ├── a8-prompt/              # 【事前打磨：提示词专家级深化与重写】(/a8-prompt，重写即停)
 │   ├── a8-brain/               # 【知识大脑：LLM Wiki 头脑风暴、概念定名、整理与体检】(/a8-brain)
+│   ├── a8-statechart/          # 【状态机检验：零依赖 Node.js BFS 穷举与 Mermaid 状态图】(/a8-statechart)
 │   ├── a8-judge/               # 【能力1：架构红线裁决】(/a8-judge · 嵌入 /a8-commit，平时不自动触发)
 │   ├── a8-improve/             # 【能力2：经验沉淀与无效/重复规则清理】(/a8-improve · 含 references/ 按需参考)
 │   ├── a8-ui-verify/           # 【能力3：跨仓库自动化 UI 验证】(/a8-ui-verify)
@@ -68,6 +69,7 @@ a8-agent-mind/
 | `skills/a8-judge/scripts/decisions_client.py` | 无损分片调用 Google Decisions API (`gemini-decision-1`) 概率初筛 | `py -3 skills/a8-judge/scripts/decisions_client.py <repo> <cats>` |
 | `skills/a8-judge/scripts/test_judge_pipeline.py` | 校验裁判管线非后端文件过滤与上下文卫生单测 | `py -3 -m unittest skills/a8-judge/scripts/test_judge_pipeline.py` |
 | `skills/a8-dsh-review/scripts/review.ps1` | 调度 DSH 无头终审、分离推理噪音并按仓归档至 `reviews/` | `pwsh -File skills/a8-dsh-review/scripts/review.ps1 -WorkspaceDir <repo>` |
+| `skills/a8-statechart/scripts/statechart.mjs` | 零依赖 BFS 穷举状态机（Safety/死锁/陷阱）并输出 Mermaid 状态图与最短反例报告 | `node skills/a8-statechart/scripts/statechart.mjs <model.mjs> [--out <dir>]` |
 
 ---
 

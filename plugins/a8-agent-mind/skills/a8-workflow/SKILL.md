@@ -5,7 +5,7 @@ description: "跨仓库研发主线工作流总控与 5 份精简场景指南路
 
 # A8 研发主线工作流 (`a8-workflow`)
 
-本技能只保留**日常研发主线真正高频需要的核心流程纪律**，按任务性质路由至 5 份精简指南，并与全局规则（[mind-rules.md](../../rules/mind-rules.md)、[TOKENS.md](../../rules/TOKENS.md)）、验证地图（`<repo>/docs/verify.md`）及手动大招（`/a8-prompt`、`/a8-dsh-review`、`/a8-ui-verify`、`/a8-trace`、`/a8-commit`、`/a8-improve`）协同。
+本技能只保留**日常研发主线真正高频需要的核心流程纪律**，按任务性质路由至 5 份精简指南，并与全局规则（[mind-rules.md](../../rules/mind-rules.md)、[TOKENS.md](../../rules/TOKENS.md)）、验证地图（`<repo>/docs/verify.md`）及手动大招（`/a8-prompt`、`/a8-brain`、`/a8-statechart`、`/a8-dsh-review`、`/a8-ui-verify`、`/a8-trace`、`/a8-commit`、`/a8-improve`）协同。
 
 > **免开豁免**：1～2 行清晰改动、单一配置微调、纯文案润色或直接技术问答，改完跑通局部校验即可，不必强套流程。  
 > **问路模式**：用户问“我想做 X，怎么推进最稳？”时，只给推荐步骤，不擅自改码。

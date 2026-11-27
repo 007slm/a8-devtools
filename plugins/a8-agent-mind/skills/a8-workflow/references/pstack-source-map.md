@@ -34,7 +34,7 @@ SOFTWARE.
 
 ## 二、 86 个上游单元逐项映射总表（0 遗漏）
 
-> **缩写**：`@wf`=`plugins/a8-agent-mind/skills/a8-workflow/SKILL.md`；`@ana`/`@bug`/`@perf`/`@feat`/`@long`=`.../a8-workflow/guides/{analyze,bug-fix,perf,feature,long-task}.md`；`@prompt`=`.../skills/a8-prompt/SKILL.md`；`@brain`=`.../skills/a8-brain/SKILL.md`；`@trace`=`.../skills/a8-trace/SKILL.md`；`@rules`=`plugins/a8-agent-mind/rules/mind-rules.md`；`@tokens`=`.../rules/TOKENS.md`；`@improve`=`.../skills/a8-improve/SKILL.md`；`@sync`=`.../agents/docs-sync.md`；`@ui`=`.../skills/a8-ui-design/SKILL.md`；`<repo>`=目标仓根。上游路径相对 `pstack/` 保持原文。  
+> **缩写**：`@wf`=`plugins/a8-agent-mind/skills/a8-workflow/SKILL.md`；`@ana`/`@bug`/`@perf`/`@feat`/`@long`=`.../a8-workflow/guides/{analyze,bug-fix,perf,feature,long-task}.md`；`@prompt`=`.../skills/a8-prompt/SKILL.md`；`@brain`=`.../skills/a8-brain/SKILL.md`；`@statechart`=`.../skills/a8-statechart/SKILL.md`；`@trace`=`.../skills/a8-trace/SKILL.md`；`@rules`=`plugins/a8-agent-mind/rules/mind-rules.md`；`@tokens`=`.../rules/TOKENS.md`；`@improve`=`.../skills/a8-improve/SKILL.md`；`@sync`=`.../agents/docs-sync.md`；`@ui`=`.../skills/a8-ui-design/SKILL.md`；`<repo>`=目标仓根。上游路径相对 `pstack/` 保持原文。  
 > **统计**：吸收 29 + 合并 11 + 部分吸收 29 + 剥离 10 + 拒绝 7 = **86 项**（瘦身后剔除高耗 Token 流程与多工作区隔离逻辑，后者完全交由 Antigravity 原生 `swarm` 处理）。
 
 ### 2.1 顶层功能与方法技能（35 个，`skills/*/SKILL.md`）
@@ -67,7 +67,7 @@ SOFTWARE.
 |24|`skills/setup-pstack/SKILL.md`|配置|拒绝|—|写 `pstack-models.mdc`，与 `model: inherit` 冲突|
 |25|`skills/sharpen/SKILL.md`|接单|吸收|`@prompt` 全文|独立手动技能 `/a8-prompt`：贴合仓内地图答专家4问并重写深层Prompt停步|
 |26|`skills/show-me-your-work/SKILL.md`|审计|吸收|`@trace` 全文|独立手动技能 `/a8-trace`：面向日常开发交付的7列 TSV 决策账本（含备选/弯路回退/证据）+ Attention 关注点|
-|27|`skills/statechart/SKILL.md`|状态图|部分吸收|`@feat` §1, `@rules` §3.1|用显式枚举/状态机建模（Mermaid 表达）；拒 `pele`+Java|
+|27|`skills/statechart/SKILL.md`|状态图|部分吸收|`@statechart` 全文|独立手动技能 `/a8-statechart`：零依赖 Node.js BFS 穷举检验（Safety/死锁/陷阱）+ 读者视角 20 箭头 Mermaid 出图与真代码 1:1 重放；拒 TLA+/`mise`/`pele`|
 |28|`skills/swarm/SKILL.md`|并发|剥离|—|多代理与工作区隔离完全交由 Antigravity 原生 `swarm` 标准逻辑，插件不介入|
 |29|`skills/tdd/SKILL.md`|开发|部分吸收|`@bug` §4, `@feat` §1|仅限后端修 Bug 与新功能（纯逻辑/状态机/核心接口）先红后绿；前端完全免 TDD，重Mock场景明文跳过走最小真实面|
 |30|`skills/teach/SKILL.md`|讲解|部分吸收|`@ana` §1|从最小两块出发逐边展开渐进图解，禁表演词|

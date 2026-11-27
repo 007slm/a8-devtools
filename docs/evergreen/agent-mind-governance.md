@@ -68,9 +68,9 @@
 
 ---
 
-## 5. 10 大技能、DSH 终审、经验复盘与本仓机械门禁
+## 5. 11 大技能、DSH 终审、经验复盘与本仓机械门禁
 
-- **10 大核心技能（2 自动内功 + 8 手动大招）**：自动内功 `a8-workflow`（`SKILL.md` + 5 份精简场景指南 `analyze`/`bug-fix`/`perf`/`feature`/`long-task` + `references/pstack-source-map.md`，改编自 `pstack v0.15.48` MIT；1～2 行小改免开）、`a8-ui-design`；手动大招包括事前 `/a8-prompt`（严禁改码，答专家 4 问重写即停）与 `/a8-brain`（个人 LLM Wiki 知识大脑与概念定名重构，纯手动零日常开销）、事中 `/a8-judge`（平时不自动触发）、`/a8-dsh-review` 与 `/a8-ui-verify`（脚本落 `scripts/tests/ui-verify/`、产物落 `logs/ui-verify/`）、事后 `/a8-trace`（7 列 TSV 账本落 `logs/trace-*.tsv` + 防公式注入）、`/a8-commit` 与 `/a8-improve`。
+- **11 大核心技能（2 自动内功 + 9 手动大招）**：自动内功 `a8-workflow`（`SKILL.md` + 5 份精简场景指南 `analyze`/`bug-fix`/`perf`/`feature`/`long-task` + `references/pstack-source-map.md`，改编自 `pstack v0.15.48` MIT；1～2 行小改免开）、`a8-ui-design`；手动大招包括事前 `/a8-prompt`（严禁改码，答专家 4 问重写即停）、`/a8-brain`（个人 LLM Wiki 知识大脑与概念定名重构，纯手动零日常开销）与 `/a8-statechart`（高危并发/协议状态机零依赖 Node.js BFS 穷举检验［Safety/死锁/反向可达陷阱］与 Mermaid 状态图，纯手动零日常开销）、事中 `/a8-judge`（平时不自动触发）、`/a8-dsh-review` 与 `/a8-ui-verify`（脚本落 `scripts/tests/ui-verify/`、产物落 `logs/ui-verify/`）、事后 `/a8-trace`（7 列 TSV 账本落 `logs/trace-*.tsv` + 防公式注入）、`/a8-commit` 与 `/a8-improve`。
 - **DSH 深度终审（`/a8-dsh-review` · `dsh-reviewer` + `review.ps1`）**：默认 `ReasoningEffort = medium`，需求锚定先行（传原始需求与 Non-Goals，依赖 DSH 原生 `@deepseek-ai/dsh-agent-instructions` 加载 `AGENTS.md` 不重复搬运）；仅真实 Bug ($F \times S \ge 10$) 或破损需求可阻断，无缺陷直给 `PASSED`；`Round 1` 启干净新会话、`Round >= 2` 复用会话并冻结战线（硬上限 3 轮、分歧早停交人）；`ProcessStartInfo` 分离 `stdout`/`stderr`，归档至 `reviews/<repoSlug>/`（已 `.gitignore`）。
 - **经验精炼（`/a8-improve`）**：主会话零子代理执行五维纠偏提取（含 6 个月保质期；**仅当本会话已总结出候选项时**抽查最近 3～5 个历史会话佐证，无候选直报零新增）、5 级防线阶梯与规则-强制器配对体检，并按需加载 `references/card-and-eval.md` 生成 `improve_card.html` 提案、6 节确认清单与破坏抓虫正反实证门（`SKILL.md` 与 `design.md` 均通过脚本路径路由解耦，严控 `< 20,000 B`）。
 - **Harness 可观测与上下文预算**：`decisions_client.py` 原子写入 `harness_metrics.jsonl`（分池保留 200 条 Hook + 1000 条检查器记录，驱动「可观测」14 日趋势与长期零违规清理提醒）；`TOKENS.md`（`< 1 KB`）固化 5 条上下文节流规则。
