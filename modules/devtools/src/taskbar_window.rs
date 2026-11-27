@@ -1,8 +1,6 @@
 use parking_lot::RwLock;
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
-use tauri::Manager;
 use windows::core::{w, BSTR, PCWSTR};
 use windows_core::implement;
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -14,8 +12,7 @@ use windows::Win32::Graphics::Gdi::{
     PAINTSTRUCT, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-    COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED,
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Variant::VARIANT;
@@ -28,24 +25,23 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, ChangeWindowMessageFilterEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
-    DestroyMenu, DestroyWindow, DispatchMessageW, FindWindowExW, FindWindowW, GetClassNameW,
-    GetClientRect, GetCursorPos, GetDesktopWindow, GetForegroundWindow, GetMessageW,
-    GetSystemMetrics, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, PostMessageW,
-    PostQuitMessage, RegisterClassExW, SetLayeredWindowAttributes, SetTimer, SetWindowPos,
-    ShowWindow, SystemParametersInfoW, TrackPopupMenu, TranslateMessage, CS_DBLCLKS, CS_HREDRAW,
-    CS_VREDRAW, HWND_TOPMOST, LWA_COLORKEY, MF_DISABLED, MF_GRAYED, MF_SEPARATOR, MF_STRING,
-    MSGFLT_ALLOW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY, WM_DISPLAYCHANGE,
-    WM_DPICHANGED, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT,
-    WM_RBUTTONUP, WM_SETTINGCHANGE, WM_TIMER, WM_USER, WNDCLASSEXW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
+    DispatchMessageW, FindWindowExW, FindWindowW, GetClassNameW, GetClientRect, GetCursorPos,
+    GetDesktopWindow, GetForegroundWindow, GetMessageW, GetSystemMetrics, GetWindowRect, IsIconic,
+    IsWindowVisible, KillTimer, PostMessageW, PostQuitMessage, RegisterClassExW,
+    RegisterWindowMessageW, SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow,
+    SystemParametersInfoW, TrackPopupMenu, TranslateMessage, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW,
+    HWND_TOPMOST, LWA_COLORKEY, MF_DISABLED, MF_GRAYED, MF_SEPARATOR, MF_STRING, SM_CXSCREEN,
+    SM_CYSCREEN, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
+    SW_SHOWNOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+    TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_LBUTTONDBLCLK,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_TIMER,
+    WM_USER, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_POPUP,
 };
 
 pub const WM_TASKBAR_SPEED_UPDATE: u32 = WM_USER + 301;
 const WM_TASKBAR_REDOCK: u32 = WM_USER + 302;
-pub const WM_TASKBAR_SHOW_MAIN: u32 = WM_USER + 303;
 
 const TIMER_FULLSCREEN: usize = 101;
 const TIMER_REDOCK_DEBOUNCE: usize = 102;
@@ -60,11 +56,11 @@ const MENU_QUIT_APP: usize = 1004;
 const MENU_HIDE_BAR: usize = 1005;
 
 static USER_DRAG_LOCKED: AtomicBool = AtomicBool::new(false);
-static LAST_NOTIFY_LEFT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-
-thread_local! {
-    static LOCAL_UIA: RefCell<Option<IUIAutomation>> = const { RefCell::new(None) };
-}
+static USER_ENABLED: AtomicBool = AtomicBool::new(true);
+static LAST_NOTIFY_LEFT: AtomicI32 = AtomicI32::new(0);
+static CACHED_UIA_TRAY_LEFT: AtomicI32 = AtomicI32::new(0);
+static UIA_REFRESH_NEEDED: AtomicBool = AtomicBool::new(false);
+static TASKBAR_CREATED_MSG: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Clone, Copy, Default)]
 struct SendHwnd(isize);
@@ -107,7 +103,8 @@ static GLOBAL_SPEED_STATE: OnceLock<Arc<RwLock<TaskbarState>>> = OnceLock::new()
 static GLOBAL_TAURI_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 
 impl TaskbarSpeedBar {
-    pub fn start(app_handle: tauri::AppHandle) -> Arc<Self> {
+    pub fn start(app_handle: tauri::AppHandle, initial_enabled: bool) -> Arc<Self> {
+        USER_ENABLED.store(initial_enabled, Ordering::SeqCst);
         let speed_state = Arc::new(RwLock::new(TaskbarState {
             upload_str: "▲ 0 B/s".to_string(),
             download_str: "▼ 0 B/s".to_string(),
@@ -151,6 +148,7 @@ impl TaskbarSpeedBar {
     }
 
     pub fn set_visible(&self, visible: bool) {
+        USER_ENABLED.store(visible, Ordering::SeqCst);
         if let Some(send_hwnd) = *self.hwnd.lock() {
             unsafe {
                 if visible {
@@ -251,24 +249,6 @@ fn variant_from_str(s: &str) -> VARIANT {
     VARIANT::from(BSTR::from(s))
 }
 
-unsafe fn ensure_local_uia() -> Option<IUIAutomation> {
-    LOCAL_UIA.with(|cell| {
-        if let Some(existing) = cell.borrow().as_ref() {
-            return Some(existing.clone());
-        }
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            if let Ok(uia) =
-                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
-            {
-                *cell.borrow_mut() = Some(uia.clone());
-                return Some(uia);
-            }
-        }
-        None
-    })
-}
-
 unsafe fn build_tray_condition(uia: &IUIAutomation) -> windows::core::Result<IUIAutomationCondition> {
     unsafe {
         let class_names = [
@@ -361,9 +341,7 @@ unsafe fn find_tray_left_via_uia(
 }
 
 #[implement(IUIAutomationStructureChangedEventHandler)]
-struct TrayStructureHandler {
-    target_hwnd: SendHwnd,
-}
+struct TrayStructureHandler;
 
 impl IUIAutomationStructureChangedEventHandler_Impl for TrayStructureHandler_Impl {
     fn HandleStructureChangedEvent(
@@ -372,22 +350,13 @@ impl IUIAutomationStructureChangedEventHandler_Impl for TrayStructureHandler_Imp
         _changetype: StructureChangeType,
         _runtimeid: *const windows::Win32::System::Com::SAFEARRAY,
     ) -> windows::core::Result<()> {
-        unsafe {
-            let _ = PostMessageW(
-                Some(self.target_hwnd.to_hwnd()),
-                WM_TASKBAR_REDOCK,
-                WPARAM(0),
-                LPARAM(0),
-            );
-        }
+        UIA_REFRESH_NEEDED.store(true, Ordering::Release);
         Ok(())
     }
 }
 
 #[implement(IUIAutomationPropertyChangedEventHandler)]
-struct TrayBoundsHandler {
-    target_hwnd: SendHwnd,
-}
+struct TrayBoundsHandler;
 
 impl IUIAutomationPropertyChangedEventHandler_Impl for TrayBoundsHandler_Impl {
     fn HandlePropertyChangedEvent(
@@ -396,15 +365,31 @@ impl IUIAutomationPropertyChangedEventHandler_Impl for TrayBoundsHandler_Impl {
         _propertyid: windows::Win32::UI::Accessibility::UIA_PROPERTY_ID,
         _newvalue: &VARIANT,
     ) -> windows::core::Result<()> {
+        UIA_REFRESH_NEEDED.store(true, Ordering::Release);
+        Ok(())
+    }
+}
+
+unsafe fn refresh_cached_uia_tray_left(
+    uia: &IUIAutomation,
+    tray_hwnd: HWND,
+    target_hwnd: SendHwnd,
+) {
+    let mut tray_rect = RECT::default();
+    if unsafe { GetWindowRect(tray_hwnd, &mut tray_rect) }.is_err() {
+        return;
+    }
+    let next_left = unsafe { find_tray_left_via_uia(uia, tray_hwnd, &tray_rect) }.unwrap_or(0);
+    let prev_left = CACHED_UIA_TRAY_LEFT.swap(next_left, Ordering::AcqRel);
+    if next_left != prev_left {
         unsafe {
             let _ = PostMessageW(
-                Some(self.target_hwnd.to_hwnd()),
+                Some(target_hwnd.to_hwnd()),
                 WM_TASKBAR_REDOCK,
                 WPARAM(0),
                 LPARAM(0),
             );
         }
-        Ok(())
     }
 }
 
@@ -418,14 +403,8 @@ fn spawn_uia_observer(target_hwnd: SendHwnd, is_alive: Arc<AtomicBool>) {
             return;
         };
 
-        let struct_handler: IUIAutomationStructureChangedEventHandler = TrayStructureHandler {
-            target_hwnd,
-        }
-        .into();
-        let prop_handler: IUIAutomationPropertyChangedEventHandler = TrayBoundsHandler {
-            target_hwnd,
-        }
-        .into();
+        let struct_handler: IUIAutomationStructureChangedEventHandler = TrayStructureHandler.into();
+        let prop_handler: IUIAutomationPropertyChangedEventHandler = TrayBoundsHandler.into();
 
         let mut last_tray_isize: isize = 0;
 
@@ -439,8 +418,8 @@ fn spawn_uia_observer(target_hwnd: SendHwnd, is_alive: Arc<AtomicBool>) {
 
             if cur_isize != 0 && cur_isize != last_tray_isize {
                 let _ = uia.RemoveAllEventHandlers();
+                CACHED_UIA_TRAY_LEFT.store(0, Ordering::Release);
                 if let Ok(root) = uia.ElementFromHandle(tray_hwnd) {
-                    // Prefer scoping to Win11 SystemTray container to avoid noisy app-button events
                     let tray_container = build_tray_frame_condition(&uia)
                         .ok()
                         .and_then(|cond| root.FindFirst(TreeScope_Subtree, &cond).ok());
@@ -468,6 +447,7 @@ fn spawn_uia_observer(target_hwnd: SendHwnd, is_alive: Arc<AtomicBool>) {
                         );
                     }
                     last_tray_isize = cur_isize;
+                    refresh_cached_uia_tray_left(&uia, tray_hwnd, target_hwnd);
                     let _ = PostMessageW(
                         Some(target_hwnd.to_hwnd()),
                         WM_TASKBAR_REDOCK,
@@ -477,12 +457,17 @@ fn spawn_uia_observer(target_hwnd: SendHwnd, is_alive: Arc<AtomicBool>) {
                 }
             } else if cur_isize == 0 && last_tray_isize != 0 {
                 let _ = uia.RemoveAllEventHandlers();
+                CACHED_UIA_TRAY_LEFT.store(0, Ordering::Release);
                 last_tray_isize = 0;
+            } else if cur_isize != 0 && UIA_REFRESH_NEEDED.swap(false, Ordering::AcqRel) {
+                std::thread::sleep(std::time::Duration::from_millis(180));
+                UIA_REFRESH_NEEDED.store(false, Ordering::Release);
+                refresh_cached_uia_tray_left(&uia, tray_hwnd, target_hwnd);
             }
 
-            // Sleep 1.5s checking only Shell_TrayWnd HWND identity (microsecond-level Win32 check, zero UIA polling)
+            // 仅做微秒级 Shell_TrayWnd HWND 存活与脏标志检查，静止期零 UIA 调用
             for _ in 0..6 {
-                if !is_alive.load(Ordering::Relaxed) {
+                if !is_alive.load(Ordering::Relaxed) || UIA_REFRESH_NEEDED.load(Ordering::Acquire) {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(250));
@@ -526,13 +511,12 @@ fn calculate_dock_position() -> (i32, i32, i32, i32) {
                 }
             }
 
-            if let Some(uia) = ensure_local_uia() {
-                if let Some(uia_left) = find_tray_left_via_uia(&uia, tray_hwnd, &tray_rect) {
-                    anchor_left = Some(match anchor_left {
-                        Some(cur) => cur.min(uia_left),
-                        None => uia_left,
-                    });
-                }
+            let uia_left = CACHED_UIA_TRAY_LEFT.load(Ordering::Acquire);
+            if uia_left > tray_mid_x && uia_left < tray_rect.right - 20 {
+                anchor_left = Some(match anchor_left {
+                    Some(cur) => cur.min(uia_left),
+                    None => uia_left,
+                });
             }
 
             if let Some(left) = anchor_left {
@@ -638,23 +622,14 @@ fn run_win32_taskbar_window(
         };
 
         let _ = RegisterClassExW(&wnd_class);
+        let taskbar_created_msg = RegisterWindowMessageW(w!("TaskbarCreated"));
+        TASKBAR_CREATED_MSG.store(taskbar_created_msg, Ordering::Release);
 
         let (init_x, init_y, init_w, init_h) = calculate_dock_position();
 
-        // WS_EX_LAYERED: enable per-pixel color-key transparency
-        // WS_EX_TOOLWINDOW: don't show in Alt-Tab or taskbar icon list
-        // WS_EX_TOPMOST: stay on top of taskbar
-        // WS_EX_NOACTIVATE: don't steal focus when clicked or dragged
+        // 严禁把跨进程 Shell_TrayWnd 设为 Owner：否则会隐式绑定输入队列导致 explorer.exe AppHangXProcB1 死锁及重启连带销毁
         let ex_style = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
-        let style = WS_POPUP | WS_VISIBLE;
-
-        // Make window owned by Shell_TrayWnd so it can NEVER sink below the taskbar
-        let tray_hwnd = FindWindowW(w!("Shell_TrayWnd"), None).unwrap_or_default();
-        let owner_hwnd = if !tray_hwnd.is_invalid() {
-            Some(tray_hwnd)
-        } else {
-            None
-        };
+        let style = WS_POPUP;
 
         let hwnd = match CreateWindowExW(
             ex_style,
@@ -665,7 +640,7 @@ fn run_win32_taskbar_window(
             init_y,
             init_w,
             init_h,
-            owner_hwnd,
+            None,
             None,
             Some(hinstance),
             None,
@@ -674,25 +649,22 @@ fn run_win32_taskbar_window(
             Err(_) => return,
         };
 
-        // Enable 100% transparent background
         let _ = SetLayeredWindowAttributes(hwnd, TRANSPARENT_COLOR_KEY, 0, LWA_COLORKEY);
-        // Allow lower-privilege duplicate launches to wake an elevated running instance
-        let _ = ChangeWindowMessageFilterEx(hwnd, WM_TASKBAR_SHOW_MAIN, MSGFLT_ALLOW, None);
-
         *hwnd_out.lock() = Some(SendHwnd::from_hwnd(hwnd));
 
-        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        let _ = SetWindowPos(
-            hwnd,
-            Some(HWND_TOPMOST),
-            init_x,
-            init_y,
-            init_w,
-            init_h,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW,
-        );
+        if USER_ENABLED.load(Ordering::Acquire) {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                init_x,
+                init_y,
+                init_w,
+                init_h,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+        }
 
-        // Timer for lightweight 1-second fullscreen detection + microsecond Win32 tray edge check
         let _ = SetTimer(Some(hwnd), TIMER_FULLSCREEN, 1000, None);
         spawn_uia_observer(SendHwnd::from_hwnd(hwnd), is_alive.clone());
 
@@ -703,10 +675,6 @@ fn run_win32_taskbar_window(
         }
 
         let _ = DestroyWindow(hwnd);
-        LOCAL_UIA.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
-        CoUninitialize();
     }
 }
 
@@ -716,12 +684,42 @@ unsafe extern "system" fn taskbar_wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    let taskbar_created = TASKBAR_CREATED_MSG.load(Ordering::Acquire);
+    if taskbar_created != 0 && msg == taskbar_created {
+        unsafe {
+            UIA_REFRESH_NEEDED.store(true, Ordering::Release);
+            if !USER_DRAG_LOCKED.load(Ordering::Relaxed) && DRAG_STATE.lock().is_none() {
+                let _ = SetTimer(Some(hwnd), TIMER_REDOCK_DEBOUNCE, 180, None);
+            }
+            if USER_ENABLED.load(Ordering::Acquire) && !is_fullscreen_app_active(hwnd) {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+        }
+        return LRESULT(0);
+    }
+
     match msg {
         WM_TIMER => {
             unsafe {
                 if wparam.0 == TIMER_REDOCK_DEBOUNCE {
                     let _ = KillTimer(Some(hwnd), TIMER_REDOCK_DEBOUNCE);
                     apply_redock_if_needed(hwnd, false);
+                    return LRESULT(0);
+                }
+
+                if !USER_ENABLED.load(Ordering::Acquire) {
+                    if IsWindowVisible(hwnd).as_bool() {
+                        let _ = ShowWindow(hwnd, SW_HIDE);
+                    }
                     return LRESULT(0);
                 }
 
@@ -735,7 +733,16 @@ unsafe extern "system" fn taskbar_wnd_proc(
                     if !is_visible {
                         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     }
-                    // Fast microsecond-level Win32 check for TrayNotifyWnd width changes (no UIA call)
+                    // 无跨进程 Owner 时，点击任务栏可能将 Shell_TrayWnd 推至顶层，按需温和恢复 TOPMOST
+                    let _ = SetWindowPos(
+                        hwnd,
+                        Some(HWND_TOPMOST),
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                    );
                     if !USER_DRAG_LOCKED.load(Ordering::Relaxed) {
                         let tray_hwnd = FindWindowW(w!("Shell_TrayWnd"), None).unwrap_or_default();
                         if !tray_hwnd.is_invalid() {
@@ -766,16 +773,21 @@ unsafe extern "system" fn taskbar_wnd_proc(
         }
         WM_TASKBAR_SPEED_UPDATE => {
             unsafe {
+                if !USER_ENABLED.load(Ordering::Acquire) {
+                    if IsWindowVisible(hwnd).as_bool() {
+                        let _ = ShowWindow(hwnd, SW_HIDE);
+                    }
+                    return LRESULT(0);
+                }
+
                 let is_fullscreen = is_fullscreen_app_active(hwnd);
                 let is_visible = IsWindowVisible(hwnd).as_bool();
 
                 if is_fullscreen {
-                    // Fullscreen video/game detected: auto-hide to avoid blocking content
                     if is_visible {
                         let _ = ShowWindow(hwnd, SW_HIDE);
                     }
                 } else {
-                    // Exit fullscreen: auto-restore
                     if !is_visible {
                         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     }
@@ -885,14 +897,9 @@ unsafe extern "system" fn taskbar_wnd_proc(
             }
             LRESULT(0)
         }
-        WM_LBUTTONDBLCLK | WM_TASKBAR_SHOW_MAIN => {
-            // Double click or secondary instance launch: open/restore main window
+        WM_LBUTTONDBLCLK => {
             if let Some(app) = GLOBAL_TAURI_APP.get() {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
+                crate::show_and_focus_main_window(app);
             }
             LRESULT(0)
         }
@@ -911,32 +918,21 @@ unsafe extern "system" fn taskbar_wnd_proc(
                 },
                 MENU_TOGGLE_WIN => {
                     if let Some(app) = GLOBAL_TAURI_APP.get() {
-                        if let Some(window) = app.get_webview_window("main") {
-                            if window.is_visible().unwrap_or(false) {
-                                let _ = window.hide();
-                            } else {
-                                let _ = window.show();
-                                let _ = window.unminimize();
-                                let _ = window.set_focus();
-                            }
-                        }
+                        crate::toggle_main_window(app);
                     }
                 }
                 MENU_QUIT_APP => {
-                    unsafe {
-                        let _ = ShowWindow(hwnd, SW_HIDE);
-                        let _ = DestroyWindow(hwnd);
-                    }
                     if let Some(app) = GLOBAL_TAURI_APP.get() {
-                        app.exit(0);
+                        crate::quit_app_cleanly(app);
                     }
                 }
                 MENU_HIDE_BAR => unsafe {
+                    USER_ENABLED.store(false, Ordering::SeqCst);
                     let _ = ShowWindow(hwnd, SW_HIDE);
                     let mut s = crate::settings::load_settings();
                     s.taskbar_speed_enabled = false;
                     let _ = crate::settings::save_settings(s);
-                }
+                },
                 _ => {}
             }
             LRESULT(0)

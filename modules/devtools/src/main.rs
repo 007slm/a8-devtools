@@ -3,6 +3,7 @@
 mod agent_mind;
 mod brain_wiki;
 mod net_speed;
+mod screen_alert;
 mod settings;
 mod sidecar;
 mod taskbar_window;
@@ -10,6 +11,7 @@ mod taskbar_window;
 use cowfs::config::WorkspaceMeta;
 use cowfs::doctor::SystemDoctor;
 use net_speed::{NetSpeedDto, NetSpeedMonitor};
+use screen_alert::{ScreenAlertManager, ScreenAlertStatusDto};
 use taskbar_window::TaskbarSpeedBar;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -184,6 +186,55 @@ impl Drop for SingleInstanceGuard {
 struct SingleInstanceGuard;
 
 #[cfg(windows)]
+fn current_desktop_mutex_name() -> String {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::StationsAndDesktops::{
+        GetThreadDesktop, GetUserObjectInformationW, UOI_NAME,
+    };
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+
+    unsafe {
+        if let Ok(desk) = GetThreadDesktop(GetCurrentThreadId()) {
+            let mut buf = [0u16; 128];
+            let mut needed = 0u32;
+            let buf_bytes = (buf.len() * std::mem::size_of::<u16>()) as u32;
+            if GetUserObjectInformationW(
+                HANDLE(desk.0),
+                UOI_NAME,
+                Some(buf.as_mut_ptr() as *mut _),
+                buf_bytes,
+                Some(&mut needed),
+            )
+            .is_ok()
+                && needed >= 2
+            {
+                let len = ((needed as usize) / 2).saturating_sub(1).min(buf.len());
+                let raw = String::from_utf16_lossy(&buf[..len]);
+                let sanitized: String = raw
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+                if !sanitized.is_empty() {
+                    return format!("Local\\A8DevTools_SingleInstance_Mutex_{}", sanitized);
+                }
+            }
+        }
+    }
+    "Local\\A8DevTools_SingleInstance_Mutex".to_string()
+}
+
+#[cfg(not(windows))]
+fn current_desktop_mutex_name() -> String {
+    "Local\\A8DevTools_SingleInstance_Mutex".to_string()
+}
+
+#[cfg(windows)]
 fn try_acquire_single_instance(mutex_name: &str) -> Option<SingleInstanceGuard> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{
@@ -218,38 +269,295 @@ fn try_acquire_single_instance(_mutex_name: &str) -> Option<SingleInstanceGuard>
     Some(SingleInstanceGuard)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowToggleAction {
+    ShowAndFocus,
+    Hide,
+}
+
+fn decide_toggle_window_action(is_visible: bool, is_minimized: bool) -> WindowToggleAction {
+    if is_visible && !is_minimized {
+        WindowToggleAction::Hide
+    } else {
+        WindowToggleAction::ShowAndFocus
+    }
+}
+
 #[cfg(windows)]
-fn activate_existing_instance() {
-    use windows::core::w;
-    use windows::Win32::Foundation::{LPARAM, WPARAM};
+fn force_bring_window_to_front(window: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONULL};
     use windows::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, IsIconic, PostMessageW, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+        BringWindowToTop, IsIconic, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_NOTOPMOST,
+        HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE, SW_SHOW,
     };
 
+    let Ok(raw_hwnd) = window.hwnd() else {
+        return;
+    };
+    let hwnd = HWND(raw_hwnd.0);
+
     unsafe {
-        if let Ok(bar_hwnd) =
-            FindWindowW(w!("A8DevToolsTaskbarSpeedBar"), w!("a8-devtools-taskbar-speed"))
-        {
-            if !bar_hwnd.is_invalid() {
-                let _ = PostMessageW(
-                    Some(bar_hwnd),
-                    taskbar_window::WM_TASKBAR_SHOW_MAIN,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
-            }
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        } else {
+            let _ = ShowWindow(hwnd, SW_SHOW);
         }
 
-        if let Ok(main_hwnd) = FindWindowW(None, w!("a8-devtools 开发者工作台")) {
-            if !main_hwnd.is_invalid() {
-                let _ = ShowWindow(main_hwnd, SW_SHOW);
-                if IsIconic(main_hwnd).as_bool() {
-                    let _ = ShowWindow(main_hwnd, SW_RESTORE);
+        if MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL).is_invalid() {
+            let _ = window.center();
+        }
+
+        let _ = BringWindowToTop(hwnd);
+        if !SetForegroundWindow(hwnd).as_bool() {
+            // Windows 前台锁拦住跨进程激活时，用短暂置顶再复位把窗口推至顶层
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            );
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_NOTOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            );
+            let _ = SetForegroundWindow(hwnd);
+        }
+    }
+}
+
+pub(crate) fn show_and_focus_main_window(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("main") else {
+            return;
+        };
+        if window.is_minimized().unwrap_or(false) {
+            let _ = window.unminimize();
+        }
+        let _ = window.show();
+        let _ = window.unminimize();
+        #[cfg(windows)]
+        force_bring_window_to_front(&window);
+        let _ = window.set_focus();
+    });
+}
+
+pub(crate) fn toggle_main_window(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("main") else {
+            return;
+        };
+        let is_visible = window.is_visible().unwrap_or(false);
+        let is_minimized = window.is_minimized().unwrap_or(false);
+        match decide_toggle_window_action(is_visible, is_minimized) {
+            WindowToggleAction::Hide => {
+                let _ = window.hide();
+            }
+            WindowToggleAction::ShowAndFocus => {
+                if is_minimized {
+                    let _ = window.unminimize();
                 }
-                let _ = SetForegroundWindow(main_hwnd);
+                let _ = window.show();
+                let _ = window.unminimize();
+                #[cfg(windows)]
+                force_bring_window_to_front(&window);
+                let _ = window.set_focus();
+            }
+        }
+    });
+}
+
+#[cfg(windows)]
+mod wake_receiver {
+    use super::show_and_focus_main_window;
+    use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::sync::{Arc, OnceLock};
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        AllowSetForegroundWindow, ChangeWindowMessageFilterEx, CreateWindowExW, DefWindowProcW,
+        DestroyWindow, DispatchMessageW, FindWindowExW, FindWindowW, GetMessageW, IsIconic,
+        PostMessageW, PostQuitMessage, RegisterClassExW, SendMessageTimeoutW, SetForegroundWindow,
+        ShowWindow, TranslateMessage, ASFW_ANY, HWND_MESSAGE, MSG, MSGFLT_ALLOW, SMTO_ABORTIFHUNG,
+        SMTO_BLOCK, SW_RESTORE, SW_SHOW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE,
+        WM_DESTROY, WNDCLASSEXW,
+    };
+
+    const WAKE_CLASS_NAME: PCWSTR = w!("A8DevToolsWakeReceiver");
+    const WM_APP_WAKE_MAIN: u32 = WM_APP + 101;
+    const WAKE_ACK: usize = 0xA801;
+
+    static WAKE_TAURI_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+    pub struct WakeReceiver {
+        hwnd: Arc<AtomicIsize>,
+    }
+
+    impl WakeReceiver {
+        pub fn start(app_handle: tauri::AppHandle) -> Self {
+            let _ = WAKE_TAURI_APP.set(app_handle);
+            let hwnd_holder = Arc::new(AtomicIsize::new(0));
+            let holder_clone = hwnd_holder.clone();
+
+            std::thread::spawn(move || {
+                run_message_loop(holder_clone);
+            });
+
+            Self { hwnd: hwnd_holder }
+        }
+
+        pub fn shutdown(&self) {
+            let raw = self.hwnd.swap(0, Ordering::SeqCst);
+            if raw != 0 {
+                unsafe {
+                    let _ = PostMessageW(
+                        Some(HWND(raw as *mut _)),
+                        WM_CLOSE,
+                        WPARAM(0),
+                        LPARAM(0),
+                    );
+                }
             }
         }
     }
+
+    impl Drop for WakeReceiver {
+        fn drop(&mut self) {
+            self.shutdown();
+        }
+    }
+
+    fn run_message_loop(hwnd_holder: Arc<AtomicIsize>) {
+        unsafe {
+            let hinstance: HINSTANCE = GetModuleHandleW(None).unwrap_or_default().into();
+            let wnd_class = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(wake_wnd_proc),
+                hInstance: hinstance,
+                lpszClassName: WAKE_CLASS_NAME,
+                ..Default::default()
+            };
+            let _ = RegisterClassExW(&wnd_class);
+
+            // HWND_MESSAGE 独立于桌面与 Shell_TrayWnd，explorer.exe 重启不会连带销毁唤醒通道
+            let Ok(hwnd) = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                WAKE_CLASS_NAME,
+                w!("a8-devtools-wake"),
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                Some(hinstance),
+                None,
+            ) else {
+                return;
+            };
+
+            let _ = ChangeWindowMessageFilterEx(hwnd, WM_APP_WAKE_MAIN, MSGFLT_ALLOW, None);
+            hwnd_holder.store(hwnd.0 as isize, Ordering::SeqCst);
+
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+
+            hwnd_holder.store(0, Ordering::SeqCst);
+        }
+    }
+
+    unsafe extern "system" fn wake_wnd_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        match msg {
+            WM_APP_WAKE_MAIN => {
+                if let Some(app) = WAKE_TAURI_APP.get() {
+                    show_and_focus_main_window(app);
+                }
+                LRESULT(WAKE_ACK as isize)
+            }
+            WM_CLOSE => {
+                unsafe {
+                    let _ = DestroyWindow(hwnd);
+                }
+                LRESULT(0)
+            }
+            WM_DESTROY => {
+                unsafe {
+                    PostQuitMessage(0);
+                }
+                LRESULT(0)
+            }
+            _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+        }
+    }
+
+    pub fn activate_existing_instance() -> bool {
+        unsafe {
+            let _ = AllowSetForegroundWindow(ASFW_ANY);
+
+            for attempt in 0..4 {
+                if let Ok(wake_hwnd) =
+                    FindWindowExW(Some(HWND_MESSAGE), None, WAKE_CLASS_NAME, PCWSTR::null())
+                {
+                    if !wake_hwnd.is_invalid() {
+                        let mut result: usize = 0;
+                        let sent = SendMessageTimeoutW(
+                            wake_hwnd,
+                            WM_APP_WAKE_MAIN,
+                            WPARAM(0),
+                            LPARAM(0),
+                            SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                            1500,
+                            Some(&mut result),
+                        );
+                        if sent.0 != 0 && result == WAKE_ACK {
+                            return true;
+                        }
+                    }
+                }
+                if attempt < 3 {
+                    std::thread::sleep(std::time::Duration::from_millis(120));
+                }
+            }
+
+            if let Ok(main_hwnd) = FindWindowW(None, w!("a8-devtools 开发者工作台")) {
+                if !main_hwnd.is_invalid() {
+                    if IsIconic(main_hwnd).as_bool() {
+                        let _ = ShowWindow(main_hwnd, SW_RESTORE);
+                    } else {
+                        let _ = ShowWindow(main_hwnd, SW_SHOW);
+                    }
+                    let _ = SetForegroundWindow(main_hwnd);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+#[cfg(windows)]
+fn activate_existing_instance() {
+    let _ = wake_receiver::activate_existing_instance();
 }
 
 #[cfg(not(windows))]
@@ -612,11 +920,34 @@ fn save_app_settings(
     new_settings: settings::AppSettings,
     state: tauri::State<'_, Arc<parking_lot::RwLock<settings::AppSettings>>>,
     bar_state: tauri::State<'_, Arc<TaskbarSpeedBar>>,
+    alert_state: tauri::State<'_, Arc<ScreenAlertManager>>,
 ) -> Result<(), String> {
-    settings::save_settings(new_settings.clone())?;
-    bar_state.set_visible(new_settings.taskbar_speed_enabled);
-    *state.write() = new_settings;
+    let mut normalized = new_settings;
+    normalized.screen_alert_processes =
+        screen_alert::normalize_process_list(&normalized.screen_alert_processes);
+    settings::save_settings(normalized.clone())?;
+    bar_state.set_visible(normalized.taskbar_speed_enabled);
+    alert_state.apply_settings(
+        normalized.screen_alert_enabled,
+        normalized.screen_alert_processes.clone(),
+    );
+    *state.write() = normalized;
     Ok(())
+}
+
+#[tauri::command]
+fn get_screen_alert_status(
+    alert_state: tauri::State<'_, Arc<ScreenAlertManager>>,
+) -> Result<ScreenAlertStatusDto, String> {
+    Ok(alert_state.get_status())
+}
+
+#[tauri::command]
+fn set_screen_alert_preview(
+    preview: bool,
+    alert_state: tauri::State<'_, Arc<ScreenAlertManager>>,
+) -> Result<ScreenAlertStatusDto, String> {
+    Ok(alert_state.set_preview(preview))
 }
 
 #[tauri::command]
@@ -639,8 +970,15 @@ fn app_close(window: tauri::WebviewWindow) {
 }
 
 pub(crate) fn quit_app_cleanly(app: &tauri::AppHandle) {
+    #[cfg(windows)]
+    if let Some(receiver) = app.try_state::<wake_receiver::WakeReceiver>() {
+        receiver.shutdown();
+    }
     if let Some(bar) = app.try_state::<Arc<TaskbarSpeedBar>>() {
         bar.shutdown();
+    }
+    if let Some(alert) = app.try_state::<Arc<ScreenAlertManager>>() {
+        alert.shutdown();
     }
     app.exit(0);
 }
@@ -656,18 +994,17 @@ fn app_start_drag(window: tauri::WebviewWindow) {
 }
 
 fn main() {
-    let Some(_single_instance_guard) =
-        try_acquire_single_instance("Local\\A8DevTools_SingleInstance_Mutex")
-    else {
-        activate_existing_instance();
-        return;
-    };
-
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && args[1] == "sidecar-board" {
         sidecar::run();
         return;
     }
+
+    let mutex_name = current_desktop_mutex_name();
+    let Some(_single_instance_guard) = try_acquire_single_instance(&mutex_name) else {
+        activate_existing_instance();
+        return;
+    };
 
     let initial_settings = settings::load_settings();
     let settings_state = Arc::new(parking_lot::RwLock::new(initial_settings));
@@ -722,41 +1059,34 @@ fn main() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle_window" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            if window.is_visible().unwrap_or(false) {
-                                let _ = window.hide();
-                            } else {
-                                let _ = window.show();
-                                let _ = window.unminimize();
-                                let _ = window.set_focus();
-                            }
-                        }
+                        toggle_main_window(app);
                     }
                     "quit_app" => {
                         quit_app_cleanly(app);
                     }
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
+                .on_tray_icon_event(|tray, event| match event {
+                    TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
                         ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            if window.is_visible().unwrap_or(false) {
-                                let _ = window.hide();
-                            } else {
-                                let _ = window.show();
-                                let _ = window.unminimize();
-                                let _ = window.set_focus();
-                            }
-                        }
                     }
+                    | TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        show_and_focus_main_window(tray.app_handle());
+                    }
+                    _ => {}
                 })
                 .build(app)?;
+
+            #[cfg(windows)]
+            {
+                let receiver = wake_receiver::WakeReceiver::start(app.handle().clone());
+                app.manage(receiver);
+            }
 
             // 4. Intercept window close request -> minimize to tray
             if let Some(window) = app.get_webview_window("main") {
@@ -770,11 +1100,23 @@ fn main() {
             }
 
             // 5. Native Win32 Taskbar Speed Bar (Directly on Windows Taskbar)
-            let taskbar_bar = TaskbarSpeedBar::start(app.handle().clone());
-            if !settings_setup.read().taskbar_speed_enabled {
-                taskbar_bar.set_visible(false);
-            }
+            let (initial_bar_enabled, initial_alert_enabled, initial_alert_processes) = {
+                let s = settings_setup.read();
+                (
+                    s.taskbar_speed_enabled,
+                    s.screen_alert_enabled,
+                    s.screen_alert_processes.clone(),
+                )
+            };
+            let taskbar_bar = TaskbarSpeedBar::start(app.handle().clone(), initial_bar_enabled);
             app.manage(taskbar_bar.clone());
+
+            let screen_alert_mgr = ScreenAlertManager::start(
+                app.handle().clone(),
+                initial_alert_enabled,
+                initial_alert_processes,
+            );
+            app.manage(screen_alert_mgr);
 
             // 6. Background thread: periodic network speed ticker
             let tray_handle = tray.clone();
@@ -854,6 +1196,8 @@ fn main() {
             get_net_speed,
             get_app_settings,
             save_app_settings,
+            get_screen_alert_status,
+            set_screen_alert_preview,
             app_minimize,
             app_maximize,
             app_close,
@@ -891,8 +1235,17 @@ fn main() {
         if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
             if code.is_none() {
                 api.prevent_exit();
-            } else if let Some(bar) = app_handle.try_state::<Arc<TaskbarSpeedBar>>() {
-                bar.shutdown();
+            } else {
+                #[cfg(windows)]
+                if let Some(receiver) = app_handle.try_state::<wake_receiver::WakeReceiver>() {
+                    receiver.shutdown();
+                }
+                if let Some(bar) = app_handle.try_state::<Arc<TaskbarSpeedBar>>() {
+                    bar.shutdown();
+                }
+                if let Some(alert) = app_handle.try_state::<Arc<ScreenAlertManager>>() {
+                    alert.shutdown();
+                }
             }
         }
     });
@@ -900,7 +1253,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::try_acquire_single_instance;
+    use super::{decide_toggle_window_action, try_acquire_single_instance, WindowToggleAction};
 
     #[test]
     fn test_single_instance_mutex_prevents_second_acquire_until_dropped() {
@@ -914,5 +1267,26 @@ mod tests {
         drop(first);
         let third = try_acquire_single_instance(&test_name);
         assert!(third.is_some(), "释放锁后应允许重新获取");
+    }
+
+    #[test]
+    fn test_toggle_window_action_restores_hidden_or_minimized_and_hides_visible() {
+        assert_eq!(
+            decide_toggle_window_action(false, false),
+            WindowToggleAction::ShowAndFocus
+        );
+        assert_eq!(
+            decide_toggle_window_action(true, true),
+            WindowToggleAction::ShowAndFocus,
+            "窗口最小化时 IsWindowVisible 仍为 true，切换动作必须还原而非隐藏"
+        );
+        assert_eq!(
+            decide_toggle_window_action(false, true),
+            WindowToggleAction::ShowAndFocus
+        );
+        assert_eq!(
+            decide_toggle_window_action(true, false),
+            WindowToggleAction::Hide
+        );
     }
 }

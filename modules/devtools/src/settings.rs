@@ -10,12 +10,28 @@ use windows::Win32::System::Registry::{
 const RUN_KEY_PATH: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 const APP_REG_NAME: PCWSTR = w!("a8-devtools");
 
+pub fn default_screen_alert_processes() -> Vec<String> {
+    vec![
+        "wemeetapp.exe".to_string(),
+        "SunloginClient.exe".to_string(),
+        "ToDesk.exe".to_string(),
+    ]
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub autostart: bool,
     pub taskbar_speed_enabled: bool,
     pub sample_interval_secs: u64,
     pub fullscreen_hide: bool,
+    #[serde(default = "default_true")]
+    pub screen_alert_enabled: bool,
+    #[serde(default = "default_screen_alert_processes")]
+    pub screen_alert_processes: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -25,6 +41,8 @@ impl Default for AppSettings {
             taskbar_speed_enabled: true,
             sample_interval_secs: 5,
             fullscreen_hide: true,
+            screen_alert_enabled: true,
+            screen_alert_processes: default_screen_alert_processes(),
         }
     }
 }

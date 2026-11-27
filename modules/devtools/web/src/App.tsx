@@ -33,6 +33,8 @@ import {
   Command,
   Copy,
   ExternalLink,
+  Eye,
+  EyeOff,
   FileCheck2,
   FolderGit2,
   FolderOpen,
@@ -49,6 +51,7 @@ import {
   RotateCw,
   Search,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -92,11 +95,33 @@ interface SystemStatus {
   saved_disk_bytes: number;
 }
 
+interface MatchedProcessInfo {
+  name: string;
+  pids: number[];
+  count: number;
+}
+
+interface ScreenAlertStatus {
+  active: boolean;
+  preview: boolean;
+  enabled: boolean;
+  matched_processes: string[];
+  matched_details: MatchedProcessInfo[];
+}
+
+const DEFAULT_SCREEN_ALERT_PROCESSES = [
+  'wemeetapp.exe',
+  'SunloginClient.exe',
+  'ToDesk.exe',
+];
+
 interface AppSettings {
   autostart: boolean;
   taskbar_speed_enabled: boolean;
   sample_interval_secs: number;
   fullscreen_hide: boolean;
+  screen_alert_enabled: boolean;
+  screen_alert_processes: string[];
 }
 
 interface ToastItem {
@@ -277,6 +302,18 @@ export default function App() {
     taskbar_speed_enabled: true,
     sample_interval_secs: 5,
     fullscreen_hide: true,
+    screen_alert_enabled: true,
+    screen_alert_processes: DEFAULT_SCREEN_ALERT_PROCESSES,
+  });
+  const [alertProcessDraft, setAlertProcessDraft] = useState<string>(
+    DEFAULT_SCREEN_ALERT_PROCESSES.join(', ')
+  );
+  const [screenAlertStatus, setScreenAlertStatus] = useState<ScreenAlertStatus>({
+    active: false,
+    preview: false,
+    enabled: true,
+    matched_processes: [],
+    matched_details: [],
   });
 
   // Modals
@@ -373,8 +410,22 @@ export default function App() {
         .catch(() => {});
     };
 
+    const fetchAlertStatus = () => {
+      callTauri<ScreenAlertStatus>('get_screen_alert_status')
+        .then((st) => {
+          if (st) setScreenAlertStatus(st);
+        })
+        .catch((err) => {
+          console.warn('[Tauri] get_screen_alert_status failed:', err);
+        });
+    };
+
     fetchSpeed();
-    const speedTimer = setInterval(fetchSpeed, 2000);
+    fetchAlertStatus();
+    const speedTimer = setInterval(() => {
+      fetchSpeed();
+      fetchAlertStatus();
+    }, 2000);
 
     if ((window as any).__TAURI__?.event?.listen) {
       (window as any).__TAURI__.event
@@ -388,6 +439,17 @@ export default function App() {
           }
         })
         .catch(() => {});
+
+      (window as any).__TAURI__.event
+        .listen('screen-alert-status', (event: any) => {
+          const payload = event.payload as ScreenAlertStatus | undefined;
+          if (payload) {
+            setScreenAlertStatus(payload);
+          }
+        })
+        .catch((err: unknown) => {
+          console.warn('[Tauri] listen screen-alert-status failed:', err);
+        });
     }
 
     return () => clearInterval(speedTimer);
@@ -508,7 +570,30 @@ export default function App() {
       callTauri<string>('get_hosts_content').then((txt) => txt && setHostsContent(txt));
     } else if (tab === 'settings') {
       if (section) setSettingsSection(section);
-      callTauri<AppSettings>('get_app_settings').then((s) => s && setAppSettings(s));
+      callTauri<AppSettings>('get_app_settings')
+        .then((s) => {
+          if (s) {
+            const list = s.screen_alert_processes?.length
+              ? s.screen_alert_processes
+              : DEFAULT_SCREEN_ALERT_PROCESSES;
+            setAppSettings({
+              ...s,
+              screen_alert_enabled: s.screen_alert_enabled ?? true,
+              screen_alert_processes: list,
+            });
+            setAlertProcessDraft(list.join(', '));
+          }
+        })
+        .catch((err) => {
+          pushToast(`读取偏好设置失败: ${err}`, 'danger');
+        });
+      callTauri<ScreenAlertStatus>('get_screen_alert_status')
+        .then((st) => {
+          if (st) setScreenAlertStatus(st);
+        })
+        .catch((err) => {
+          console.warn('[Tauri] get_screen_alert_status failed:', err);
+        });
     }
   };
 
@@ -1058,6 +1143,35 @@ export default function App() {
                   </Tooltip.Content>
                 </Tooltip>
               </div>
+            )}
+
+            {screenAlertStatus.active && (
+              <Tooltip delay={150}>
+                <Tooltip.Trigger>
+                  <button
+                    type="button"
+                    onClick={() => switchTab('settings', 'prefs')}
+                    className="h-7 px-2.5 rounded-lg border border-rose-300/90 dark:border-rose-500/45 bg-rose-50 dark:bg-rose-500/15 hover:bg-rose-100/80 dark:hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-[11px] font-medium flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap max-w-[260px]"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse shrink-0" />
+                    <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate font-mono text-[10.5px]">
+                      {screenAlertStatus.matched_details.length > 0
+                        ? `红光警示: ${screenAlertStatus.matched_details
+                            .map((d) => `${d.name}${d.pids.length ? ` (${d.pids[0]})` : ''}`)
+                            .join(', ')}`
+                        : '红光带预览中'}
+                    </span>
+                  </button>
+                </Tooltip.Trigger>
+                <Tooltip.Content className="text-[11px] px-2.5 py-1.5 rounded-lg max-w-xs">
+                  {screenAlertStatus.matched_details.length > 0
+                    ? `检测到目标进程：${screenAlertStatus.matched_details
+                        .map((d) => `${d.name} [PID: ${d.pids.join(', ')}]`)
+                        .join('；')}（点击前往设置查看）`
+                    : '当前处于任务栏红光带预览模式（点击前往设置管理）'}
+                </Tooltip.Content>
+              </Tooltip>
             )}
 
             {/* Raycast 风格命令面板触发器 */}
@@ -1724,7 +1838,19 @@ export default function App() {
                         className="h-7 px-3 rounded-lg text-[11px]"
                         onPress={async () => {
                           try {
-                            await callTauri('save_app_settings', { newSettings: appSettings });
+                            const parsedProcesses = alertProcessDraft
+                              .split(/[\n,;]+/)
+                              .map((s) => s.trim())
+                              .filter(Boolean);
+                            const nextSettings: AppSettings = {
+                              ...appSettings,
+                              screen_alert_processes: parsedProcesses,
+                            };
+                            setAppSettings(nextSettings);
+                            setAlertProcessDraft(parsedProcesses.join(', '));
+                            await callTauri('save_app_settings', { newSettings: nextSettings });
+                            const st = await callTauri<ScreenAlertStatus>('get_screen_alert_status');
+                            if (st) setScreenAlertStatus(st);
                             pushToast('偏好设置已持久化保存', 'success');
                           } catch (e: any) {
                             pushToast(`保存失败: ${e}`, 'danger');
@@ -1824,61 +1950,223 @@ export default function App() {
                 {settingsSection === 'model' ? (
                   <AgentMindModelConfigPanel callTauri={callTauri} pushToast={pushToast} />
                 ) : settingsSection === 'prefs' ? (
-                  <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface max-w-3xl divide-y divide-zinc-200/75 dark:divide-border/50">
-                    <div className="px-3.5 py-2.5 flex items-center justify-between">
-                      <div>
-                        <span className="font-semibold text-foreground block text-[12px]">任务栏原生网速指示条</span>
-                        <span className="text-muted mt-0.5 block text-[10.5px]">在 Windows 任务栏系统托盘左侧实时绘制上下行网速</span>
+                  <div className="flex flex-col gap-3 max-w-3xl">
+                    <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface divide-y divide-zinc-200/75 dark:divide-border/50">
+                      <div className="px-3.5 py-2.5 flex items-center justify-between">
+                        <div>
+                          <span className="font-semibold text-foreground block text-[12px]">任务栏原生网速指示条</span>
+                          <span className="text-muted mt-0.5 block text-[10.5px]">在 Windows 任务栏系统托盘左侧实时绘制上下行网速</span>
+                        </div>
+                        <Switch
+                          size="sm"
+                          isSelected={appSettings.taskbar_speed_enabled}
+                          onChange={(v) => setAppSettings({ ...appSettings, taskbar_speed_enabled: v })}
+                        >
+                          <Switch.Content>
+                            <Switch.Control>
+                              <Switch.Thumb />
+                            </Switch.Control>
+                          </Switch.Content>
+                        </Switch>
                       </div>
-                      <Switch
-                        size="sm"
-                        isSelected={appSettings.taskbar_speed_enabled}
-                        onChange={(v) => setAppSettings({ ...appSettings, taskbar_speed_enabled: v })}
-                      >
-                        <Switch.Content>
-                          <Switch.Control>
-                            <Switch.Thumb />
-                          </Switch.Control>
-                        </Switch.Content>
-                      </Switch>
+
+                      <div className="px-3.5 py-2.5 flex items-center justify-between">
+                        <div>
+                          <span className="font-semibold text-foreground block text-[12px]">登录 Windows 时自动启动</span>
+                          <span className="text-muted mt-0.5 block text-[10.5px]">静默驻留后台并自动恢复全部持久化映射</span>
+                        </div>
+                        <Switch
+                          size="sm"
+                          isSelected={appSettings.autostart}
+                          onChange={(v) => setAppSettings({ ...appSettings, autostart: v })}
+                        >
+                          <Switch.Content>
+                            <Switch.Control>
+                              <Switch.Thumb />
+                            </Switch.Control>
+                          </Switch.Content>
+                        </Switch>
+                      </div>
+
+                      <div className="px-3.5 py-2.5 flex items-center justify-between">
+                        <div>
+                          <span className="font-semibold text-foreground block text-[12px]">遥测采样间隔 (秒)</span>
+                          <span className="text-muted mt-0.5 block text-[10.5px]">控制带宽统计与任务栏文字刷新频率</span>
+                        </div>
+                        <input
+                          type="number"
+                          min={1}
+                          max={60}
+                          value={appSettings.sample_interval_secs}
+                          onChange={(e) =>
+                            setAppSettings({
+                              ...appSettings,
+                              sample_interval_secs: parseInt(e.target.value, 10) || 5,
+                            })
+                          }
+                          className="w-16 h-8 px-2 rounded-xl bg-surface-secondary border border-border text-center font-mono font-semibold text-[11.5px] text-foreground outline-none focus:border-blue-500"
+                        />
+                      </div>
                     </div>
 
-                    <div className="px-3.5 py-2.5 flex items-center justify-between">
-                      <div>
-                        <span className="font-semibold text-foreground block text-[12px]">登录 Windows 时自动启动</span>
-                        <span className="text-muted mt-0.5 block text-[10.5px]">静默驻留后台并自动恢复全部持久化映射</span>
-                      </div>
-                      <Switch
-                        size="sm"
-                        isSelected={appSettings.autostart}
-                        onChange={(v) => setAppSettings({ ...appSettings, autostart: v })}
-                      >
-                        <Switch.Content>
-                          <Switch.Control>
-                            <Switch.Thumb />
-                          </Switch.Control>
-                        </Switch.Content>
-                      </Switch>
-                    </div>
+                    <div className="rounded-2xl border border-zinc-200/85 dark:border-border/80 bg-white dark:bg-surface divide-y divide-zinc-200/75 dark:divide-border/50">
+                      <div className="px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <ShieldAlert className="w-4 h-4 text-rose-500 shrink-0" />
+                          <div className="min-w-0">
+                            <span className="font-semibold text-foreground block text-[12px]">
+                              远程 / 共享进程红光带警示
+                            </span>
+                            <span className="text-muted mt-0.5 block text-[10.5px]">
+                              任务栏上沿 24px 流光红带提醒，仅按进程名触发（不查 GPU 与日志，对方画面不可见）
+                            </span>
+                          </div>
+                        </div>
 
-                    <div className="px-3.5 py-2.5 flex items-center justify-between">
-                      <div>
-                        <span className="font-semibold text-foreground block text-[12px]">遥测采样间隔 (秒)</span>
-                        <span className="text-muted mt-0.5 block text-[10.5px]">控制带宽统计与任务栏文字刷新频率</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-medium border ${
+                              screenAlertStatus.active
+                                ? 'bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-200/80 dark:border-rose-500/30'
+                                : 'bg-zinc-50 dark:bg-surface-secondary text-muted border-zinc-200/80 dark:border-border/70'
+                            }`}
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                screenAlertStatus.active ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'
+                              }`}
+                            />
+                            {screenAlertStatus.matched_details.length > 0
+                              ? `警示中 (${screenAlertStatus.matched_details.length} 项)`
+                              : screenAlertStatus.preview
+                                ? '预览效果中'
+                                : '当前安全'}
+                          </span>
+
+                          <Button
+                            size="sm"
+                            variant={screenAlertStatus.preview ? 'danger-soft' : 'outline'}
+                            className="h-7 px-2.5 rounded-lg text-[11px] whitespace-nowrap"
+                            onPress={async () => {
+                              try {
+                                const nextPreview = !screenAlertStatus.preview;
+                                const st = await callTauri<ScreenAlertStatus>('set_screen_alert_preview', {
+                                  preview: nextPreview,
+                                });
+                                if (st) setScreenAlertStatus(st);
+                              } catch (e: any) {
+                                pushToast(`切换预览失败: ${e}`, 'danger');
+                              }
+                            }}
+                          >
+                            {screenAlertStatus.preview ? (
+                              <>
+                                <EyeOff className="w-3.5 h-3.5" />
+                                <span>停止预览</span>
+                              </>
+                            ) : (
+                              <>
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>预览效果</span>
+                              </>
+                            )}
+                          </Button>
+                        </div>
                       </div>
-                      <input
-                        type="number"
-                        min={1}
-                        max={60}
-                        value={appSettings.sample_interval_secs}
-                        onChange={(e) =>
-                          setAppSettings({
-                            ...appSettings,
-                            sample_interval_secs: parseInt(e.target.value, 10) || 5,
-                          })
-                        }
-                        className="w-16 h-8 px-2 rounded-xl bg-surface-secondary border border-border text-center font-mono font-semibold text-[11.5px] text-foreground outline-none focus:border-blue-500"
-                      />
+
+                      <div className="px-3.5 py-2.5 flex flex-col gap-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-foreground text-[12px]">当前触发原因 / 命中进程</span>
+                          <span className="text-[10.5px] text-muted">每 2 秒自动扫描刷新</span>
+                        </div>
+                        {screenAlertStatus.matched_details.length > 0 ? (
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {screenAlertStatus.matched_details.map((proc) => (
+                                <span
+                                  key={proc.name}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200/80 dark:border-rose-500/30 font-mono text-[11px] text-rose-700 dark:text-rose-300"
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                                  <span className="font-semibold">{proc.name}</span>
+                                  <span className="text-[10px] text-rose-500/90 dark:text-rose-400">
+                                    PID: {proc.pids.join(', ')}
+                                  </span>
+                                </span>
+                              ))}
+                            </div>
+                            <span className="text-[10.5px] text-muted">
+                              提示：若桌面未看到主窗口，通常为该软件关闭后最小化到系统托盘的后台驻留进程，完全退出后红光带会自动消失。
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-muted">
+                            {screenAlertStatus.preview
+                              ? '未命中任何监控进程，当前仅因手动开启了「预览效果」而显示红光带。'
+                              : '未检测到监控列表中的目标进程运行。'}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="px-3.5 py-2.5 flex items-center justify-between">
+                        <div>
+                          <span className="font-semibold text-foreground block text-[12px]">启用进程监控警示</span>
+                          <span className="text-muted mt-0.5 block text-[10.5px]">检测到下列任一软件进程启动即自动亮起任务栏上沿红色流光带</span>
+                        </div>
+                        <Switch
+                          size="sm"
+                          isSelected={appSettings.screen_alert_enabled}
+                          onChange={async (v) => {
+                            const nextSettings: AppSettings = {
+                              ...appSettings,
+                              screen_alert_enabled: v,
+                            };
+                            setAppSettings(nextSettings);
+                            try {
+                              await callTauri('save_app_settings', { newSettings: nextSettings });
+                              const st = await callTauri<ScreenAlertStatus>('get_screen_alert_status');
+                              if (st) setScreenAlertStatus(st);
+                            } catch (e: any) {
+                              pushToast(`切换警示开关失败: ${e}`, 'danger');
+                            }
+                          }}
+                        >
+                          <Switch.Content>
+                            <Switch.Control>
+                              <Switch.Thumb />
+                            </Switch.Control>
+                          </Switch.Content>
+                        </Switch>
+                      </div>
+
+                      <div className="px-3.5 py-2.5 flex flex-col gap-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <span className="font-semibold text-foreground block text-[12px]">监控进程名（逗号或换行分隔）</span>
+                            <span className="text-muted mt-0.5 block text-[10.5px]">默认含腾讯会议、向日葵、ToDesk，不区分大小写，可自由增删后点击右上角保存</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAlertProcessDraft(DEFAULT_SCREEN_ALERT_PROCESSES.join(', '));
+                              setAppSettings({
+                                ...appSettings,
+                                screen_alert_processes: DEFAULT_SCREEN_ALERT_PROCESSES,
+                              });
+                            }}
+                            className="text-[11px] text-muted hover:text-foreground transition-colors cursor-pointer whitespace-nowrap"
+                          >
+                            恢复默认
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={alertProcessDraft}
+                          onChange={(e) => setAlertProcessDraft(e.target.value)}
+                          placeholder="wemeetapp.exe, SunloginClient.exe, ToDesk.exe"
+                          className="w-full h-8 px-2.5 rounded-lg bg-zinc-50 dark:bg-surface-secondary border border-zinc-200/85 dark:border-border/80 font-mono text-[11.5px] text-foreground outline-none focus:border-blue-500"
+                        />
+                      </div>
                     </div>
                   </div>
                 ) : (
